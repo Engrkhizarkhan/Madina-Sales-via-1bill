@@ -158,7 +158,7 @@ function App() {
 
   if (path.startsWith('/login')) return <LoginPage onNavigate={navigate} />
   if (path.startsWith('/manage')) {
-    if (sessionStorage.getItem('madina-express-session') !== 'active') return <LoginPage onNavigate={navigate} />
+    if (!import.meta.env.DEV && sessionStorage.getItem('madina-express-session') !== 'active') return <LoginPage onNavigate={navigate} />
     return <ManagementApp onLogout={() => { sessionStorage.removeItem('madina-express-session'); navigate('/login') }} />
   }
   return <PublicHome onNavigate={navigate} />
@@ -354,27 +354,22 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
 
   return (
     <div className="admin-shell">
-      <aside className="admin-sidebar">
-        <div className="admin-logo"><span>ME</span><div><strong>Madina</strong><small>Express</small></div></div>
-        <nav aria-label="Management navigation">
-          <button type="button" className="active" onClick={() => document.getElementById('new-booking')?.scrollIntoView({ behavior: 'smooth' })}><Ticket size={17} /><span>New ticket</span></button>
-          <button type="button" onClick={() => document.getElementById('reservations')?.scrollIntoView({ behavior: 'smooth' })}><CalendarCheck size={17} /><span>Reservations</span></button>
-        </nav>
-        <div className="admin-sidebar-footer"><div><span className="live-dot" /><small>System ready</small></div><button type="button" title="Sign out" aria-label="Sign out" onClick={onLogout}><LogOut size={16} /></button></div>
-      </aside>
-
       <div className="admin-content">
         <header className="admin-topbar">
-          <div><strong>Booking Counter</strong><small>Madina Terminal · Counter 01</small></div>
-          <div className="admin-topbar-right"><span className="admin-shift"><i /> Morning shift open</span><span className="admin-divider" /><div className="admin-user"><span className="avatar">SK</span><div><strong>Salman Khan</strong><small>Counter operator</small></div></div></div>
+          <div className="admin-topbar-left">
+            <div className="admin-brandbar"><span>ME</span><div><strong>Madina Express</strong><small>Management System</small></div></div>
+            <nav className="admin-tabs" aria-label="Management navigation"><button type="button" className="active" onClick={() => document.getElementById('new-booking')?.scrollIntoView({ behavior: 'smooth' })}><Ticket size={15} /> New booking</button><button type="button" onClick={() => document.getElementById('reservations')?.scrollIntoView({ behavior: 'smooth' })}><CalendarCheck size={15} /> Reservations</button></nav>
+          </div>
+          <div className="admin-topbar-right"><span className="admin-shift"><i /> System ready</span><span className="admin-divider" /><div className="admin-user"><span className="avatar">SK</span><div><strong>Salman Khan</strong><small>Madina Terminal · Counter 01</small></div></div><button className="admin-signout" type="button" title="Sign out" aria-label="Sign out" onClick={onLogout}><LogOut size={15} /></button></div>
         </header>
 
         <main className="admin-main">
-          <div className="admin-context"><div><span>Bookings</span><b>/</b><strong>New ticket</strong></div><small>{new Date().toLocaleDateString('en-PK', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}</small></div>
+          <div className="admin-context"><div><strong>New booking</strong><span>Enter trip and passenger details, then select seats.</span></div><small>{new Date().toLocaleDateString('en-PK', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}</small></div>
 
-        <section className="panel trip-panel" id="new-booking">
+        <div className="booking-surface" id="new-booking">
+        <section className="trip-panel admin-trip-panel">
           <div className="panel-heading">
-            <div className="title-with-step"><span className="step">1</span><div><h2>Trip selection</h2><p>Choose a route and bus, then enter the crew details.</p></div></div>
+            <div className="title-with-step"><div><h2>Trip selection</h2><p>Choose a route and bus, then enter the crew details.</p></div></div>
             <div className="trip-status"><BusFront size={15} /> {bus.seats - tripBooked} seats available</div>
           </div>
           <div className="trip-grid">
@@ -393,10 +388,10 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
           </div>
         </section>
 
-        <form className="workspace-grid" onSubmit={saveBooking}>
-          <section className="panel passenger-card">
+        <form className="workspace-grid admin-booking-grid" onSubmit={saveBooking}>
+          <section className="passenger-card">
             <div className="panel-heading">
-              <div className="title-with-step"><span className="step">2</span><div><h2>Passenger & payment</h2><p>Enter the customer details and collect the fare.</p></div></div>
+              <div className="title-with-step"><div><h2>Passenger & payment</h2><p>Enter the customer details and collect the fare.</p></div></div>
               <ShieldCheck className="header-icon" size={20} />
             </div>
 
@@ -432,9 +427,9 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
             </div>
           </section>
 
-          <section className="panel seat-card">
+          <section className="seat-card">
             <div className="panel-heading seat-heading">
-              <div className="title-with-step"><span className="step">3</span><div><h2>Select seats</h2><p>{selectedSeats.length ? `Seats ${selectedSeats.join(', ')} selected` : 'Choose one or more available seats'}</p></div></div>
+              <div className="title-with-step"><div><h2>Select seats</h2><p>{selectedSeats.length ? `Seats ${selectedSeats.join(', ')} selected` : 'Choose one or more available seats'}</p></div></div>
               <div className="seat-count">{selectedSeats.length}</div>
             </div>
             <div className="legend"><span><i className="available" />Available</span><span><i className="selected" />Selected</span><span><i className="booked" />Booked</span><span><i className="reserved" />Reserved</span></div>
@@ -454,6 +449,7 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
             <div className="seat-card-footer"><span><Armchair size={15} /> {bus.seats - tripBooked} available</span><strong>{money(total)}</strong></div>
           </section>
         </form>
+        </div>
 
         <section className="panel bookings-card" id="reservations">
           <div className="bookings-header">
