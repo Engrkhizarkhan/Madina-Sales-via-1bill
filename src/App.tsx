@@ -1,18 +1,30 @@
-import { type FormEvent, useMemo, useState } from 'react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
+  ArrowRight,
   Armchair,
+  BadgeCheck,
   BusFront,
+  CalendarCheck,
   CalendarDays,
   Check,
   Clock3,
   CreditCard,
   FileText,
+  Headphones,
+  KeyRound,
+  LockKeyhole,
+  LogOut,
   MapPin,
+  Navigation,
+  PhoneCall,
   Printer,
   ReceiptText,
   RotateCcw,
+  Route,
   Search,
   ShieldCheck,
+  Star,
+  Ticket,
   UserRound,
   UsersRound,
   WalletCards,
@@ -130,6 +142,96 @@ function getStoredBookings() {
 }
 
 function App() {
+  const [path, setPath] = useState(window.location.pathname)
+
+  useEffect(() => {
+    const onPopState = () => setPath(window.location.pathname)
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
+
+  const navigate = (nextPath: string) => {
+    window.history.pushState({}, '', nextPath)
+    setPath(nextPath)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  if (path.startsWith('/login')) return <LoginPage onNavigate={navigate} />
+  if (path.startsWith('/manage')) {
+    if (sessionStorage.getItem('madina-express-session') !== 'active') return <LoginPage onNavigate={navigate} />
+    return <ManagementApp onLogout={() => { sessionStorage.removeItem('madina-express-session'); navigate('/login') }} />
+  }
+  return <PublicHome onNavigate={navigate} />
+}
+
+function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const [from, setFrom] = useState('Peshawar')
+  const [to, setTo] = useState('Karachi')
+  const [date, setDate] = useState(today)
+  const [searched, setSearched] = useState(false)
+
+  return <div className="public-site">
+    <header className="public-nav">
+      <button className="public-brand" type="button" onClick={() => onNavigate('/')}><span className="brand-mark">ME</span><span><strong>Madina Express</strong><small>Travel with confidence</small></span></button>
+      <nav aria-label="Main navigation"><a href="#routes">Routes</a><a href="#services">Services</a><a href="#contact">Contact</a></nav>
+      <button className="staff-login-button" type="button" onClick={() => onNavigate('/login')}><KeyRound size={15} /> Staff login</button>
+    </header>
+
+    <main className="public-main">
+      <section className="public-hero">
+        <div className="hero-copy">
+          <p className="public-kicker"><span /> Intercity travel across Pakistan</p>
+          <h1>Your journey,<br /><em>made comfortable.</em></h1>
+          <p>Reliable coaches, professional service and convenient departures connecting Peshawar with major cities across Pakistan.</p>
+          <div className="hero-trust"><span><BadgeCheck size={17} /> Trusted service</span><span><ShieldCheck size={17} /> Safe journeys</span><span><Headphones size={17} /> Passenger support</span></div>
+        </div>
+        <div className="hero-visual"><img src="/og.png" alt="Madina Express modern intercity coach" /><div className="hero-rating"><span><Star size={14} fill="currentColor" /> 4.8</span><small>Passenger rating</small></div></div>
+      </section>
+
+      <section className="route-finder" id="routes">
+        <div className="route-finder-heading"><span><Route size={18} /></span><div><h2>Find your next journey</h2><p>Check available departures and fares.</p></div></div>
+        <form className="public-search" onSubmit={(event) => { event.preventDefault(); setSearched(true) }}>
+          <label><span>Leaving from</span><select value={from} onChange={(event) => setFrom(event.target.value)}><option>Peshawar</option><option>Islamabad</option><option>Lahore</option><option>Multan</option></select></label>
+          <div className="route-direction"><ArrowRight size={16} /></div>
+          <label><span>Going to</span><select value={to} onChange={(event) => setTo(event.target.value)}><option>Karachi</option><option>Lahore</option><option>Islamabad</option><option>Multan</option></select></label>
+          <label><span>Travel date</span><input type="date" min={today} value={date} onChange={(event) => setDate(event.target.value)} /></label>
+          <button type="submit" className="search-journey"><Search size={16} /> Search buses</button>
+        </form>
+      </section>
+
+      {searched && <section className="public-results" aria-live="polite">
+        <div className="results-heading"><div><p className="eyebrow">AVAILABLE DEPARTURES</p><h2>{from} to {to}</h2></div><span>{new Date(`${date}T00:00:00`).toLocaleDateString('en-PK', { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
+        {[{ time: '09:00', service: 'Standard Plus', fare: 7000, seats: 18 }, { time: '16:00', service: 'Executive', fare: 7800, seats: 11 }, { time: '19:00', service: 'Sleeper Bus', fare: 8500, seats: 7 }].map((trip) => <article className="public-trip" key={trip.time}><div className="trip-time"><strong>{trip.time}</strong><small>Peshawar</small></div><div className="trip-line"><span /><BusFront size={19} /><span /></div><div className="trip-time arrival"><strong>{String((Number(trip.time.slice(0, 2)) + 14) % 24).padStart(2, '0')}:00</strong><small>{to}</small></div><div className="public-trip-service"><strong>{trip.service}</strong><small>{trip.seats} seats available</small></div><div className="public-trip-price"><small>Starting from</small><strong>{money(trip.fare)}</strong></div><button type="button" onClick={() => onNavigate('/login')}>Reserve at counter <ArrowRight size={14} /></button></article>)}
+      </section>}
+
+      <section className="public-benefits" id="services"><article><span><Navigation size={21} /></span><div><strong>Major city routes</strong><p>Convenient daily departures to Karachi, Lahore, Islamabad and Multan.</p></div></article><article><span><Armchair size={21} /></span><div><strong>Comfortable coaches</strong><p>Standard, executive and sleeper options for every journey.</p></div></article><article><span><PhoneCall size={21} /></span><div><strong>Here when you need us</strong><p>Contact our terminal team for booking and travel assistance.</p></div></article></section>
+    </main>
+
+    <footer className="public-footer" id="contact"><div className="public-brand"><span className="brand-mark">ME</span><span><strong>Madina Express</strong><small>Bus Service</small></span></div><p>Madina Terminal, Peshawar · 0311-777-2299</p><span>© 2026 Madina Express</span></footer>
+  </div>
+}
+
+function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+
+  const signIn = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    if (!email || !password) return
+    sessionStorage.setItem('madina-express-session', 'active')
+    onNavigate('/manage')
+  }
+
+  return <div className="login-page">
+    <button type="button" className="login-back" onClick={() => onNavigate('/')}><ArrowRight size={15} /> Back to website</button>
+    <div className="login-shell">
+      <section className="login-brand-panel"><div className="public-brand light"><span className="brand-mark">ME</span><span><strong>Madina Express</strong><small>Staff operations</small></span></div><div><p>SECURE STAFF ACCESS</p><h1>Manage every journey from one place.</h1><span>Bookings, reservations, payments and receipts for the Madina Express counter team.</span></div><small>Authorized personnel only</small></section>
+      <form className="login-form" onSubmit={signIn}><div className="login-icon"><LockKeyhole size={20} /></div><h2>Welcome back</h2><p>Sign in to access the management system.</p><label><span>Email or username</span><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Enter your username" autoComplete="username" /></label><label><span>Password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" autoComplete="current-password" /></label><div className="login-row"><label><input type="checkbox" /> Remember this device</label><button type="button">Forgot password?</button></div><button className="login-submit" type="submit">Sign in to system <ArrowRight size={16} /></button><small>This frontend demo accepts any non-empty credentials.</small></form>
+    </div>
+  </div>
+}
+
+function ManagementApp({ onLogout }: { onLogout: () => void }) {
   const [routeId, setRouteId] = useState(routes[0].id)
   const [busId, setBusId] = useState(buses[0].id)
   const [travelDate, setTravelDate] = useState(today)
@@ -251,25 +353,26 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">ME</span>
-          <span><strong>Madina Express</strong><small>Ticketing & payments</small></span>
-        </div>
-        <div className="operator">
-          <div className="system-state"><span className="live-dot" /><span><strong>Madina Terminal</strong><small>Counter 01 · System ready</small></span></div>
-          <span className="avatar">SK</span>
-        </div>
-      </header>
+    <div className="admin-shell">
+      <aside className="admin-sidebar">
+        <div className="admin-logo"><span>ME</span><div><strong>Madina</strong><small>Express</small></div></div>
+        <nav aria-label="Management navigation">
+          <button type="button" className="active" onClick={() => document.getElementById('new-booking')?.scrollIntoView({ behavior: 'smooth' })}><Ticket size={17} /><span>New ticket</span></button>
+          <button type="button" onClick={() => document.getElementById('reservations')?.scrollIntoView({ behavior: 'smooth' })}><CalendarCheck size={17} /><span>Reservations</span></button>
+        </nav>
+        <div className="admin-sidebar-footer"><div><span className="live-dot" /><small>System ready</small></div><button type="button" title="Sign out" aria-label="Sign out" onClick={onLogout}><LogOut size={16} /></button></div>
+      </aside>
 
-      <main>
-        <div className="page-heading">
-          <div><p className="eyebrow">NEW BOOKING</p><h1>Issue a passenger ticket</h1><p>One simple flow from trip selection to a printed receipt.</p></div>
-          <div className="shift-pill"><span /> Morning shift · Open</div>
-        </div>
+      <div className="admin-content">
+        <header className="admin-topbar">
+          <div><strong>Booking Counter</strong><small>Madina Terminal · Counter 01</small></div>
+          <div className="admin-topbar-right"><span className="admin-shift"><i /> Morning shift open</span><span className="admin-divider" /><div className="admin-user"><span className="avatar">SK</span><div><strong>Salman Khan</strong><small>Counter operator</small></div></div></div>
+        </header>
 
-        <section className="panel trip-panel">
+        <main className="admin-main">
+          <div className="admin-context"><div><span>Bookings</span><b>/</b><strong>New ticket</strong></div><small>{new Date().toLocaleDateString('en-PK', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}</small></div>
+
+        <section className="panel trip-panel" id="new-booking">
           <div className="panel-heading">
             <div className="title-with-step"><span className="step">1</span><div><h2>Trip selection</h2><p>Choose a route and bus, then enter the crew details.</p></div></div>
             <div className="trip-status"><BusFront size={15} /> {bus.seats - tripBooked} seats available</div>
@@ -352,7 +455,7 @@ function App() {
           </section>
         </form>
 
-        <section className="panel bookings-card">
+        <section className="panel bookings-card" id="reservations">
           <div className="bookings-header">
             <div><p className="eyebrow">COUNTER ACTIVITY</p><h2>Recent bookings</h2><p>Search, reprint or cancel tickets saved on this device.</p></div>
             <label className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search ticket, passenger or CNIC" /></label>
@@ -373,7 +476,8 @@ function App() {
             </table>
           </div>
         </section>
-      </main>
+        </main>
+      </div>
 
       {receipt && <ReceiptModal booking={receipt} onClose={() => setReceipt(null)} />}
       {toast && <div className="toast"><Check size={16} /> {toast}</div>}
