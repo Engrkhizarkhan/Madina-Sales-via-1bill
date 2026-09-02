@@ -1,515 +1,218 @@
 import { type FormEvent, useEffect, useMemo, useState } from 'react'
 import {
-  ArrowRight,
-  Armchair,
-  BadgeCheck,
-  BusFront,
-  CalendarCheck,
-  CalendarDays,
-  Check,
-  Clock3,
-  CreditCard,
-  FileText,
-  Headphones,
-  KeyRound,
-  LockKeyhole,
-  LogOut,
-  MapPin,
-  Navigation,
-  PhoneCall,
-  Printer,
-  ReceiptText,
-  RotateCcw,
-  Route,
-  Search,
-  ShieldCheck,
-  Star,
-  Ticket,
-  UserRound,
-  UsersRound,
-  WalletCards,
-  X,
-  XCircle,
+  Activity, ArrowLeft, ArrowRight, Armchair, BadgeCheck, Banknote, Bell, BookOpenCheck, Bus, BusFront,
+  CalendarCheck, CalendarDays, Check, CheckCircle2, ChevronRight, CircleDollarSign, Clock3, CreditCard,
+  FileBarChart, FileText, Gauge, Headphones, KeyRound, LockKeyhole, LogOut, MapPin, MapPinned, Menu,
+  Navigation, Plus, Printer, ReceiptText, RefreshCw, Route, Search, Settings, ShieldCheck, Star, Ticket,
+  UserRound, UserRoundCog, UsersRound, WalletCards, X, XCircle,
 } from 'lucide-react'
 import './App.css'
 
 type PaymentMethod = 'Cash' | 'Card' | 'Bank transfer' | '1Bill'
-type PaymentStatus = 'Paid' | 'Partial' | 'Due'
-type BookingStatus = 'Confirmed' | 'Cancelled'
+type PaymentStatus = 'Paid' | 'Unpaid' | 'Refunded'
+type BookingStatus = 'Confirmed' | 'Reserved' | 'Cancelled' | 'Refunded'
+type BookingSource = 'Public web' | 'Counter'
+type AdminView = 'dashboard' | 'sale' | 'bookings' | 'reservations' | 'trips' | 'fleet' | 'routes' | 'finance' | 'crew' | 'settings'
 
+type RouteRecord = { id: string; from: string; to: string; distance: string; duration: string; fare: number; boarding: string; status: 'Active' | 'Paused' }
+type BusRecord = { id: string; registration: string; service: string; seats: number; model: string; year: number; status: 'On route' | 'Ready' | 'Maintenance'; nextService: string }
+type TripRecord = { id: string; routeId: string; busId: string; departure: string; arrival: string; driver: string; attendant: string; platform: string; status: 'Boarding' | 'Scheduled' | 'Departed' }
 type Booking = {
-  id: string
-  ticketNo: string
-  passenger: string
-  phone: string
-  cnic: string
-  gender: string
-  route: string
-  destination: string
-  boardingPoint: string
-  bus: string
-  service: string
-  seats: number[]
-  fare: number
-  discount: number
-  total: number
-  paid: number
-  balance: number
-  paymentMethod: PaymentMethod
-  paymentStatus: PaymentStatus
-  bookingStatus: BookingStatus
-  date: string
-  time: string
-  driver: string
-  attendant: string
-  createdAt: string
+  id: string; ticketNo: string; source: BookingSource; passenger: string; phone: string; cnic: string; gender: 'Male' | 'Female'
+  route: string; destination: string; boardingPoint: string; bus: string; service: string; seats: number[]; fare: number
+  discount: number; total: number; paid: number; balance: number; paymentMethod: PaymentMethod; paymentReference: string
+  paymentStatus: PaymentStatus; bookingStatus: BookingStatus; date: string; time: string; driver: string; attendant: string
+  createdAt: string; expiresAt?: string
 }
-
-type PassengerForm = {
-  passenger: string
-  phone: string
-  cnic: string
-  idType: 'CNIC' | 'Passport'
-  gender: 'Male' | 'Female'
-  boardingPoint: string
-  fare: number
-  discount: number
-  paid: number
-  paymentMethod: PaymentMethod
-  paymentReference: string
-  notes: string
-}
+type PassengerForm = { passenger: string; phone: string; cnic: string; idType: 'CNIC' | 'Passport'; gender: 'Male' | 'Female'; boardingPoint: string; fare: number; discount: number; paymentMethod: PaymentMethod; paymentReference: string }
 
 const today = new Date().toISOString().slice(0, 10)
-
-const routes = [
-  { id: 'psh-khi', label: 'Peshawar → Karachi', destination: 'Karachi', fare: 7000, boarding: 'Madina Terminal, Peshawar' },
-  { id: 'psh-lhr', label: 'Peshawar → Lahore', destination: 'Lahore', fare: 4200, boarding: 'Madina Terminal, Peshawar' },
-  { id: 'psh-isb', label: 'Peshawar → Islamabad', destination: 'Islamabad', fare: 1800, boarding: 'Madina Terminal, Peshawar' },
-  { id: 'psh-mul', label: 'Peshawar → Multan', destination: 'Multan', fare: 4500, boarding: 'Madina Terminal, Peshawar' },
+const storageKey = 'madina-express-operations-v2'
+const routeRecords: RouteRecord[] = [
+  { id: 'psh-khi', from: 'Peshawar', to: 'Karachi', distance: '1,380 km', duration: '14h 00m', fare: 7000, boarding: 'Madina Terminal, Peshawar', status: 'Active' },
+  { id: 'psh-lhr', from: 'Peshawar', to: 'Lahore', distance: '520 km', duration: '5h 45m', fare: 4200, boarding: 'Madina Terminal, Peshawar', status: 'Active' },
+  { id: 'psh-isb', from: 'Peshawar', to: 'Islamabad', distance: '185 km', duration: '2h 30m', fare: 1800, boarding: 'Madina Terminal, Peshawar', status: 'Active' },
+  { id: 'psh-mul', from: 'Peshawar', to: 'Multan', distance: '690 km', duration: '7h 30m', fare: 4500, boarding: 'Madina Terminal, Peshawar', status: 'Active' },
+  { id: 'khi-psh', from: 'Karachi', to: 'Peshawar', distance: '1,380 km', duration: '14h 15m', fare: 7000, boarding: 'Sohrab Goth Terminal, Karachi', status: 'Active' },
+  { id: 'lhr-psh', from: 'Lahore', to: 'Peshawar', distance: '520 km', duration: '5h 45m', fare: 4200, boarding: 'Thokar Niaz Baig, Lahore', status: 'Active' },
 ]
-
-const buses = [
-  { id: 'tae-388', registration: 'TAE-388', label: 'TAE-388 · Standard Plus', service: 'Standard Plus', seats: 49, booked: [2, 5, 8, 13, 17, 21, 29, 34, 42], reserved: [4, 18] },
-  { id: 'taj-977', registration: 'TAJ-977', label: 'TAJ-977 · Sleeper Bus', service: 'Sleeper Bus', seats: 35, booked: [3, 6, 9, 12, 15, 19, 27], reserved: [7, 23] },
+const fleetRecords: BusRecord[] = [
+  { id: 'tae-388', registration: 'TAE-388', service: 'Standard Plus', seats: 49, model: 'Yutong ZK6122H9', year: 2024, status: 'On route', nextService: '12 Sep 2026' },
+  { id: 'taj-977', registration: 'TAJ-977', service: 'Executive', seats: 44, model: 'Daewoo BH-120', year: 2023, status: 'Ready', nextService: '18 Sep 2026' },
+  { id: 'les-221', registration: 'LES-221', service: 'Sleeper Bus', seats: 35, model: 'Yutong C13 Pro', year: 2025, status: 'Ready', nextService: '26 Sep 2026' },
+  { id: 'bsa-840', registration: 'BSA-840', service: 'Executive', seats: 41, model: 'Higer KLQ6128', year: 2022, status: 'Maintenance', nextService: 'In workshop' },
 ]
-
+const tripRecords: TripRecord[] = [
+  { id: 'trip-0900', routeId: 'psh-isb', busId: 'taj-977', departure: '09:00', arrival: '11:30', driver: 'Adeel Shah', attendant: 'Nazia Bibi', platform: 'P-02', status: 'Departed' },
+  { id: 'trip-1600', routeId: 'psh-khi', busId: 'tae-388', departure: '16:00', arrival: '06:00', driver: 'Muhammad Ameen', attendant: 'Ayesha Khan', platform: 'P-01', status: 'Boarding' },
+  { id: 'trip-1900', routeId: 'psh-lhr', busId: 'les-221', departure: '19:00', arrival: '00:45', driver: 'Faisal Khan', attendant: 'Sadia Noor', platform: 'P-03', status: 'Scheduled' },
+  { id: 'trip-2130', routeId: 'psh-mul', busId: 'taj-977', departure: '21:30', arrival: '05:00', driver: 'Bilal Ahmad', attendant: 'Hina Gul', platform: 'P-04', status: 'Scheduled' },
+]
 const initialBookings: Booking[] = [
-  {
-    id: 'sample-1', ticketNo: 'ME-260831-1426', passenger: 'Usman Ali', phone: '0301 8472210', cnic: '17301-4581266-3', gender: 'Male',
-    route: 'Peshawar → Karachi', destination: 'Karachi', boardingPoint: 'Madina Terminal, Peshawar', bus: 'TAE-388', service: 'Standard Plus', seats: [11],
-    fare: 7000, discount: 0, total: 7000, paid: 7000, balance: 0, paymentMethod: 'Cash', paymentStatus: 'Paid', bookingStatus: 'Confirmed',
-    date: today, time: '16:00', driver: 'Muhammad Ameen', attendant: 'Ayesha Khan', createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'sample-2', ticketNo: 'ME-260831-1398', passenger: 'Sanaullah Khan', phone: '0333 5218490', cnic: '17301-1592366-5', gender: 'Male',
-    route: 'Peshawar → Karachi', destination: 'Karachi', boardingPoint: 'Madina Terminal, Peshawar', bus: 'TAE-388', service: 'Standard Plus', seats: [14, 15],
-    fare: 7000, discount: 500, total: 13500, paid: 10000, balance: 3500, paymentMethod: '1Bill', paymentStatus: 'Partial', bookingStatus: 'Confirmed',
-    date: today, time: '16:00', driver: 'Muhammad Ameen', attendant: 'Ayesha Khan', createdAt: new Date().toISOString(),
-  },
-  {
-    id: 'sample-3', ticketNo: 'ME-260831-1311', passenger: 'Maria Khan', phone: '0312 9908412', cnic: '17301-7421068-4', gender: 'Female',
-    route: 'Peshawar → Lahore', destination: 'Lahore', boardingPoint: 'Madina Terminal, Peshawar', bus: 'TAJ-977', service: 'Sleeper Bus', seats: [22],
-    fare: 4200, discount: 200, total: 4000, paid: 4000, balance: 0, paymentMethod: 'Card', paymentStatus: 'Paid', bookingStatus: 'Confirmed',
-    date: today, time: '19:00', driver: 'Adeel Shah', attendant: 'Nazia Bibi', createdAt: new Date().toISOString(),
-  },
+  { id: 'seed-1', ticketNo: 'ME-260902-1426', source: 'Public web', passenger: 'Usman Ali', phone: '0301 8472210', cnic: '17301-4581266-3', gender: 'Male', route: 'Peshawar → Karachi', destination: 'Karachi', boardingPoint: 'Madina Terminal, Peshawar', bus: 'TAE-388', service: 'Standard Plus', seats: [11], fare: 7000, discount: 0, total: 7000, paid: 7000, balance: 0, paymentMethod: '1Bill', paymentReference: '1B-90281426', paymentStatus: 'Paid', bookingStatus: 'Confirmed', date: today, time: '16:00', driver: 'Muhammad Ameen', attendant: 'Ayesha Khan', createdAt: new Date().toISOString() },
+  { id: 'seed-2', ticketNo: 'ME-260902-1398', source: 'Counter', passenger: 'Sanaullah Khan', phone: '0333 5218490', cnic: '17301-1592366-5', gender: 'Male', route: 'Peshawar → Karachi', destination: 'Karachi', boardingPoint: 'Madina Terminal, Peshawar', bus: 'TAE-388', service: 'Standard Plus', seats: [14, 15], fare: 7000, discount: 500, total: 13500, paid: 13500, balance: 0, paymentMethod: 'Cash', paymentReference: 'POS-1398', paymentStatus: 'Paid', bookingStatus: 'Confirmed', date: today, time: '16:00', driver: 'Muhammad Ameen', attendant: 'Ayesha Khan', createdAt: new Date(Date.now() - 3600000).toISOString() },
+  { id: 'seed-3', ticketNo: 'RS-260902-1311', source: 'Counter', passenger: 'Maria Khan', phone: '0312 9908412', cnic: '17301-7421068-4', gender: 'Female', route: 'Peshawar → Lahore', destination: 'Lahore', boardingPoint: 'Madina Terminal, Peshawar', bus: 'LES-221', service: 'Sleeper Bus', seats: [22], fare: 4200, discount: 0, total: 4200, paid: 0, balance: 4200, paymentMethod: 'Cash', paymentReference: '', paymentStatus: 'Unpaid', bookingStatus: 'Reserved', date: today, time: '19:00', driver: 'Faisal Khan', attendant: 'Sadia Noor', createdAt: new Date(Date.now() - 7200000).toISOString(), expiresAt: new Date(Date.now() + 5400000).toISOString() },
+  { id: 'seed-4', ticketNo: 'ME-260902-1264', source: 'Counter', passenger: 'Rashid Mehmood', phone: '0345 8821034', cnic: '35202-8810341-7', gender: 'Male', route: 'Peshawar → Islamabad', destination: 'Islamabad', boardingPoint: 'Madina Terminal, Peshawar', bus: 'TAJ-977', service: 'Executive', seats: [7], fare: 1800, discount: 0, total: 1800, paid: 1800, balance: 0, paymentMethod: 'Card', paymentReference: 'CARD-8821', paymentStatus: 'Paid', bookingStatus: 'Confirmed', date: today, time: '09:00', driver: 'Adeel Shah', attendant: 'Nazia Bibi', createdAt: new Date(Date.now() - 10800000).toISOString() },
 ]
-
-const initialPassenger: PassengerForm = {
-  passenger: '',
-  phone: '',
-  cnic: '',
-  idType: 'CNIC',
-  gender: 'Male',
-  boardingPoint: routes[0].boarding,
-  fare: routes[0].fare,
-  discount: 0,
-  paid: routes[0].fare,
-  paymentMethod: 'Cash',
-  paymentReference: '',
-  notes: '',
-}
+const crewRecords = [
+  { name: 'Muhammad Ameen', role: 'Driver', phone: '0300 1122456', duty: 'Peshawar → Karachi', status: 'On duty', initials: 'MA' },
+  { name: 'Adeel Shah', role: 'Driver', phone: '0304 3310098', duty: 'Available at terminal', status: 'Available', initials: 'AS' },
+  { name: 'Ayesha Khan', role: 'Female attendant', phone: '0315 6621908', duty: 'Peshawar → Karachi', status: 'On duty', initials: 'AK' },
+  { name: 'Nazia Bibi', role: 'Female attendant', phone: '0332 5514402', duty: 'Available at terminal', status: 'Available', initials: 'NB' },
+  { name: 'Faisal Khan', role: 'Driver', phone: '0307 9912045', duty: 'Peshawar → Lahore', status: 'Scheduled', initials: 'FK' },
+  { name: 'Sadia Noor', role: 'Female attendant', phone: '0318 7441280', duty: 'Peshawar → Lahore', status: 'Scheduled', initials: 'SN' },
+]
 
 const money = (value: number) => `PKR ${Math.max(0, value).toLocaleString('en-PK')}`
-
-function getStoredBookings() {
-  try {
-    const stored = localStorage.getItem('madina-express-bookings')
-    return stored ? (JSON.parse(stored) as Booking[]) : initialBookings
-  } catch {
-    return initialBookings
-  }
-}
+const routeLabel = (route: RouteRecord) => `${route.from} → ${route.to}`
+function readBookings() { try { const stored = localStorage.getItem(storageKey); return stored ? (JSON.parse(stored) as Booking[]) : initialBookings } catch { return initialBookings } }
+function storeBookings(bookings: Booking[]) { localStorage.setItem(storageKey, JSON.stringify(bookings)); window.dispatchEvent(new Event('madina-bookings-updated')) }
 
 function App() {
   const [path, setPath] = useState(window.location.pathname)
-
-  useEffect(() => {
-    const onPopState = () => setPath(window.location.pathname)
-    window.addEventListener('popstate', onPopState)
-    return () => window.removeEventListener('popstate', onPopState)
-  }, [])
-
-  const navigate = (nextPath: string) => {
-    window.history.pushState({}, '', nextPath)
-    setPath(nextPath)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
+  useEffect(() => { const onPopState = () => setPath(window.location.pathname); window.addEventListener('popstate', onPopState); return () => window.removeEventListener('popstate', onPopState) }, [])
+  const navigate = (nextPath: string) => { window.history.pushState({}, '', nextPath); setPath(nextPath); window.scrollTo({ top: 0, behavior: 'smooth' }) }
   if (path.startsWith('/login')) return <LoginPage onNavigate={navigate} />
-  if (path.startsWith('/manage')) {
-    if (!import.meta.env.DEV && sessionStorage.getItem('madina-express-session') !== 'active') return <LoginPage onNavigate={navigate} />
-    return <ManagementApp onLogout={() => { sessionStorage.removeItem('madina-express-session'); navigate('/login') }} />
-  }
+  if (path.startsWith('/manage')) { if (!import.meta.env.DEV && sessionStorage.getItem('madina-express-session') !== 'active') return <LoginPage onNavigate={navigate} />; return <ManagementApp onLogout={() => { sessionStorage.removeItem('madina-express-session'); navigate('/login') }} /> }
   return <PublicHome onNavigate={navigate} />
 }
 
 function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const [from, setFrom] = useState('Peshawar')
-  const [to, setTo] = useState('Karachi')
-  const [date, setDate] = useState(today)
-  const [searched, setSearched] = useState(false)
-
+  const [from, setFrom] = useState('Peshawar'), [to, setTo] = useState('Karachi'), [date, setDate] = useState(today), [searched, setSearched] = useState(false)
+  const [checkoutTrip, setCheckoutTrip] = useState<{ route: RouteRecord; bus: BusRecord; time: string; fare: number } | null>(null)
+  const [ticketReceipt, setTicketReceipt] = useState<Booking | null>(null)
+  const matchingRoute = routeRecords.find((route) => route.from === from && route.to === to)
+  const departures = matchingRoute ? [{ time: '09:00', bus: fleetRecords[1], fare: matchingRoute.fare, seats: 18 }, { time: '16:00', bus: fleetRecords[0], fare: matchingRoute.fare + 500, seats: 11 }, { time: '19:00', bus: fleetRecords[2], fare: matchingRoute.fare + 1200, seats: 7 }] : []
+  const swapCities = () => { setFrom(to); setTo(from); setSearched(false) }
   return <div className="public-site">
-    <header className="public-nav">
-      <button className="public-brand" type="button" onClick={() => onNavigate('/')}><span className="brand-mark">ME</span><span><strong>Madina Express</strong><small>Travel with confidence</small></span></button>
-      <nav aria-label="Main navigation"><a href="#routes">Routes</a><a href="#services">Services</a><a href="#contact">Contact</a></nav>
-      <button className="staff-login-button" type="button" onClick={() => onNavigate('/login')}><KeyRound size={15} /> Staff login</button>
-    </header>
-
-    <main className="public-main">
-      <section className="public-hero">
-        <div className="hero-copy">
-          <p className="public-kicker"><span /> Intercity travel across Pakistan</p>
-          <h1>Your journey,<br /><em>made comfortable.</em></h1>
-          <p>Reliable coaches, professional service and convenient departures connecting Peshawar with major cities across Pakistan.</p>
-          <div className="hero-trust"><span><BadgeCheck size={17} /> Trusted service</span><span><ShieldCheck size={17} /> Safe journeys</span><span><Headphones size={17} /> Passenger support</span></div>
-        </div>
-        <div className="hero-visual"><img src="/og.png" alt="Madina Express modern intercity coach" /><div className="hero-rating"><span><Star size={14} fill="currentColor" /> 4.8</span><small>Passenger rating</small></div></div>
-      </section>
-
-      <section className="route-finder" id="routes">
-        <div className="route-finder-heading"><span><Route size={18} /></span><div><h2>Find your next journey</h2><p>Check available departures and fares.</p></div></div>
-        <form className="public-search" onSubmit={(event) => { event.preventDefault(); setSearched(true) }}>
-          <label><span>Leaving from</span><select value={from} onChange={(event) => setFrom(event.target.value)}><option>Peshawar</option><option>Islamabad</option><option>Lahore</option><option>Multan</option></select></label>
-          <div className="route-direction"><ArrowRight size={16} /></div>
-          <label><span>Going to</span><select value={to} onChange={(event) => setTo(event.target.value)}><option>Karachi</option><option>Lahore</option><option>Islamabad</option><option>Multan</option></select></label>
-          <label><span>Travel date</span><input type="date" min={today} value={date} onChange={(event) => setDate(event.target.value)} /></label>
-          <button type="submit" className="search-journey"><Search size={16} /> Search buses</button>
-        </form>
-      </section>
-
-      {searched && <section className="public-results" aria-live="polite">
-        <div className="results-heading"><div><p className="eyebrow">AVAILABLE DEPARTURES</p><h2>{from} to {to}</h2></div><span>{new Date(`${date}T00:00:00`).toLocaleDateString('en-PK', { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
-        {[{ time: '09:00', service: 'Standard Plus', fare: 7000, seats: 18 }, { time: '16:00', service: 'Executive', fare: 7800, seats: 11 }, { time: '19:00', service: 'Sleeper Bus', fare: 8500, seats: 7 }].map((trip) => <article className="public-trip" key={trip.time}><div className="trip-time"><strong>{trip.time}</strong><small>Peshawar</small></div><div className="trip-line"><span /><BusFront size={19} /><span /></div><div className="trip-time arrival"><strong>{String((Number(trip.time.slice(0, 2)) + 14) % 24).padStart(2, '0')}:00</strong><small>{to}</small></div><div className="public-trip-service"><strong>{trip.service}</strong><small>{trip.seats} seats available</small></div><div className="public-trip-price"><small>Starting from</small><strong>{money(trip.fare)}</strong></div><button type="button" onClick={() => onNavigate('/login')}>Reserve at counter <ArrowRight size={14} /></button></article>)}
-      </section>}
-
-      <section className="public-benefits" id="services"><article><span><Navigation size={21} /></span><div><strong>Major city routes</strong><p>Convenient daily departures to Karachi, Lahore, Islamabad and Multan.</p></div></article><article><span><Armchair size={21} /></span><div><strong>Comfortable coaches</strong><p>Standard, executive and sleeper options for every journey.</p></div></article><article><span><PhoneCall size={21} /></span><div><strong>Here when you need us</strong><p>Contact our terminal team for booking and travel assistance.</p></div></article></section>
-    </main>
-
-    <footer className="public-footer" id="contact"><div className="public-brand"><span className="brand-mark">ME</span><span><strong>Madina Express</strong><small>Bus Service</small></span></div><p>Madina Terminal, Peshawar · 0311-777-2299</p><span>© 2026 Madina Express</span></footer>
+    <header className="public-nav"><button className="public-brand" type="button" onClick={() => onNavigate('/')}><span className="brand-mark">ME</span><span><strong>Madina Express</strong><small>Travel with confidence</small></span></button><nav aria-label="Main navigation"><a href="#routes">Book a ticket</a><a href="#services">Services</a><a href="#contact">Contact</a></nav><button className="staff-login-button" type="button" onClick={() => onNavigate('/login')}><KeyRound size={15} /> Staff login</button></header>
+    <main className="public-main"><section className="public-hero"><div className="hero-copy"><p className="public-kicker"><span /> Intercity travel across Pakistan</p><h1>Book your seat.<br /><em>Travel with confidence.</em></h1><p>Choose your journey, select a seat and pay securely through 1Bill. Your confirmed e-ticket is issued immediately after payment.</p><div className="hero-trust"><span><BadgeCheck size={17} /> Confirmed e-tickets</span><span><ShieldCheck size={17} /> Secure 1Bill payment</span><span><Headphones size={17} /> Passenger support</span></div></div><div className="hero-visual"><img src="/og.png" alt="Madina Express modern intercity coach" /><div className="hero-rating"><span><Star size={14} fill="currentColor" /> 4.8</span><small>Passenger rating</small></div></div></section>
+      <section className="route-finder" id="routes"><div className="route-finder-heading"><span><Route size={18} /></span><div><h2>Find and buy your ticket</h2><p>All online tickets are confirmed after full payment.</p></div><div className="payment-assurance"><ShieldCheck size={15} /> Powered by 1Bill</div></div><form className="public-search" onSubmit={(event) => { event.preventDefault(); setSearched(true) }}><label><span>Leaving from</span><select value={from} onChange={(event) => { setFrom(event.target.value); setSearched(false) }}>{['Peshawar', 'Karachi', 'Lahore', 'Islamabad', 'Multan'].map((city) => <option key={city}>{city}</option>)}</select></label><button className="route-direction" type="button" aria-label="Swap cities" onClick={swapCities}><ArrowRight size={16} /></button><label><span>Going to</span><select value={to} onChange={(event) => { setTo(event.target.value); setSearched(false) }}>{['Karachi', 'Lahore', 'Islamabad', 'Multan', 'Peshawar'].map((city) => <option key={city}>{city}</option>)}</select></label><label><span>Travel date</span><input type="date" min={today} value={date} onChange={(event) => setDate(event.target.value)} /></label><button type="submit" className="search-journey"><Search size={16} /> Search buses</button></form></section>
+      {searched && <section className="public-results" aria-live="polite"><div className="results-heading"><div><p className="eyebrow">AVAILABLE DEPARTURES</p><h2>{from} to {to}</h2></div><span>{new Date(`${date}T00:00:00`).toLocaleDateString('en-PK', { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>{matchingRoute && departures.length ? departures.map((trip) => <article className="public-trip" key={trip.time}><div className="trip-time"><strong>{trip.time}</strong><small>{from}</small></div><div className="trip-line"><span /><BusFront size={19} /><span /></div><div className="trip-time arrival"><strong>{matchingRoute.duration}</strong><small>{to}</small></div><div className="public-trip-service"><strong>{trip.bus.service}</strong><small>{trip.bus.registration} · {trip.seats} seats available</small></div><div className="public-trip-price"><small>One-way fare</small><strong>{money(trip.fare)}</strong></div><button type="button" onClick={() => setCheckoutTrip({ route: matchingRoute, bus: trip.bus, time: trip.time, fare: trip.fare })}>Select & pay <ArrowRight size={14} /></button></article>) : <div className="public-empty"><BusFront size={25} /><strong>No direct service found</strong><span>Try Peshawar as your departure city or choose another destination.</span></div>}</section>}
+      <section className="public-benefits" id="services"><article><span><Navigation size={21} /></span><div><strong>Major city routes</strong><p>Daily departures connecting Peshawar with Karachi, Lahore, Islamabad and Multan.</p></div></article><article><span><Armchair size={21} /></span><div><strong>Choose your exact seat</strong><p>See live seat availability and select up to four seats in one purchase.</p></div></article><article><span><CreditCard size={21} /></span><div><strong>Paid and confirmed</strong><p>Online tickets are issued only after successful full payment through 1Bill.</p></div></article></section>
+    </main><footer className="public-footer" id="contact"><div className="public-brand"><span className="brand-mark">ME</span><span><strong>Madina Express</strong><small>Bus Service</small></span></div><p>Madina Terminal, Peshawar · 0311-777-2299</p><span>© 2026 Madina Express</span></footer>
+    {checkoutTrip && <PublicCheckout trip={checkoutTrip} date={date} onClose={() => setCheckoutTrip(null)} onPaid={(booking) => { setCheckoutTrip(null); setTicketReceipt(booking) }} />}{ticketReceipt && <ReceiptModal booking={ticketReceipt} onClose={() => setTicketReceipt(null)} />}
   </div>
 }
 
-function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-
-  const signIn = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!email || !password) return
-    sessionStorage.setItem('madina-express-session', 'active')
-    onNavigate('/manage')
+function PublicCheckout({ trip, date, onClose, onPaid }: { trip: { route: RouteRecord; bus: BusRecord; time: string; fare: number }; date: string; onClose: () => void; onPaid: (booking: Booking) => void }) {
+  const [selectedSeats, setSelectedSeats] = useState<number[]>([]), [passenger, setPassenger] = useState({ name: '', phone: '', cnic: '', gender: 'Male' as 'Male' | 'Female' }), [processing, setProcessing] = useState(false), [error, setError] = useState(''), [invoice] = useState(() => `1B${Date.now().toString().slice(-10)}`)
+  const total = selectedSeats.length * trip.fare
+  const occupied = useMemo(() => new Set([2, 5, 8, 13, 17, 21, 29, ...readBookings().filter((booking) => booking.date === date && booking.time === trip.time && booking.bus === trip.bus.registration && ['Confirmed', 'Reserved'].includes(booking.bookingStatus)).flatMap((booking) => booking.seats)]), [date, trip.bus.registration, trip.time])
+  const toggleSeat = (seat: number) => { if (occupied.has(seat)) return; setSelectedSeats((current) => current.includes(seat) ? current.filter((item) => item !== seat) : current.length < 4 ? [...current, seat].sort((a, b) => a - b) : current) }
+  const completePayment = () => {
+    if (!selectedSeats.length || !passenger.name.trim() || !passenger.phone.trim() || !passenger.cnic.trim()) { setError('Select a seat and complete all passenger details before payment.'); return }
+    setError(''); setProcessing(true); window.setTimeout(() => { const stamp = Date.now(); const booking: Booking = { id: String(stamp), ticketNo: `ME-${date.slice(2).replaceAll('-', '')}-${String(stamp).slice(-4)}`, source: 'Public web', passenger: passenger.name.trim(), phone: passenger.phone.trim(), cnic: passenger.cnic.trim(), gender: passenger.gender, route: routeLabel(trip.route), destination: trip.route.to, boardingPoint: trip.route.boarding, bus: trip.bus.registration, service: trip.bus.service, seats: selectedSeats, fare: trip.fare, discount: 0, total, paid: total, balance: 0, paymentMethod: '1Bill', paymentReference: invoice, paymentStatus: 'Paid', bookingStatus: 'Confirmed', date, time: trip.time, driver: 'Assigned crew', attendant: 'Female attendant assigned', createdAt: new Date().toISOString() }; storeBookings([booking, ...readBookings()]); setProcessing(false); onPaid(booking) }, 1200)
   }
+  return <div className="checkout-overlay" role="dialog" aria-modal="true" aria-label="Buy ticket"><div className="checkout-modal"><header className="checkout-header"><div><button type="button" onClick={onClose}><ArrowLeft size={16} /> Back</button><h2>Complete your booking</h2><p>{routeLabel(trip.route)} · {date} at {trip.time}</p></div><button className="modal-close" type="button" aria-label="Close checkout" onClick={onClose}><X size={19} /></button></header><div className="checkout-body"><section className="checkout-seat-section"><SectionTitle number="1" title="Select seats" text="Choose up to four available seats." suffix={String(selectedSeats.length)} /><SeatMap seats={trip.bus.seats} selectedSeats={selectedSeats} occupied={occupied} onSelect={toggleSeat} large /></section><div className="checkout-details"><section className="checkout-card"><SectionTitle number="2" title="Passenger details" text="Used for your confirmed e-ticket." /><div className="checkout-form"><label><span>Full name</span><input value={passenger.name} onChange={(event) => setPassenger({ ...passenger, name: event.target.value })} placeholder="Passenger full name" /></label><label><span>Mobile number</span><input value={passenger.phone} onChange={(event) => setPassenger({ ...passenger, phone: event.target.value })} placeholder="03XX XXXXXXX" inputMode="tel" /></label><label><span>CNIC / Passport</span><input value={passenger.cnic} onChange={(event) => setPassenger({ ...passenger, cnic: event.target.value })} placeholder="XXXXX-XXXXXXX-X" /></label><fieldset className="compact-choice"><legend>Gender</legend><div><button type="button" className={passenger.gender === 'Male' ? 'choice active' : 'choice'} onClick={() => setPassenger({ ...passenger, gender: 'Male' })}>Male</button><button type="button" className={passenger.gender === 'Female' ? 'choice active' : 'choice'} onClick={() => setPassenger({ ...passenger, gender: 'Female' })}>Female</button></div></fieldset></div></section><section className="checkout-card payment-card"><SectionTitle number="3" title="Pay securely with 1Bill" text="Your ticket is issued only after full payment." icon /><div className="invoice-box"><span><small>1BILL INVOICE</small><strong>{invoice}</strong></span><button type="button" onClick={() => navigator.clipboard?.writeText(invoice)}>Copy</button></div><div className="payment-total"><span><small>Seats</small><strong>{selectedSeats.length ? selectedSeats.join(', ') : 'None selected'}</strong></span><span><small>Total payable</small><strong>{money(total)}</strong></span></div>{error && <p className="form-error">{error}</p>}<button className="pay-button" type="button" disabled={processing} onClick={completePayment}>{processing ? <><RefreshCw className="spin" size={17} /> Verifying payment…</> : <><LockKeyhole size={17} /> Pay {money(total)} & issue ticket</>}</button><small className="gateway-note"><ShieldCheck size={13} /> Encrypted payment · No unpaid online reservations</small></section></div></div></div></div>
+}
 
-  return <div className="login-page">
-    <button type="button" className="login-back" onClick={() => onNavigate('/')}><ArrowRight size={15} /> Back to website</button>
-    <div className="login-shell">
-      <section className="login-brand-panel"><div className="public-brand light"><span className="brand-mark">ME</span><span><strong>Madina Express</strong><small>Staff operations</small></span></div><div><p>SECURE STAFF ACCESS</p><h1>Manage every journey from one place.</h1><span>Bookings, reservations, payments and receipts for the Madina Express counter team.</span></div><small>Authorized personnel only</small></section>
-      <form className="login-form" onSubmit={signIn}><div className="login-icon"><LockKeyhole size={20} /></div><h2>Welcome back</h2><p>Sign in to access the management system.</p><label><span>Email or username</span><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Enter your username" autoComplete="username" /></label><label><span>Password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" autoComplete="current-password" /></label><div className="login-row"><label><input type="checkbox" /> Remember this device</label><button type="button">Forgot password?</button></div><button className="login-submit" type="submit">Sign in to system <ArrowRight size={16} /></button><small>This frontend demo accepts any non-empty credentials.</small></form>
-    </div>
-  </div>
+function SectionTitle({ number, title, text, suffix, icon }: { number: string; title: string; text: string; suffix?: string; icon?: boolean }) { return <div className="checkout-section-title"><span>{number}</span><div><h3>{title}</h3><p>{text}</p></div>{suffix && <b>{suffix}</b>}{icon && <ShieldCheck size={20} />}</div> }
+
+function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
+  const [email, setEmail] = useState(''), [password, setPassword] = useState('')
+  const signIn = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!email || !password) return; sessionStorage.setItem('madina-express-session', 'active'); onNavigate('/manage') }
+  return <div className="login-page"><button type="button" className="login-back" onClick={() => onNavigate('/')}><ArrowLeft size={15} /> Back to website</button><div className="login-shell"><section className="login-brand-panel"><div className="public-brand light"><span className="brand-mark">ME</span><span><strong>Madina Express</strong><small>Staff operations</small></span></div><div><p>SECURE STAFF ACCESS</p><h1>Your transport operation, in one place.</h1><span>Manage paid tickets, counter reservations, trips, fleet, finance and crew from one professional workspace.</span></div><small>Authorized personnel only</small></section><form className="login-form" onSubmit={signIn}><div className="login-icon"><LockKeyhole size={20} /></div><h2>Welcome back</h2><p>Sign in to the operations system.</p><label><span>Email or username</span><input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Enter your username" autoComplete="username" /></label><label><span>Password</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Enter your password" autoComplete="current-password" /></label><div className="login-row"><label><input type="checkbox" /> Remember this device</label><button type="button">Forgot password?</button></div><button className="login-submit" type="submit">Sign in to system <ArrowRight size={16} /></button><small>Frontend demonstration: any non-empty credentials are accepted.</small></form></div></div>
+}
+
+const navGroups = [
+  { label: 'OPERATIONS', items: [{ id: 'dashboard' as AdminView, label: 'Dashboard', icon: Gauge }, { id: 'sale' as AdminView, label: 'New sale', icon: Ticket }, { id: 'bookings' as AdminView, label: 'Paid bookings', icon: BookOpenCheck }, { id: 'reservations' as AdminView, label: 'Reservations', icon: CalendarCheck }] },
+  { label: 'MANAGEMENT', items: [{ id: 'trips' as AdminView, label: 'Trips & schedules', icon: CalendarDays }, { id: 'fleet' as AdminView, label: 'Buses', icon: Bus }, { id: 'routes' as AdminView, label: 'Routes', icon: MapPinned }, { id: 'finance' as AdminView, label: 'Finance', icon: Banknote }, { id: 'crew' as AdminView, label: 'Staff & crew', icon: UserRoundCog }] },
+]
+const viewMeta: Record<AdminView, { title: string; description: string }> = {
+  dashboard: { title: 'Operations dashboard', description: 'Live overview of sales, departures and terminal activity' }, sale: { title: 'New sale', description: 'Issue a paid ticket or create a counter reservation' }, bookings: { title: 'Paid bookings', description: 'Search, print and manage confirmed passenger tickets' }, reservations: { title: 'Reservations', description: 'Manage temporary counter holds before they expire' }, trips: { title: 'Trips & schedules', description: 'Plan departures, assign buses and manage crews' }, fleet: { title: 'Fleet management', description: 'Monitor vehicle availability, capacity and maintenance' }, routes: { title: 'Routes & fares', description: 'Manage destinations, travel times and pricing' }, finance: { title: 'Finance', description: 'Track collections, payment channels and settlements' }, crew: { title: 'Staff & crew', description: 'Manage drivers, female attendants and shift assignments' }, settings: { title: 'System settings', description: 'Configure payments, tickets, policies and data connections' },
 }
 
 function ManagementApp({ onLogout }: { onLogout: () => void }) {
-  const [routeId, setRouteId] = useState(routes[0].id)
-  const [busId, setBusId] = useState(buses[0].id)
-  const [travelDate, setTravelDate] = useState(today)
-  const [departureTime, setDepartureTime] = useState('16:00')
-  const [driver, setDriver] = useState('Muhammad Ameen')
-  const [attendant, setAttendant] = useState('Ayesha Khan')
-  const [passenger, setPassenger] = useState<PassengerForm>(initialPassenger)
-  const [selectedSeats, setSelectedSeats] = useState<number[]>([7])
-  const [bookings, setBookings] = useState<Booking[]>(getStoredBookings)
-  const [search, setSearch] = useState('')
-  const [receipt, setReceipt] = useState<Booking | null>(null)
-  const [toast, setToast] = useState('')
-
-  const route = routes.find((item) => item.id === routeId) ?? routes[0]
-  const bus = buses.find((item) => item.id === busId) ?? buses[0]
-  const total = Math.max(0, passenger.fare * selectedSeats.length - passenger.discount)
-  const balance = Math.max(0, total - passenger.paid)
-  const paymentStatus: PaymentStatus = passenger.paid >= total && total > 0 ? 'Paid' : passenger.paid > 0 ? 'Partial' : 'Due'
-
-  const activeBookedSeats = useMemo(() => {
-    const savedSeats = bookings
-      .filter((item) => item.bus === bus.registration && item.date === travelDate && item.time === departureTime && item.bookingStatus === 'Confirmed')
-      .flatMap((item) => item.seats)
-    return new Set([...bus.booked, ...savedSeats])
-  }, [bookings, bus, departureTime, travelDate])
-
-  const currentTripBookings = bookings.filter((item) => item.bookingStatus === 'Confirmed' && item.date === travelDate && item.bus === bus.registration)
-  const tripSales = currentTripBookings.reduce((sum, item) => sum + item.paid, 0)
-  const tripBooked = new Set(currentTripBookings.flatMap((item) => item.seats)).size + bus.booked.length
-  const visibleBookings = bookings.filter((item) => {
-    const haystack = `${item.ticketNo} ${item.passenger} ${item.phone} ${item.cnic} ${item.route}`.toLowerCase()
-    return haystack.includes(search.toLowerCase())
-  })
-
-  const showToast = (message: string) => {
-    setToast(message)
-    window.setTimeout(() => setToast(''), 2600)
-  }
-
-  const persistBookings = (next: Booking[]) => {
-    setBookings(next)
-    localStorage.setItem('madina-express-bookings', JSON.stringify(next))
-  }
-
-  const updatePassenger = <K extends keyof PassengerForm>(key: K, value: PassengerForm[K]) => {
-    setPassenger((current) => ({ ...current, [key]: value }))
-  }
-
-  const handleRouteChange = (newRouteId: string) => {
-    const nextRoute = routes.find((item) => item.id === newRouteId) ?? routes[0]
-    setRouteId(newRouteId)
-    setPassenger((current) => ({ ...current, fare: nextRoute.fare, paid: nextRoute.fare, boardingPoint: nextRoute.boarding }))
-  }
-
-  const handleBusChange = (newBusId: string) => {
-    setBusId(newBusId)
-    setSelectedSeats([])
-  }
-
-  const toggleSeat = (seat: number) => {
-    if (activeBookedSeats.has(seat) || bus.reserved.includes(seat)) return
-    setSelectedSeats((current) => current.includes(seat) ? current.filter((item) => item !== seat) : [...current, seat].sort((a, b) => a - b))
-  }
-
-  const resetForm = () => {
-    setPassenger({ ...initialPassenger, fare: route.fare, paid: route.fare, boardingPoint: route.boarding })
-    setSelectedSeats([])
-  }
-
-  const saveBooking = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!passenger.passenger.trim() || !passenger.phone.trim()) {
-      showToast('Enter the passenger name and mobile number.')
-      return
-    }
-    if (!selectedSeats.length) {
-      showToast('Select at least one available seat.')
-      return
-    }
-
-    const stamp = Date.now()
-    const newBooking: Booking = {
-      id: String(stamp),
-      ticketNo: `ME-${travelDate.slice(2).replaceAll('-', '')}-${String(stamp).slice(-4)}`,
-      passenger: passenger.passenger.trim(),
-      phone: passenger.phone.trim(),
-      cnic: passenger.cnic.trim(),
-      gender: passenger.gender,
-      route: route.label,
-      destination: route.destination,
-      boardingPoint: passenger.boardingPoint,
-      bus: bus.registration,
-      service: bus.service,
-      seats: selectedSeats,
-      fare: passenger.fare,
-      discount: passenger.discount,
-      total,
-      paid: passenger.paid,
-      balance,
-      paymentMethod: passenger.paymentMethod,
-      paymentStatus,
-      bookingStatus: 'Confirmed',
-      date: travelDate,
-      time: departureTime,
-      driver,
-      attendant,
-      createdAt: new Date().toISOString(),
-    }
-    persistBookings([newBooking, ...bookings])
-    setReceipt(newBooking)
-    showToast(`Ticket ${newBooking.ticketNo} saved.`)
-    resetForm()
-  }
-
-  const cancelBooking = (id: string) => {
-    const next = bookings.map((item) => item.id === id ? { ...item, bookingStatus: 'Cancelled' as const } : item)
-    persistBookings(next)
-    showToast('Booking cancelled. The seat is available again.')
-  }
-
-  return (
-    <div className="admin-shell">
-      <div className="admin-content">
-        <header className="admin-topbar">
-          <div className="admin-topbar-left">
-            <div className="admin-brandbar"><span>ME</span><div><strong>Madina Express</strong><small>Management System</small></div></div>
-            <nav className="admin-tabs" aria-label="Management navigation"><button type="button" className="active" onClick={() => document.getElementById('new-booking')?.scrollIntoView({ behavior: 'smooth' })}><Ticket size={15} /> New booking</button><button type="button" onClick={() => document.getElementById('reservations')?.scrollIntoView({ behavior: 'smooth' })}><CalendarCheck size={15} /> Reservations</button></nav>
-          </div>
-          <div className="admin-topbar-right"><span className="admin-shift"><i /> System ready</span><span className="admin-divider" /><div className="admin-user"><span className="avatar">SK</span><div><strong>Salman Khan</strong><small>Madina Terminal · Counter 01</small></div></div><button className="admin-signout" type="button" title="Sign out" aria-label="Sign out" onClick={onLogout}><LogOut size={15} /></button></div>
-        </header>
-
-        <main className="admin-main">
-          <div className="admin-context"><div><strong>New booking</strong><span>Enter trip and passenger details, then select seats.</span></div><small>{new Date().toLocaleDateString('en-PK', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })}</small></div>
-
-        <div className="booking-surface" id="new-booking">
-        <section className="trip-panel admin-trip-panel">
-          <div className="panel-heading">
-            <div className="title-with-step"><div><h2>Trip selection</h2><p>Choose a route and bus, then enter the crew details.</p></div></div>
-            <div className="trip-status"><BusFront size={15} /> {bus.seats - tripBooked} seats available</div>
-          </div>
-          <div className="trip-grid">
-            <label className="wide-field"><span><MapPin size={13} /> Route</span><select value={routeId} onChange={(event) => handleRouteChange(event.target.value)}>{routes.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
-            <label><span><BusFront size={13} /> Bus</span><select value={busId} onChange={(event) => handleBusChange(event.target.value)}>{buses.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
-            <label><span><CalendarDays size={13} /> Travel date</span><input type="date" value={travelDate} onChange={(event) => setTravelDate(event.target.value)} /></label>
-            <label><span><Clock3 size={13} /> Departure</span><input type="time" value={departureTime} onChange={(event) => setDepartureTime(event.target.value)} /></label>
-            <label><span><UserRound size={13} /> Driver</span><input value={driver} onChange={(event) => setDriver(event.target.value)} placeholder="Driver name" /></label>
-            <label><span><UsersRound size={13} /> Female attendant</span><input value={attendant} onChange={(event) => setAttendant(event.target.value)} placeholder="Attendant name" /></label>
-          </div>
-          <div className="trip-summary-bar">
-            <span><small>Service</small><strong>{bus.service}</strong></span>
-            <span><small>Vehicle</small><strong>{bus.registration}</strong></span>
-            <span><small>Booked seats</small><strong>{tripBooked} / {bus.seats}</strong></span>
-            <span><small>Trip collection</small><strong>{money(tripSales)}</strong></span>
-          </div>
-        </section>
-
-        <form className="workspace-grid admin-booking-grid" onSubmit={saveBooking}>
-          <section className="passenger-card">
-            <div className="panel-heading">
-              <div className="title-with-step"><div><h2>Passenger & payment</h2><p>Enter the customer details and collect the fare.</p></div></div>
-              <ShieldCheck className="header-icon" size={20} />
-            </div>
-
-            <div className="section-label">PASSENGER DETAILS</div>
-            <div className="form-grid">
-              <label className="span-2"><span>Passenger name *</span><input value={passenger.passenger} onChange={(event) => updatePassenger('passenger', event.target.value)} placeholder="Enter full name" /></label>
-              <label><span>Mobile number *</span><input value={passenger.phone} onChange={(event) => updatePassenger('phone', event.target.value)} placeholder="03XX XXXXXXX" inputMode="tel" /></label>
-              <fieldset className="compact-choice"><legend>Gender</legend><div><button type="button" className={passenger.gender === 'Male' ? 'choice active' : 'choice'} onClick={() => updatePassenger('gender', 'Male')}>Male</button><button type="button" className={passenger.gender === 'Female' ? 'choice active' : 'choice'} onClick={() => updatePassenger('gender', 'Female')}>Female</button></div></fieldset>
-              <fieldset className="compact-choice"><legend>ID type</legend><div><button type="button" className={passenger.idType === 'CNIC' ? 'choice active' : 'choice'} onClick={() => updatePassenger('idType', 'CNIC')}>CNIC</button><button type="button" className={passenger.idType === 'Passport' ? 'choice active' : 'choice'} onClick={() => updatePassenger('idType', 'Passport')}>Passport</button></div></fieldset>
-              <label><span>{passenger.idType} number</span><input value={passenger.cnic} onChange={(event) => updatePassenger('cnic', event.target.value)} placeholder={passenger.idType === 'CNIC' ? 'XXXXX-XXXXXXX-X' : 'Enter passport no.'} /></label>
-              <label className="span-2"><span>Boarding / pickup point</span><input value={passenger.boardingPoint} onChange={(event) => updatePassenger('boardingPoint', event.target.value)} /></label>
-            </div>
-
-            <div className="section-label payment-label">PAYMENT DETAILS</div>
-            <div className="form-grid payment-grid">
-              <label><span>Fare per seat</span><div className="money-input"><b>PKR</b><input type="number" min="0" value={passenger.fare} onChange={(event) => updatePassenger('fare', Number(event.target.value))} /></div></label>
-              <label><span>Discount</span><div className="money-input"><b>PKR</b><input type="number" min="0" value={passenger.discount} onChange={(event) => updatePassenger('discount', Number(event.target.value))} /></div></label>
-              <label><span>Amount received</span><div className="money-input"><b>PKR</b><input type="number" min="0" value={passenger.paid} onChange={(event) => updatePassenger('paid', Number(event.target.value))} /></div></label>
-              <button type="button" className="full-payment" onClick={() => updatePassenger('paid', total)}><Check size={14} /> Mark fully paid</button>
-            </div>
-            <fieldset className="payment-methods"><legend>Payment method</legend><div>{(['Cash', 'Card', 'Bank transfer', '1Bill'] as PaymentMethod[]).map((method) => <button type="button" key={method} className={passenger.paymentMethod === method ? 'payment-method active' : 'payment-method'} onClick={() => updatePassenger('paymentMethod', method)}>{method === 'Cash' ? <WalletCards size={15} /> : <CreditCard size={15} />}{method}</button>)}</div></fieldset>
-            {passenger.paymentMethod !== 'Cash' && <label className="reference-field"><span>Payment reference</span><input value={passenger.paymentReference} onChange={(event) => updatePassenger('paymentReference', event.target.value)} placeholder="Transaction or reference number" /></label>}
-
-            <div className="payment-summary">
-              <span><small>{selectedSeats.length} seat{selectedSeats.length === 1 ? '' : 's'} × {money(passenger.fare)}</small><strong>Total</strong></span>
-              <b>{money(total)}</b>
-              <span className={`balance ${paymentStatus.toLowerCase()}`}><small>{paymentStatus}</small><strong>{balance ? `${money(balance)} due` : 'Fully paid'}</strong></span>
-            </div>
-
-            <div className="form-actions">
-              <button type="button" className="secondary-button" onClick={resetForm}><RotateCcw size={16} /> Clear</button>
-              <button type="submit" className="primary-button"><ReceiptText size={17} /> Save & preview ticket</button>
-            </div>
-          </section>
-
-          <section className="seat-card">
-            <div className="panel-heading seat-heading">
-              <div className="title-with-step"><div><h2>Select seats</h2><p>{selectedSeats.length ? `Seats ${selectedSeats.join(', ')} selected` : 'Choose one or more available seats'}</p></div></div>
-              <div className="seat-count">{selectedSeats.length}</div>
-            </div>
-            <div className="legend"><span><i className="available" />Available</span><span><i className="selected" />Selected</span><span><i className="booked" />Booked</span><span><i className="reserved" />Reserved</span></div>
-            <div className="bus-shell">
-              <div className="bus-front"><span><BusFront size={16} /> FRONT</span><span>DRIVER</span></div>
-              <div className="seat-layout">
-                {Array.from({ length: Math.ceil(bus.seats / 4) }, (_, rowIndex) => {
-                  const seats = Array.from({ length: 4 }, (__, index) => rowIndex * 4 + index + 1).filter((seat) => seat <= bus.seats)
-                  return <div className="seat-row" key={rowIndex}>
-                    <div className="seat-pair">{seats.slice(0, 2).map((seat) => <SeatButton seat={seat} selectedSeats={selectedSeats} booked={activeBookedSeats.has(seat)} reserved={bus.reserved.includes(seat)} onSelect={toggleSeat} key={seat} />)}</div>
-                    <span className="aisle">{rowIndex + 1}</span>
-                    <div className="seat-pair">{seats.slice(2, 4).map((seat) => <SeatButton seat={seat} selectedSeats={selectedSeats} booked={activeBookedSeats.has(seat)} reserved={bus.reserved.includes(seat)} onSelect={toggleSeat} key={seat} />)}</div>
-                  </div>
-                })}
-              </div>
-            </div>
-            <div className="seat-card-footer"><span><Armchair size={15} /> {bus.seats - tripBooked} available</span><strong>{money(total)}</strong></div>
-          </section>
-        </form>
-        </div>
-
-        <section className="panel bookings-card" id="reservations">
-          <div className="bookings-header">
-            <div><p className="eyebrow">COUNTER ACTIVITY</p><h2>Recent bookings</h2><p>Search, reprint or cancel tickets saved on this device.</p></div>
-            <label className="search-box"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search ticket, passenger or CNIC" /></label>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>Ticket</th><th>Passenger</th><th>Journey</th><th>Seat</th><th>Payment</th><th>Amount</th><th>Status</th><th aria-label="Actions" /></tr></thead>
-              <tbody>{visibleBookings.length ? visibleBookings.map((item) => <tr className={item.bookingStatus === 'Cancelled' ? 'cancelled-row' : ''} key={item.id}>
-                <td><strong>{item.ticketNo}</strong><small>{item.date} · {item.time}</small></td>
-                <td><strong>{item.passenger}</strong><small>{item.phone}</small></td>
-                <td><strong>{item.route}</strong><small>{item.bus} · {item.service}</small></td>
-                <td><span className="seat-list">{item.seats.join(', ')}</span></td>
-                <td><strong>{item.paymentMethod}</strong><small>{item.paymentStatus}</small></td>
-                <td><strong>{money(item.total)}</strong><small>{item.balance ? `${money(item.balance)} due` : 'Settled'}</small></td>
-                <td><span className={`status-badge ${item.bookingStatus.toLowerCase()}`}>{item.bookingStatus}</span></td>
-                <td><div className="row-actions"><button type="button" aria-label={`Print ${item.ticketNo}`} title="Preview ticket" onClick={() => setReceipt(item)}><Printer size={15} /></button><button type="button" disabled={item.bookingStatus === 'Cancelled'} aria-label={`Cancel ${item.ticketNo}`} title="Cancel booking" onClick={() => cancelBooking(item.id)}><XCircle size={15} /></button></div></td>
-              </tr>) : <tr><td className="empty-state" colSpan={8}><FileText size={24} /><strong>No bookings found</strong><span>Try a different search term.</span></td></tr>}</tbody>
-            </table>
-          </div>
-        </section>
-        </main>
-      </div>
-
-      {receipt && <ReceiptModal booking={receipt} onClose={() => setReceipt(null)} />}
-      {toast && <div className="toast"><Check size={16} /> {toast}</div>}
-    </div>
-  )
+  const [activeView, setActiveView] = useState<AdminView>('dashboard'), [sidebarOpen, setSidebarOpen] = useState(false), [bookings, setBookings] = useState<Booking[]>(readBookings), [receipt, setReceipt] = useState<Booking | null>(null), [toast, setToast] = useState('')
+  useEffect(() => { const sync = () => setBookings(readBookings()); window.addEventListener('madina-bookings-updated', sync); return () => window.removeEventListener('madina-bookings-updated', sync) }, [])
+  const showToast = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2600) }
+  const persist = (next: Booking[]) => { setBookings(next); storeBookings(next) }
+  const saveBooking = (booking: Booking) => { persist([booking, ...bookings]); if (booking.bookingStatus === 'Confirmed') setReceipt(booking); showToast(booking.bookingStatus === 'Reserved' ? `Reservation ${booking.ticketNo} saved.` : `Paid ticket ${booking.ticketNo} issued.`) }
+  const cancelBooking = (id: string) => { persist(bookings.map((booking) => booking.id === id ? { ...booking, bookingStatus: 'Cancelled' as const } : booking)); showToast('Booking cancelled and seats released.') }
+  const confirmReservation = (id: string) => { const booking = bookings.find((item) => item.id === id); if (!booking) return; const confirmed: Booking = { ...booking, ticketNo: booking.ticketNo.replace('RS-', 'ME-'), paid: booking.total, balance: 0, paymentStatus: 'Paid', bookingStatus: 'Confirmed', paymentReference: `COUNTER-${Date.now().toString().slice(-6)}` }; persist(bookings.map((item) => item.id === id ? confirmed : item)); setReceipt(confirmed); showToast('Payment collected. Confirmed ticket issued.') }
+  const changeView = (view: AdminView) => { setActiveView(view); setSidebarOpen(false); window.scrollTo({ top: 0 }) }
+  const reservationCount = bookings.filter((booking) => booking.bookingStatus === 'Reserved').length, paidCount = bookings.filter((booking) => booking.bookingStatus === 'Confirmed' && booking.paymentStatus === 'Paid').length
+  return <div className="admin-shell"><button className={`sidebar-scrim ${sidebarOpen ? 'show' : ''}`} type="button" aria-label="Close menu" onClick={() => setSidebarOpen(false)} /><aside className={`admin-sidebar ${sidebarOpen ? 'open' : ''}`}><div className="sidebar-brand"><span>ME</span><div><strong>Madina Express</strong><small>Operations Suite</small></div></div><nav aria-label="Operations modules">{navGroups.map((group) => <div className="nav-group" key={group.label}><p>{group.label}</p>{group.items.map((item) => { const Icon = item.icon; const count = item.id === 'bookings' ? paidCount : item.id === 'reservations' ? reservationCount : 0; return <button type="button" className={activeView === item.id ? 'active' : ''} onClick={() => changeView(item.id)} key={item.id}><Icon size={17} /><span>{item.label}</span>{count > 0 && <b>{count}</b>}</button> })}</div>)}</nav><div className="sidebar-footer"><button type="button" className={activeView === 'settings' ? 'active' : ''} onClick={() => changeView('settings')}><Settings size={17} /><span>Settings</span></button><small>Madina Terminal<br />Peshawar</small></div></aside><div className="admin-content"><header className="admin-topbar"><div className="admin-topbar-left"><button className="mobile-menu" type="button" aria-label="Open menu" onClick={() => setSidebarOpen(true)}><Menu size={19} /></button><div className="admin-page-title"><strong>{viewMeta[activeView].title}</strong><small>{viewMeta[activeView].description}</small></div></div><div className="admin-topbar-right"><span className="admin-shift"><i /> System online</span><button className="admin-icon-button" type="button" aria-label="Notifications"><Bell size={16} /><i /></button><span className="admin-divider" /><div className="admin-user"><span className="avatar">SK</span><div><strong>Salman Khan</strong><small>Admin · Counter 01</small></div></div><button className="admin-signout" type="button" title="Sign out" aria-label="Sign out" onClick={onLogout}><LogOut size={15} /></button></div></header><main className="admin-main">{activeView === 'dashboard' && <DashboardView bookings={bookings} onNavigate={changeView} />}{activeView === 'sale' && <BookingWorkspace bookings={bookings} onSave={saveBooking} showToast={showToast} />}{activeView === 'bookings' && <BookingsView bookings={bookings} onPrint={setReceipt} onCancel={cancelBooking} />}{activeView === 'reservations' && <ReservationsView bookings={bookings} onConfirm={confirmReservation} onCancel={cancelBooking} onNew={() => changeView('sale')} />}{activeView === 'trips' && <TripsView bookings={bookings} showToast={showToast} />}{activeView === 'fleet' && <FleetView showToast={showToast} />}{activeView === 'routes' && <RoutesView showToast={showToast} />}{activeView === 'finance' && <FinanceView bookings={bookings} />}{activeView === 'crew' && <CrewView showToast={showToast} />}{activeView === 'settings' && <SettingsView showToast={showToast} />}</main></div>{receipt && <ReceiptModal booking={receipt} onClose={() => setReceipt(null)} />}{toast && <div className="toast"><Check size={16} /> {toast}</div>}</div>
 }
 
-function SeatButton({ seat, selectedSeats, booked, reserved, onSelect }: { seat: number, selectedSeats: number[], booked: boolean, reserved: boolean, onSelect: (seat: number) => void }) {
-  const selected = selectedSeats.includes(seat)
-  const status = booked ? 'booked' : reserved ? 'reserved' : selected ? 'selected' : 'available'
-  return <button type="button" disabled={booked || reserved} className={`seat seat--${status}`} aria-label={`Seat ${seat}, ${status}`} aria-pressed={selected} onClick={() => onSelect(seat)}><Armchair size={13} /><b>{seat}</b></button>
+function DashboardView({ bookings, onNavigate }: { bookings: Booking[]; onNavigate: (view: AdminView) => void }) {
+  const paid = bookings.filter((b) => b.paymentStatus === 'Paid' && b.bookingStatus === 'Confirmed'), revenue = paid.reduce((sum, b) => sum + b.paid, 0), reservations = bookings.filter((b) => b.bookingStatus === 'Reserved').length, webSales = paid.filter((b) => b.source === 'Public web').reduce((sum, b) => sum + b.paid, 0)
+  const metrics = [{ label: "Today's revenue", value: money(revenue), note: '+12.4% from yesterday', icon: CircleDollarSign, tone: 'green' }, { label: 'Paid tickets', value: String(paid.length), note: `${paid.filter((b) => b.source === 'Public web').length} sold online`, icon: Ticket, tone: 'blue' }, { label: 'Seat occupancy', value: '68%', note: 'Across today’s departures', icon: Armchair, tone: 'gold' }, { label: 'Active reservations', value: String(reservations), note: 'Counter holds only', icon: CalendarCheck, tone: 'orange' }]
+  return <div className="admin-view dashboard-view"><ViewHeading eyebrow="WEDNESDAY · 02 SEPTEMBER" title="Good afternoon, Salman" text="Here is what is happening across Madina Express today." action={<button className="primary-button" type="button" onClick={() => onNavigate('sale')}><Plus size={16} /> New sale</button>} /><section className="metric-grid">{metrics.map((m) => { const Icon = m.icon; return <article className="metric-card" key={m.label}><span className={`metric-icon ${m.tone}`}><Icon size={19} /></span><div><small>{m.label}</small><strong>{m.value}</strong><p>{m.note}</p></div></article> })}</section><div className="dashboard-grid"><section className="surface schedule-panel"><SurfaceHeader title="Today’s departures" text="Live trip and boarding status" action={<button type="button" onClick={() => onNavigate('trips')}>View schedule <ChevronRight size={15} /></button>} /><div className="schedule-list">{tripRecords.map((t) => { const r = routeRecords.find((x) => x.id === t.routeId) ?? routeRecords[0], bus = fleetRecords.find((x) => x.id === t.busId) ?? fleetRecords[0], sold = bookings.filter((b) => b.date === today && b.time === t.departure && b.bus === bus.registration && ['Confirmed', 'Reserved'].includes(b.bookingStatus)).flatMap((b) => b.seats).length; return <article key={t.id}><time>{t.departure}</time><span className={`timeline-dot ${t.status.toLowerCase()}`} /><div className="schedule-route"><strong>{routeLabel(r)}</strong><small>{bus.registration} · {bus.service}</small></div><div className="schedule-load"><span><i style={{ width: `${Math.min(100, Math.round(sold / bus.seats * 100))}%` }} /></span><small>{sold}/{bus.seats} seats</small></div><b className={`plain-status ${t.status.toLowerCase()}`}>{t.status}</b></article> })}</div></section><section className="surface revenue-panel"><SurfaceHeader title="Revenue overview" text="Collections by sales channel" action={<div className="mini-tabs"><button type="button">Week</button><button type="button" className="active">Today</button></div>} /><div className="revenue-total"><small>Total collected</small><strong>{money(revenue)}</strong><span><Activity size={13} /> 12.4% growth</span></div><div className="channel-bars"><ProgressRow label="Counter sales" value={money(revenue - webSales)} percent={revenue ? Math.round((revenue - webSales) / revenue * 100) : 0} /><ProgressRow label="Public website · 1Bill" value={money(webSales)} percent={revenue ? Math.round(webSales / revenue * 100) : 0} gold /></div><SettlementNote title="1Bill settlement matched" text="Last reconciled today at 13:45" /></section></div><section className="surface recent-panel"><SurfaceHeader title="Recent sales activity" text="Latest paid tickets from web and counter" action={<button type="button" onClick={() => onNavigate('bookings')}>All bookings <ChevronRight size={15} /></button>} /><BookingTable bookings={paid.slice(0, 5)} onPrint={() => undefined} compact /></section></div>
 }
 
-function ReceiptModal({ booking, onClose }: { booking: Booking, onClose: () => void }) {
-  return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}>
-    <div className="receipt-modal">
-      <div className="receipt-toolbar"><div><strong>Ticket preview</strong><small>80mm thermal receipt</small></div><button type="button" onClick={onClose} aria-label="Close ticket preview"><X size={18} /></button></div>
-      <article className="receipt">
-        <header><div className="receipt-logo">ME</div><h2>MADINA EXPRESS</h2><p>Safe journeys, every day</p><small>0311-777-2299 · Madina Terminal, Peshawar</small></header>
-        <div className="receipt-rule" />
-        <div className="ticket-heading"><span><small>TICKET NO.</small><strong>{booking.ticketNo}</strong></span><span className={`receipt-status ${booking.paymentStatus.toLowerCase()}`}>{booking.paymentStatus}</span></div>
-        <div className="receipt-route"><span>{booking.route.split(' → ')[0]}</span><i>→</i><span>{booking.destination}</span></div>
-        <div className="receipt-grid"><span><small>Departure</small><strong>{booking.date}<br />{booking.time}</strong></span><span><small>Bus / Service</small><strong>{booking.bus}<br />{booking.service}</strong></span><span><small>Passenger</small><strong>{booking.passenger}</strong></span><span><small>Seat number</small><strong className="large-seat">{booking.seats.join(', ')}</strong></span></div>
-        <div className="receipt-rule" />
-        <div className="receipt-line"><span>Fare</span><strong>{money(booking.fare * booking.seats.length)}</strong></div>
-        <div className="receipt-line"><span>Discount</span><strong>- {money(booking.discount)}</strong></div>
-        <div className="receipt-line total-line"><span>Total</span><strong>{money(booking.total)}</strong></div>
-        <div className="receipt-line"><span>Paid via {booking.paymentMethod}</span><strong>{money(booking.paid)}</strong></div>
-        {booking.balance > 0 && <div className="receipt-line due-line"><span>Balance due</span><strong>{money(booking.balance)}</strong></div>}
-        <div className="receipt-barcode"><span /><small>{booking.ticketNo}</small></div>
-        <div className="boarding-coupon"><strong>BOARDING COUPON</strong><span><small>Seat</small><b>{booking.seats.join(', ')}</b></span><span><small>Bus</small><b>{booking.bus}</b></span><span><small>Time</small><b>{booking.time}</b></span></div>
-        <footer><p>Please arrive 30 minutes before departure.</p><small>Issued by Madina Express · {booking.driver} / {booking.attendant}</small></footer>
-      </article>
-      <div className="receipt-actions"><button className="secondary-button" type="button" onClick={onClose}>Close</button><button className="primary-button" type="button" onClick={() => window.print()}><Printer size={16} /> Print ticket</button></div>
-    </div>
-  </div>
+function ViewHeading({ eyebrow, title, text, action }: { eyebrow: string; title: string; text: string; action?: React.ReactNode }) { return <div className="view-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{text}</p></div>{action}</div> }
+function SurfaceHeader({ title, text, action }: { title: string; text: string; action?: React.ReactNode }) { return <div className="surface-header"><div><h2>{title}</h2><p>{text}</p></div>{action}</div> }
+function ProgressRow({ label, value, percent, gold = false }: { label: string; value: string; percent: number; gold?: boolean }) { return <div><span><b>{label}</b><small>{value}</small></span><i><em className={gold ? 'gold' : ''} style={{ width: `${percent}%` }} /></i></div> }
+function SettlementNote({ title, text }: { title: string; text: string }) { return <div className="settlement-note"><CheckCircle2 size={17} /><span><strong>{title}</strong><small>{text}</small></span></div> }
+
+function BookingWorkspace({ bookings, onSave, showToast }: { bookings: Booking[]; onSave: (booking: Booking) => void; showToast: (message: string) => void }) {
+  const [saleMode, setSaleMode] = useState<'Ticket' | 'Reservation'>('Ticket'), [routeId, setRouteId] = useState(routeRecords[0].id), [busId, setBusId] = useState(fleetRecords[0].id), [travelDate, setTravelDate] = useState(today), [departureTime, setDepartureTime] = useState('16:00'), [driver, setDriver] = useState('Muhammad Ameen'), [attendant, setAttendant] = useState('Ayesha Khan'), [selectedSeats, setSelectedSeats] = useState<number[]>([])
+  const route = routeRecords.find((x) => x.id === routeId) ?? routeRecords[0], bus = fleetRecords.find((x) => x.id === busId) ?? fleetRecords[0]
+  const [passenger, setPassenger] = useState<PassengerForm>({ passenger: '', phone: '', cnic: '', idType: 'CNIC', gender: 'Male', boardingPoint: route.boarding, fare: route.fare, discount: 0, paymentMethod: 'Cash', paymentReference: '' })
+  const total = Math.max(0, passenger.fare * selectedSeats.length - passenger.discount), occupied = useMemo(() => new Set(bookings.filter((b) => b.bus === bus.registration && b.date === travelDate && b.time === departureTime && ['Confirmed', 'Reserved'].includes(b.bookingStatus)).flatMap((b) => b.seats)), [bookings, bus.registration, departureTime, travelDate]), tripSales = bookings.filter((b) => b.bus === bus.registration && b.date === travelDate && b.time === departureTime && b.paymentStatus === 'Paid').reduce((sum, b) => sum + b.paid, 0)
+  const update = <K extends keyof PassengerForm>(key: K, value: PassengerForm[K]) => setPassenger((current) => ({ ...current, [key]: value }))
+  const reset = () => { setPassenger({ passenger: '', phone: '', cnic: '', idType: 'CNIC', gender: 'Male', boardingPoint: route.boarding, fare: route.fare, discount: 0, paymentMethod: 'Cash', paymentReference: '' }); setSelectedSeats([]) }
+  const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!passenger.passenger.trim() || !passenger.phone.trim() || !passenger.cnic.trim()) return showToast('Complete the passenger name, mobile number and ID.'); if (!selectedSeats.length) return showToast('Select at least one available seat.'); if (saleMode === 'Ticket' && passenger.paymentMethod !== 'Cash' && !passenger.paymentReference.trim()) return showToast('Enter the verified payment reference.'); const stamp = Date.now(), reserved = saleMode === 'Reservation'; onSave({ id: String(stamp), ticketNo: `${reserved ? 'RS' : 'ME'}-${travelDate.slice(2).replaceAll('-', '')}-${String(stamp).slice(-4)}`, source: 'Counter', passenger: passenger.passenger.trim(), phone: passenger.phone.trim(), cnic: passenger.cnic.trim(), gender: passenger.gender, route: routeLabel(route), destination: route.to, boardingPoint: passenger.boardingPoint, bus: bus.registration, service: bus.service, seats: selectedSeats, fare: passenger.fare, discount: passenger.discount, total, paid: reserved ? 0 : total, balance: reserved ? total : 0, paymentMethod: passenger.paymentMethod, paymentReference: reserved ? '' : passenger.paymentReference || `CASH-${String(stamp).slice(-6)}`, paymentStatus: reserved ? 'Unpaid' : 'Paid', bookingStatus: reserved ? 'Reserved' : 'Confirmed', date: travelDate, time: departureTime, driver, attendant, createdAt: new Date().toISOString(), expiresAt: reserved ? new Date(Date.now() + 7200000).toISOString() : undefined }); reset() }
+  return <div className="admin-view sale-view"><div className="view-heading compact"><div><p className="eyebrow">COUNTER OPERATIONS</p><h1>Create a new sale</h1><p>Select the journey, passenger and seats in one workspace.</p></div><div className="mode-tabs"><button type="button" className={saleMode === 'Ticket' ? 'active' : ''} onClick={() => setSaleMode('Ticket')}><Ticket size={15} /> Paid ticket</button><button type="button" className={saleMode === 'Reservation' ? 'active' : ''} onClick={() => setSaleMode('Reservation')}><CalendarCheck size={15} /> Reservation</button></div></div><div className="booking-surface"><section className="trip-panel admin-trip-panel"><div className="panel-heading"><div><h2>Trip and crew</h2><p>Choose an active route, vehicle and departure team.</p></div><div className="trip-status"><BusFront size={15} /> {bus.seats - occupied.size} seats available</div></div><div className="trip-grid"><label className="wide-field"><span><MapPin size={13} /> Route</span><select value={routeId} onChange={(e) => { const r = routeRecords.find((x) => x.id === e.target.value) ?? routeRecords[0]; setRouteId(e.target.value); setPassenger((p) => ({ ...p, boardingPoint: r.boarding, fare: r.fare })) }}>{routeRecords.map((r) => <option value={r.id} key={r.id}>{routeLabel(r)}</option>)}</select></label><label><span><BusFront size={13} /> Bus</span><select value={busId} onChange={(e) => { setBusId(e.target.value); setSelectedSeats([]) }}>{fleetRecords.filter((b) => b.status !== 'Maintenance').map((b) => <option value={b.id} key={b.id}>{b.registration} · {b.service}</option>)}</select></label><label><span><CalendarDays size={13} /> Travel date</span><input type="date" min={today} value={travelDate} onChange={(e) => setTravelDate(e.target.value)} /></label><label><span><Clock3 size={13} /> Departure</span><input type="time" value={departureTime} onChange={(e) => setDepartureTime(e.target.value)} /></label><label><span><UserRound size={13} /> Driver</span><select value={driver} onChange={(e) => setDriver(e.target.value)}>{crewRecords.filter((m) => m.role === 'Driver').map((m) => <option key={m.name}>{m.name}</option>)}</select></label><label><span><UsersRound size={13} /> Female attendant</span><select value={attendant} onChange={(e) => setAttendant(e.target.value)}>{crewRecords.filter((m) => m.role === 'Female attendant').map((m) => <option key={m.name}>{m.name}</option>)}</select></label></div><div className="trip-summary-bar"><span><small>Service</small><strong>{bus.service}</strong></span><span><small>Vehicle</small><strong>{bus.registration}</strong></span><span><small>Occupied</small><strong>{occupied.size} / {bus.seats}</strong></span><span><small>Trip collection</small><strong>{money(tripSales)}</strong></span></div></section><form className="workspace-grid admin-booking-grid" onSubmit={submit}><section className="passenger-card"><div className="panel-heading"><div><h2>Passenger {saleMode === 'Ticket' ? '& payment' : 'details'}</h2><p>{saleMode === 'Ticket' ? 'Collect the full fare before issuing the ticket.' : 'Counter reservations expire after two hours.'}</p></div><ShieldCheck size={20} /></div><div className="section-label">PASSENGER DETAILS</div><div className="form-grid"><label className="span-2"><span>Passenger name *</span><input value={passenger.passenger} onChange={(e) => update('passenger', e.target.value)} placeholder="Enter full name" /></label><label><span>Mobile number *</span><input value={passenger.phone} onChange={(e) => update('phone', e.target.value)} placeholder="03XX XXXXXXX" /></label><fieldset className="compact-choice"><legend>Gender</legend><div><button type="button" className={passenger.gender === 'Male' ? 'choice active' : 'choice'} onClick={() => update('gender', 'Male')}>Male</button><button type="button" className={passenger.gender === 'Female' ? 'choice active' : 'choice'} onClick={() => update('gender', 'Female')}>Female</button></div></fieldset><fieldset className="compact-choice"><legend>ID type</legend><div><button type="button" className={passenger.idType === 'CNIC' ? 'choice active' : 'choice'} onClick={() => update('idType', 'CNIC')}>CNIC</button><button type="button" className={passenger.idType === 'Passport' ? 'choice active' : 'choice'} onClick={() => update('idType', 'Passport')}>Passport</button></div></fieldset><label><span>{passenger.idType} number *</span><input value={passenger.cnic} onChange={(e) => update('cnic', e.target.value)} placeholder="XXXXX-XXXXXXX-X" /></label><label className="span-2"><span>Boarding / pickup point</span><input value={passenger.boardingPoint} onChange={(e) => update('boardingPoint', e.target.value)} /></label></div><div className="section-label payment-label">{saleMode === 'Ticket' ? 'PAYMENT DETAILS' : 'FARE SUMMARY'}</div><div className="form-grid fare-grid"><MoneyField label="Fare per seat" value={passenger.fare} onChange={(v) => update('fare', v)} /><MoneyField label="Discount" value={passenger.discount} onChange={(v) => update('discount', v)} /><MoneyField label="Total due" value={total} readOnly /></div>{saleMode === 'Ticket' && <><fieldset className="payment-methods"><legend>Full payment method</legend><div>{(['Cash', 'Card', 'Bank transfer', '1Bill'] as PaymentMethod[]).map((method) => <button type="button" key={method} className={passenger.paymentMethod === method ? 'payment-method active' : 'payment-method'} onClick={() => update('paymentMethod', method)}>{method === 'Cash' ? <WalletCards size={15} /> : <CreditCard size={15} />}{method}</button>)}</div></fieldset>{passenger.paymentMethod !== 'Cash' && <label className="reference-field"><span>Payment reference *</span><input value={passenger.paymentReference} onChange={(e) => update('paymentReference', e.target.value)} placeholder="Verified transaction reference" /></label>}</>}<div className={`payment-summary ${saleMode === 'Reservation' ? 'reservation-summary' : ''}`}><span><small>{selectedSeats.length} seat{selectedSeats.length === 1 ? '' : 's'} × {money(passenger.fare)}</small><strong>{saleMode === 'Ticket' ? 'Fully paid total' : 'Pay before expiry'}</strong></span><b>{money(total)}</b><span className="balance"><small>Status</small><strong>{saleMode === 'Ticket' ? 'Paid on issue' : 'Unpaid reservation'}</strong></span></div><div className="form-actions"><button type="button" className="secondary-button" onClick={reset}><RefreshCw size={15} /> Clear</button><button type="submit" className="primary-button">{saleMode === 'Ticket' ? <><ReceiptText size={17} /> Collect & issue ticket</> : <><CalendarCheck size={17} /> Hold seats for 2 hours</>}</button></div></section><section className="seat-card"><div className="panel-heading"><div><h2>Select seats</h2><p>{selectedSeats.length ? `Seats ${selectedSeats.join(', ')} selected` : 'Choose one or more available seats'}</p></div><div className="seat-count">{selectedSeats.length}</div></div><SeatMap seats={bus.seats} selectedSeats={selectedSeats} occupied={occupied} onSelect={(seat) => setSelectedSeats((current) => current.includes(seat) ? current.filter((x) => x !== seat) : [...current, seat].sort((a, b) => a - b))} large /><div className="seat-card-footer"><span><Armchair size={15} /> {bus.seats - occupied.size} available</span><strong>{money(total)}</strong></div></section></form></div></div>
+}
+
+function MoneyField({ label, value, onChange, readOnly = false }: { label: string; value: number; onChange?: (value: number) => void; readOnly?: boolean }) { return <label><span>{label}</span><div className="money-input"><b>PKR</b><input type="number" min="0" value={value} readOnly={readOnly} onChange={(e) => onChange?.(Number(e.target.value))} /></div></label> }
+
+function BookingsView({ bookings, onPrint, onCancel }: { bookings: Booking[]; onPrint: (booking: Booking) => void; onCancel: (id: string) => void }) {
+  const [search, setSearch] = useState(''), [filter, setFilter] = useState<'All' | BookingSource>('All')
+  const visible = bookings.filter((b) => b.paymentStatus === 'Paid' && b.bookingStatus !== 'Reserved' && (filter === 'All' || b.source === filter) && `${b.ticketNo} ${b.passenger} ${b.phone} ${b.cnic} ${b.route}`.toLowerCase().includes(search.toLowerCase()))
+  return <div className="admin-view"><ViewHeading eyebrow="TICKET REGISTER" title="Paid bookings" text="Every public web ticket shown here has a verified full payment." action={<button className="secondary-button" type="button"><FileBarChart size={16} /> Export report</button>} /><section className="surface data-surface"><DataToolbar tabs={['All', 'Public web', 'Counter']} active={filter} onTab={(x) => setFilter(x as 'All' | BookingSource)} search={search} onSearch={setSearch} placeholder="Search ticket, passenger or CNIC" /><BookingTable bookings={visible} onPrint={onPrint} onCancel={onCancel} /></section></div>
+}
+
+function ReservationsView({ bookings, onConfirm, onCancel, onNew }: { bookings: Booking[]; onConfirm: (id: string) => void; onCancel: (id: string) => void; onNew: () => void }) {
+  const reservations = bookings.filter((b) => b.bookingStatus === 'Reserved')
+  return <div className="admin-view"><ViewHeading eyebrow="COUNTER HOLDS ONLY" title="Reservations" text="Online customers cannot reserve without payment. Only staff can create temporary counter holds." action={<button className="primary-button" type="button" onClick={onNew}><Plus size={16} /> New reservation</button>} /><section className="surface data-surface"><div className="info-banner"><ShieldCheck size={18} /><div><strong>Automatic expiry policy</strong><span>Unpaid seats are released two hours after a counter reservation is created.</span></div></div><div className="table-wrap"><table><thead><tr><th>Reservation</th><th>Passenger</th><th>Journey</th><th>Seats</th><th>Amount due</th><th>Expires</th><th aria-label="Actions" /></tr></thead><tbody>{reservations.length ? reservations.map((b) => <tr key={b.id}><td><strong>{b.ticketNo}</strong><small>Counter reservation</small></td><td><strong>{b.passenger}</strong><small>{b.phone}</small></td><td><strong>{b.route}</strong><small>{b.date} · {b.time}</small></td><td><span className="seat-list">{b.seats.join(', ')}</span></td><td><strong>{money(b.balance)}</strong><small>Unpaid</small></td><td><strong>{b.expiresAt ? new Date(b.expiresAt).toLocaleTimeString('en-PK', { hour: '2-digit', minute: '2-digit' }) : '—'}</strong><small>Today</small></td><td><div className="table-actions"><button className="confirm-action" type="button" onClick={() => onConfirm(b.id)}><Check size={14} /> Collect & issue</button><button className="icon-action danger" type="button" aria-label={`Cancel ${b.ticketNo}`} onClick={() => onCancel(b.id)}><XCircle size={15} /></button></div></td></tr>) : <tr><td colSpan={7}><EmptyState title="No active reservations" text="Temporary counter holds will appear here." /></td></tr>}</tbody></table></div></section></div>
+}
+
+function TripsView({ bookings, showToast }: { bookings: Booking[]; showToast: (message: string) => void }) {
+  return <div className="admin-view"><ViewHeading eyebrow="DAILY OPERATIONS" title="Trips & schedules" text="Departure times, vehicle assignments and crew coverage." action={<button className="primary-button" type="button" onClick={() => showToast('New schedule form is ready for backend connection.')}><Plus size={16} /> Add trip</button>} /><section className="surface data-surface"><div className="data-toolbar"><div className="date-switcher"><button type="button"><ArrowLeft size={15} /></button><span><CalendarDays size={15} /> Wednesday, 02 September 2026</span><button type="button"><ArrowRight size={15} /></button></div><div className="filter-tabs"><button type="button" className="active">All trips</button><button type="button">Upcoming</button><button type="button">Departed</button></div></div><div className="trip-cards">{tripRecords.map((t) => { const r = routeRecords.find((x) => x.id === t.routeId) ?? routeRecords[0], bus = fleetRecords.find((x) => x.id === t.busId) ?? fleetRecords[0], sold = bookings.filter((b) => b.bus === bus.registration && b.date === today && b.time === t.departure && b.bookingStatus === 'Confirmed').flatMap((b) => b.seats).length; return <article key={t.id}><div className="trip-card-time"><strong>{t.departure}</strong><small>{t.arrival} arrival</small></div><div className="trip-card-route"><span><MapPin size={15} /></span><div><strong>{routeLabel(r)}</strong><small>{r.duration} · {r.distance}</small></div></div><div><small>Bus</small><strong>{bus.registration}</strong><p>{bus.service}</p></div><div><small>Crew</small><strong>{t.driver}</strong><p>{t.attendant}</p></div><div className="trip-capacity"><span><i style={{ width: `${Math.round(sold / bus.seats * 100)}%` }} /></span><strong>{sold}/{bus.seats}</strong><small>paid seats</small></div><b className={`plain-status ${t.status.toLowerCase()}`}>{t.status}</b><button className="icon-action" type="button" onClick={() => showToast(`${routeLabel(r)} trip opened.`)}><ChevronRight size={16} /></button></article> })}</div></section></div>
+}
+
+function FleetView({ showToast }: { showToast: (message: string) => void }) {
+  return <div className="admin-view"><ViewHeading eyebrow="VEHICLES" title="Fleet management" text="Capacity, operating status and maintenance planning." action={<button className="primary-button" type="button" onClick={() => showToast('Vehicle form is ready for backend connection.')}><Plus size={16} /> Add bus</button>} /><div className="fleet-summary"><span><strong>4</strong><small>Total buses</small></span><span><strong>2</strong><small>Ready</small></span><span><strong>1</strong><small>On route</small></span><span><strong>1</strong><small>Maintenance</small></span></div><section className="fleet-grid">{fleetRecords.map((b) => <article className="surface fleet-card" key={b.id}><div className="fleet-card-top"><span><BusFront size={23} /></span><b className={`plain-status ${b.status.toLowerCase().replace(' ', '-')}`}>{b.status}</b></div><h2>{b.registration}</h2><p>{b.model} · {b.year}</p><div className="fleet-details"><span><small>Service class</small><strong>{b.service}</strong></span><span><small>Seat capacity</small><strong>{b.seats} seats</strong></span><span><small>Next service</small><strong>{b.nextService}</strong></span></div><button type="button" onClick={() => showToast(`${b.registration} details opened.`)}>View vehicle <ChevronRight size={15} /></button></article>)}</section></div>
+}
+
+function RoutesView({ showToast }: { showToast: (message: string) => void }) {
+  return <div className="admin-view"><ViewHeading eyebrow="NETWORK & PRICING" title="Routes & fares" text="Manage active city pairs, boarding points and base fares." action={<button className="primary-button" type="button" onClick={() => showToast('Route form is ready for backend connection.')}><Plus size={16} /> Add route</button>} /><section className="surface data-surface"><DataToolbar tabs={['Active routes', 'Paused']} active="Active routes" onTab={() => undefined} search="" onSearch={() => undefined} placeholder="Search a city or route" /><div className="table-wrap"><table><thead><tr><th>Route</th><th>Distance</th><th>Travel time</th><th>Base fare</th><th>Boarding point</th><th>Status</th><th /></tr></thead><tbody>{routeRecords.map((r) => <tr key={r.id}><td><strong>{routeLabel(r)}</strong><small>Route ID · {r.id.toUpperCase()}</small></td><td><strong>{r.distance}</strong></td><td><strong>{r.duration}</strong></td><td><strong>{money(r.fare)}</strong><small>Per seat</small></td><td><strong>{r.boarding}</strong></td><td><b className="plain-status active">{r.status}</b></td><td><button className="text-action" type="button" onClick={() => showToast(`${routeLabel(r)} fare editor opened.`)}>Edit</button></td></tr>)}</tbody></table></div></section></div>
+}
+
+function FinanceView({ bookings }: { bookings: Booking[] }) {
+  const paid = bookings.filter((b) => b.paymentStatus === 'Paid' && b.bookingStatus === 'Confirmed'), total = paid.reduce((s, b) => s + b.paid, 0), byMethod = (m: PaymentMethod) => paid.filter((b) => b.paymentMethod === m).reduce((s, b) => s + b.paid, 0), oneBill = byMethod('1Bill')
+  return <div className="admin-view"><ViewHeading eyebrow="COLLECTIONS & SETTLEMENTS" title="Finance" text="Paid sales, payment channels and daily reconciliation." action={<div className="view-actions"><button className="secondary-button" type="button"><FileBarChart size={16} /> Export</button><button className="primary-button" type="button"><CheckCircle2 size={16} /> Close shift</button></div>} /><section className="metric-grid finance-metrics">{[{ l: 'Gross sales', v: money(total), n: 'All paid tickets', i: Banknote, t: 'green' }, { l: '1Bill collections', v: money(oneBill), n: `${paid.filter((b) => b.paymentMethod === '1Bill').length} verified payments`, i: CreditCard, t: 'gold' }, { l: 'Counter collections', v: money(total - oneBill), n: 'Cash, card and bank', i: WalletCards, t: 'blue' }, { l: 'Refunds', v: 'PKR 0', n: 'No refunds today', i: RefreshCw, t: 'orange' }].map((m) => { const Icon = m.i; return <article className="metric-card" key={m.l}><span className={`metric-icon ${m.t}`}><Icon size={19} /></span><div><small>{m.l}</small><strong>{m.v}</strong><p>{m.n}</p></div></article> })}</section><div className="finance-grid"><section className="surface finance-chart"><SurfaceHeader title="Seven-day collections" text="Paid revenue by day" action={<div className="mini-tabs"><button type="button" className="active">7 days</button><button type="button">30 days</button></div>} /><div className="bar-chart">{[42, 58, 46, 72, 63, 88, 76].map((h, i) => <div key={i}><span><i style={{ height: `${h}%` }} /></span><small>{['Thu', 'Fri', 'Sat', 'Sun', 'Mon', 'Tue', 'Wed'][i]}</small></div>)}</div></section><section className="surface payment-breakdown"><SurfaceHeader title="Payment breakdown" text="Share of collected revenue" />{(['Cash', '1Bill', 'Card', 'Bank transfer'] as PaymentMethod[]).map((m) => { const amount = byMethod(m), pct = total ? Math.round(amount / total * 100) : 0; return <div className="breakdown-row" key={m}><span className={`method-dot ${m.toLowerCase().replace(' ', '-')}`} /><div><span><strong>{m}</strong><small>{money(amount)}</small></span><i><em style={{ width: `${pct}%` }} /></i></div><b>{pct}%</b></div> })}<SettlementNote title="Daily settlement is balanced" text="1Bill and counter totals match the ticket ledger." /></section></div><section className="surface data-surface finance-ledger"><SurfaceHeader title="Transaction ledger" text="Latest verified payments" /><BookingTable bookings={paid.slice(0, 6)} onPrint={() => undefined} compact /></section></div>
+}
+
+function CrewView({ showToast }: { showToast: (message: string) => void }) {
+  return <div className="admin-view"><ViewHeading eyebrow="PEOPLE & SHIFTS" title="Staff & crew" text="Drivers, female attendants and current duty assignments." action={<button className="primary-button" type="button" onClick={() => showToast('Staff form is ready for backend connection.')}><Plus size={16} /> Add staff member</button>} /><section className="surface data-surface"><DataToolbar tabs={['All staff', 'Drivers', 'Female attendants']} active="All staff" onTab={() => undefined} search="" onSearch={() => undefined} placeholder="Search staff member" /><div className="crew-grid">{crewRecords.map((m) => <article key={m.name}><span className="crew-avatar">{m.initials}</span><div><strong>{m.name}</strong><small>{m.role}</small><p>{m.phone}</p></div><div className="crew-duty"><small>Current assignment</small><strong>{m.duty}</strong></div><b className={`plain-status ${m.status.toLowerCase().replace(' ', '-')}`}>{m.status}</b><button className="icon-action" type="button" onClick={() => showToast(`${m.name} profile opened.`)}><ChevronRight size={16} /></button></article>)}</div></section></div>
+}
+
+function SettingsView({ showToast }: { showToast: (message: string) => void }) {
+  const [onlineSales, setOnlineSales] = useState(true), [autoExpiry, setAutoExpiry] = useState(true), [smsTickets, setSmsTickets] = useState(true)
+  return <div className="admin-view"><ViewHeading eyebrow="CONFIGURATION" title="System settings" text="Payment, ticketing, reservation and frontend data preferences." action={<button className="primary-button" type="button" onClick={() => showToast('Settings saved on this device.')}><Check size={16} /> Save changes</button>} /><div className="settings-grid"><section className="surface settings-card"><SettingsTitle icon={<CreditCard size={19} />} title="1Bill payment gateway" text="Controls the public website payment experience." status /><div className="settings-fields"><label><span>Merchant ID</span><input value="ME••••7281" readOnly /></label><label><span>Payment environment</span><select defaultValue="Sandbox"><option>Sandbox</option><option>Production</option></select></label><label className="span-2"><span>Callback URL</span><input value="https://api.madinaexpress.pk/payments/1bill/callback" readOnly /></label></div><SettingRow title="Accept online ticket sales" text="Customers can pay in full and receive a confirmed e-ticket." enabled={onlineSales} onToggle={() => setOnlineSales(!onlineSales)} /><button className="secondary-button" type="button" onClick={() => showToast('1Bill connection test completed in preview mode.')}><RefreshCw size={15} /> Test connection</button></section><section className="surface settings-card"><SettingsTitle icon={<Ticket size={19} />} title="Ticket & reservation policy" text="Rules applied at the counter and public website." /><SettingRow title="Auto-expire counter reservations" text="Release unpaid seats after two hours." enabled={autoExpiry} onToggle={() => setAutoExpiry(!autoExpiry)} /><SettingRow title="SMS confirmed tickets" text="Send ticket number and journey details after payment." enabled={smsTickets} onToggle={() => setSmsTickets(!smsTickets)} /><div className="policy-box"><ShieldCheck size={17} /><span><strong>Public payment rule</strong><small>Online seats cannot be reserved. A ticket is generated only after 1Bill confirms full payment.</small></span></div></section><section className="surface settings-card"><SettingsTitle icon={<ReceiptText size={19} />} title="Receipt configuration" text="Thermal ticket and passenger contact details." /><div className="settings-fields"><label><span>Business name</span><input value="Madina Express" readOnly /></label><label><span>Support number</span><input value="0311-777-2299" readOnly /></label><label className="span-2"><span>Terminal address</span><input value="Madina Terminal, Peshawar" readOnly /></label></div><button className="secondary-button" type="button"><Printer size={15} /> Print sample</button></section><section className="surface settings-card"><SettingsTitle icon={<ShieldCheck size={19} />} title="Data & deployment" text="Where operational records are stored." /><div className="data-status"><span className="status-ring"><Check size={18} /></span><div><strong>Frontend demonstration storage</strong><p>Bookings created here are stored in this browser. Connect the prepared screens to a secured API and database for shared, multi-device production data.</p></div></div><div className="integration-list"><span><i /> PostgreSQL / ERP API <b>Integration ready</b></span><span><i /> Automated backups <b>Requires backend</b></span><span><i /> Role permissions <b>Requires identity service</b></span></div></section></div></div>
+}
+
+function SettingsTitle({ icon, title, text, status = false }: { icon: React.ReactNode; title: string; text: string; status?: boolean }) { return <div className="settings-title"><span>{icon}</span><div><h2>{title}</h2><p>{text}</p></div>{status && <b className="plain-status active">Configured</b>}</div> }
+function SettingRow({ title, text, enabled, onToggle }: { title: string; text: string; enabled: boolean; onToggle: () => void }) { return <div className="setting-row"><div><strong>{title}</strong><small>{text}</small></div><button type="button" role="switch" aria-checked={enabled} className={`toggle ${enabled ? 'on' : ''}`} onClick={onToggle}><span /></button></div> }
+function DataToolbar({ tabs, active, onTab, search, onSearch, placeholder }: { tabs: string[]; active: string; onTab: (tab: string) => void; search: string; onSearch: (value: string) => void; placeholder: string }) { return <div className="data-toolbar"><div className="filter-tabs">{tabs.map((tab) => <button type="button" className={active === tab ? 'active' : ''} onClick={() => onTab(tab)} key={tab}>{tab}</button>)}</div><label className="search-box"><Search size={16} /><input value={search} onChange={(e) => onSearch(e.target.value)} placeholder={placeholder} /></label></div> }
+
+function BookingTable({ bookings, onPrint, onCancel, compact = false }: { bookings: Booking[]; onPrint: (booking: Booking) => void; onCancel?: (id: string) => void; compact?: boolean }) {
+  return <div className="table-wrap"><table className={compact ? 'compact-table' : ''}><thead><tr><th>Ticket</th><th>Passenger</th><th>Journey</th><th>Seats</th><th>Channel</th><th>Amount</th><th>Status</th>{!compact && <th />}</tr></thead><tbody>{bookings.length ? bookings.map((b) => <tr className={['Cancelled', 'Refunded'].includes(b.bookingStatus) ? 'cancelled-row' : ''} key={b.id}><td><strong>{b.ticketNo}</strong><small>{b.date} · {b.time}</small></td><td><strong>{b.passenger}</strong><small>{b.phone}</small></td><td><strong>{b.route}</strong><small>{b.bus} · {b.service}</small></td><td><span className="seat-list">{b.seats.join(', ')}</span></td><td><strong>{b.source}</strong><small>{b.paymentMethod}{b.paymentReference ? ` · ${b.paymentReference}` : ''}</small></td><td><strong>{money(b.total)}</strong><small>{b.paymentStatus}</small></td><td><span className={`status-badge ${b.bookingStatus.toLowerCase()}`}>{b.bookingStatus}</span></td>{!compact && <td><div className="row-actions"><button type="button" onClick={() => onPrint(b)}><Printer size={15} /></button>{onCancel && <button type="button" disabled={['Cancelled', 'Refunded'].includes(b.bookingStatus)} onClick={() => onCancel(b.id)}><XCircle size={15} /></button>}</div></td>}</tr>) : <tr><td colSpan={compact ? 7 : 8}><EmptyState title="No records found" text="Try changing your search or filter." /></td></tr>}</tbody></table></div>
+}
+
+function SeatMap({ seats, selectedSeats, occupied, onSelect, large = false }: { seats: number; selectedSeats: number[]; occupied: Set<number>; onSelect: (seat: number) => void; large?: boolean }) {
+  return <div className={`seat-map-wrap ${large ? 'large' : ''}`}><div className="legend"><span><i className="available" />Available</span><span><i className="selected" />Selected</span><span><i className="booked" />Occupied</span></div><div className="bus-shell"><div className="bus-front"><span><BusFront size={17} /> FRONT</span><span>DRIVER</span></div><div className="seat-layout">{Array.from({ length: Math.ceil(seats / 4) }, (_, rowIndex) => { const rowSeats = Array.from({ length: 4 }, (__, i) => rowIndex * 4 + i + 1).filter((s) => s <= seats); return <div className="seat-row" key={rowIndex}><div className="seat-pair">{rowSeats.slice(0, 2).map((s) => <SeatButton seat={s} selected={selectedSeats.includes(s)} occupied={occupied.has(s)} onSelect={onSelect} key={s} />)}</div><span className="aisle">{rowIndex + 1}</span><div className="seat-pair">{rowSeats.slice(2, 4).map((s) => <SeatButton seat={s} selected={selectedSeats.includes(s)} occupied={occupied.has(s)} onSelect={onSelect} key={s} />)}</div></div> })}</div></div></div>
+}
+function SeatButton({ seat, selected, occupied, onSelect }: { seat: number; selected: boolean; occupied: boolean; onSelect: (seat: number) => void }) { const status = occupied ? 'booked' : selected ? 'selected' : 'available'; return <button type="button" disabled={occupied} className={`seat seat--${status}`} aria-label={`Seat ${seat}, ${status}`} aria-pressed={selected} onClick={() => onSelect(seat)}><Armchair size={15} /><b>{seat}</b></button> }
+function EmptyState({ title, text }: { title: string; text: string }) { return <div className="empty-state"><FileText size={24} /><strong>{title}</strong><span>{text}</span></div> }
+
+function ReceiptModal({ booking, onClose }: { booking: Booking; onClose: () => void }) {
+  return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}><div className="receipt-modal"><div className="receipt-toolbar"><div><strong>{booking.bookingStatus === 'Reserved' ? 'Reservation slip' : 'Confirmed ticket'}</strong><small>80mm thermal receipt</small></div><button type="button" onClick={onClose}><X size={18} /></button></div><article className="receipt"><header><div className="receipt-logo">ME</div><h2>MADINA EXPRESS</h2><p>Travel with confidence</p><small>0311-777-2299 · Madina Terminal, Peshawar</small></header><div className="receipt-rule" /><div className="ticket-heading"><span><small>{booking.bookingStatus === 'Reserved' ? 'RESERVATION NO.' : 'TICKET NO.'}</small><strong>{booking.ticketNo}</strong></span><span className={`receipt-status ${booking.paymentStatus.toLowerCase()}`}>{booking.paymentStatus}</span></div><div className="receipt-route"><span>{booking.route.split(' → ')[0]}</span><i>→</i><span>{booking.destination}</span></div><div className="receipt-grid"><span><small>Departure</small><strong>{booking.date}<br />{booking.time}</strong></span><span><small>Bus / Service</small><strong>{booking.bus}<br />{booking.service}</strong></span><span><small>Passenger</small><strong>{booking.passenger}</strong></span><span><small>Seat number</small><strong className="large-seat">{booking.seats.join(', ')}</strong></span><span><small>Boarding point</small><strong>{booking.boardingPoint}</strong></span><span><small>Female attendant</small><strong>{booking.attendant}</strong></span></div><div className="receipt-rule" /><div className="receipt-line"><span>Fare</span><strong>{money(booking.fare * booking.seats.length)}</strong></div><div className="receipt-line"><span>Discount</span><strong>- {money(booking.discount)}</strong></div><div className="receipt-line total-line"><span>Total</span><strong>{money(booking.total)}</strong></div><div className="receipt-line"><span>{booking.paymentStatus === 'Paid' ? `Paid via ${booking.paymentMethod}` : 'Amount due'}</span><strong>{booking.paymentStatus === 'Paid' ? money(booking.paid) : money(booking.balance)}</strong></div>{booking.paymentReference && <div className="receipt-line"><span>Payment reference</span><strong>{booking.paymentReference}</strong></div>}<div className="receipt-barcode"><span /><small>{booking.ticketNo}</small></div><div className="boarding-coupon"><strong>BOARDING COUPON</strong><span><small>Seat</small><b>{booking.seats.join(', ')}</b></span><span><small>Bus</small><b>{booking.bus}</b></span><span><small>Time</small><b>{booking.time}</b></span></div><footer><p>{booking.paymentStatus === 'Paid' ? 'PAID & CONFIRMED · Please arrive 30 minutes before departure.' : 'UNPAID HOLD · Pay before the expiry time to confirm.'}</p><small>Terms and conditions apply. Keep this ticket for boarding.</small></footer></article><div className="receipt-actions"><button className="secondary-button" type="button" onClick={onClose}>Close</button><button className="primary-button" type="button" onClick={() => window.print()}><Printer size={16} /> Print ticket</button></div></div></div>
 }
 
 export default App
