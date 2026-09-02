@@ -3976,6 +3976,293 @@ td small {
   }
 }
 
+/* Completed operations workflows */
+.trip-cards article {
+  grid-template-columns:
+    80px minmax(230px, 1.25fr) minmax(110px, 0.65fr) minmax(170px, 0.9fr)
+    120px 88px 226px;
+}
+.trip-actions {
+  gap: 7px;
+}
+.lifecycle-action {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--green-700);
+  border-radius: 7px;
+  background: var(--green-50);
+  color: var(--green-800);
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lifecycle-action.boarding {
+  border-color: #b36c25;
+  background: #fff5e8;
+  color: #8a531d;
+}
+.lifecycle-action.departed {
+  border-color: #55768c;
+  background: #eef5f8;
+  color: #3e647a;
+}
+.fleet-card-actions {
+  margin-top: 13px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 7px;
+}
+.fleet-card-actions button {
+  min-height: 36px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--green-700);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.fleet-card-actions button:first-child:not(:last-child) {
+  border-color: var(--green-100);
+  background: var(--green-50);
+}
+.run-status-banner {
+  margin-left: auto;
+  padding: 8px 11px;
+  border-radius: 99px;
+  background: var(--green-50);
+  color: var(--green-800);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+.run-status-banner i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.run-status-banner.departed {
+  background: #eef5f8;
+  color: #3e647a;
+}
+.run-status-banner.boarding {
+  background: #fff3df;
+  color: #946020;
+}
+.dispatch-button.scheduled {
+  border-color: var(--green-800);
+  background: var(--green-800);
+}
+.dispatch-button.departed {
+  border-color: #456d83;
+  background: #456d83;
+}
+.modal-form-grid textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 11px 12px;
+  resize: vertical;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #fff;
+  color: #2f4138;
+  font: inherit;
+  font-size: 14px;
+}
+.close-shift-summary,
+.shift-balance {
+  padding: 16px 22px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.close-shift-summary {
+  border-bottom: 1px solid var(--line);
+  background: #f7faf8;
+}
+.close-shift-summary span,
+.shift-balance span {
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+}
+.close-shift-summary small,
+.close-shift-summary strong,
+.shift-balance small,
+.shift-balance strong {
+  display: block;
+}
+.close-shift-summary small,
+.shift-balance small {
+  color: #75837c;
+  font-size: 11px;
+}
+.close-shift-summary strong,
+.shift-balance strong {
+  margin-top: 5px;
+  color: var(--green-950);
+  font-size: 14px;
+}
+.shift-balance {
+  padding-top: 0;
+}
+.shift-balance strong.variance {
+  color: #a3533d;
+}
+.shift-balance strong.balanced {
+  color: var(--green-700);
+}
+.finance-close-note {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--green-100);
+  border-radius: 9px;
+  background: var(--green-50);
+  color: var(--green-700);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.finance-close-note strong,
+.finance-close-note small {
+  display: block;
+}
+.finance-close-note strong {
+  font-size: 12px;
+}
+.finance-close-note small {
+  margin-top: 3px;
+  font-size: 11px;
+}
+.login-notice {
+  margin: 0 !important;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: #fff7e8;
+  color: #8c6125 !important;
+  font-size: 11px !important;
+  line-height: 1.45;
+}
+
+/* Correct paper proportions and readable report output */
+@page madina-a4-landscape {
+  size: A4 landscape;
+  margin: 0;
+}
+@page madina-thermal {
+  size: 80mm auto;
+  margin: 0;
+}
+.print-document {
+  box-sizing: border-box;
+}
+.report-a4.report-landscape {
+  width: 297mm;
+  min-height: 210mm;
+  padding: 10mm 11mm;
+  page: madina-a4-landscape;
+}
+.report-thermal,
+.receipt {
+  page: madina-thermal;
+}
+.report-landscape .document-table {
+  table-layout: fixed;
+  font-size: 9.5px;
+}
+.report-landscape .document-table th {
+  font-size: 8.5px;
+}
+.report-landscape .document-table th,
+.report-landscape .document-table td {
+  padding: 7px 6px;
+  overflow-wrap: anywhere;
+}
+.report-landscape .document-table td small {
+  font-size: 8px;
+}
+.report-landscape .document-meta strong {
+  font-size: 11px;
+}
+.report-landscape .voucher-summary-grid {
+  width: 54%;
+}
+.report-thermal {
+  padding: 5mm 4mm;
+  font-size: 10px;
+}
+.report-thermal .document-header h1 {
+  font-size: 16px;
+}
+.report-thermal .document-header h2 {
+  font-size: 12px;
+}
+.report-thermal .document-meta strong {
+  font-size: 9px;
+}
+
+@media (max-width: 900px) {
+  .close-shift-summary,
+  .shift-balance {
+    grid-template-columns: 1fr;
+  }
+  .run-status-banner {
+    margin-left: 0;
+  }
+}
+
+@media print {
+  html,
+  body {
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  .report-overlay,
+  .report-preview-shell {
+    position: static !important;
+    inset: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    border-radius: 0 !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+  .report-toolbar {
+    display: none !important;
+  }
+  .print-document {
+    position: static !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    break-after: avoid;
+  }
+  body.printing-a4 .report-landscape {
+    width: 297mm !important;
+    min-height: 210mm !important;
+  }
+  body.printing-thermal .report-thermal {
+    width: 80mm !important;
+    min-height: 0 !important;
+  }
+}
+
 /* Recurring trips, vehicle forms and operational documents */
 .trip-actions {
   display: flex;

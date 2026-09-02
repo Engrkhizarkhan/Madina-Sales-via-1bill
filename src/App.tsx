@@ -80,6 +80,16 @@ type RouteRecord = {
   boarding: string;
   status: "Active" | "Paused";
 };
+type CrewRecord = {
+  name: string;
+  role: "Driver" | "Female attendant" | "Manager" | "Counter agent";
+  phone: string;
+  cnic: string;
+  license: string;
+  duty: string;
+  status: "On duty" | "Available" | "Scheduled" | "Off duty";
+  initials: string;
+};
 type BusRecord = {
   id: string;
   registration: string;
@@ -156,6 +166,8 @@ const today = new Date().toISOString().slice(0, 10);
 const storageKey = "madina-express-operations-v2";
 const fleetStorageKey = "madina-express-fleet-v1";
 const tripStorageKey = "madina-express-trips-v1";
+const routeStorageKey = "madina-express-routes-v1";
+const crewStorageKey = "madina-express-crew-v1";
 const weekdays: Weekday[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const routeRecords: RouteRecord[] = [
   {
@@ -438,11 +450,13 @@ const initialBookings: Booking[] = [
     createdAt: new Date(Date.now() - 10800000).toISOString(),
   },
 ];
-const crewRecords = [
+const crewRecords: CrewRecord[] = [
   {
     name: "Muhammad Ameen",
     role: "Driver",
     phone: "0300 1122456",
+    cnic: "17301-2481162-1",
+    license: "HTV-PSH-10428",
     duty: "Peshawar → Karachi",
     status: "On duty",
     initials: "MA",
@@ -451,6 +465,8 @@ const crewRecords = [
     name: "Adeel Shah",
     role: "Driver",
     phone: "0304 3310098",
+    cnic: "17301-8842160-7",
+    license: "HTV-PSH-11802",
     duty: "Available at terminal",
     status: "Available",
     initials: "AS",
@@ -459,6 +475,8 @@ const crewRecords = [
     name: "Ayesha Khan",
     role: "Female attendant",
     phone: "0315 6621908",
+    cnic: "17301-6621908-4",
+    license: "—",
     duty: "Peshawar → Karachi",
     status: "On duty",
     initials: "AK",
@@ -467,6 +485,8 @@ const crewRecords = [
     name: "Nazia Bibi",
     role: "Female attendant",
     phone: "0332 5514402",
+    cnic: "17301-5514402-8",
+    license: "—",
     duty: "Available at terminal",
     status: "Available",
     initials: "NB",
@@ -475,6 +495,8 @@ const crewRecords = [
     name: "Faisal Khan",
     role: "Driver",
     phone: "0307 9912045",
+    cnic: "17301-9912045-2",
+    license: "HTV-PSH-12561",
     duty: "Peshawar → Lahore",
     status: "Scheduled",
     initials: "FK",
@@ -483,6 +505,8 @@ const crewRecords = [
     name: "Sadia Noor",
     role: "Female attendant",
     phone: "0318 7441280",
+    cnic: "17301-7441280-5",
+    license: "—",
     duty: "Peshawar → Lahore",
     status: "Scheduled",
     initials: "SN",
@@ -526,6 +550,27 @@ function readTrips() {
     return tripRecords;
   }
 }
+function readRoutes() {
+  try {
+    const stored = localStorage.getItem(routeStorageKey);
+    return stored ? (JSON.parse(stored) as RouteRecord[]) : routeRecords;
+  } catch {
+    return routeRecords;
+  }
+}
+function readCrew() {
+  try {
+    const stored = localStorage.getItem(crewStorageKey);
+    if (!stored) return crewRecords;
+    return (JSON.parse(stored) as CrewRecord[]).map((person) => ({
+      ...person,
+      cnic: person.cnic ?? "",
+      license: person.license ?? "—",
+    }));
+  } catch {
+    return crewRecords;
+  }
+}
 const tripRunKey = (
   trip: TripRecord,
   run = trip.runNumber,
@@ -559,6 +604,19 @@ const formatPrintTime = (value?: string) =>
         minute: "2-digit",
       })
     : "—";
+function downloadCsv(filename: string, rows: (string | number)[][]) {
+  const csv = rows
+    .map((row) =>
+      row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","),
+    )
+    .join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 function App() {
   const [path, setPath] = useState(window.location.pathname);
@@ -597,7 +655,8 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     [date, setDate] = useState(today),
     [searched, setSearched] = useState(false),
     [publicTrips] = useState<TripRecord[]>(readTrips),
-    [publicFleet] = useState<BusRecord[]>(readFleet);
+    [publicFleet] = useState<BusRecord[]>(readFleet),
+    [publicRoutes] = useState<RouteRecord[]>(readRoutes);
   const [checkoutTrip, setCheckoutTrip] = useState<{
     route: RouteRecord;
     bus: BusRecord;
@@ -606,7 +665,21 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     fare: number;
   } | null>(null);
   const [ticketReceipt, setTicketReceipt] = useState<Booking | null>(null);
-  const matchingRoute = routeRecords.find(
+  const originCities = Array.from(
+    new Set(
+      publicRoutes
+        .filter((route) => route.status === "Active")
+        .map((route) => route.from),
+    ),
+  );
+  const destinationCities = Array.from(
+    new Set(
+      publicRoutes
+        .filter((route) => route.status === "Active" && route.from === from)
+        .map((route) => route.to),
+    ),
+  );
+  const matchingRoute = publicRoutes.find(
     (route) => route.from === from && route.to === to,
   );
   const travelDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
@@ -618,6 +691,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
           (schedule) =>
             schedule.routeId === matchingRoute.id &&
             schedule.active &&
+            schedule.status !== "Departed" &&
             schedule.days.includes(travelDay),
         )
         .map((schedule) => {
@@ -735,15 +809,19 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <select
                 value={from}
                 onChange={(event) => {
-                  setFrom(event.target.value);
+                  const nextFrom = event.target.value;
+                  setFrom(nextFrom);
+                  const firstDestination = publicRoutes.find(
+                    (route) =>
+                      route.status === "Active" && route.from === nextFrom,
+                  );
+                  if (firstDestination) setTo(firstDestination.to);
                   setSearched(false);
                 }}
               >
-                {["Peshawar", "Karachi", "Lahore", "Islamabad", "Multan"].map(
-                  (city) => (
-                    <option key={city}>{city}</option>
-                  ),
-                )}
+                {originCities.map((city) => (
+                  <option key={city}>{city}</option>
+                ))}
               </select>
             </label>
             <button
@@ -763,11 +841,9 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                   setSearched(false);
                 }}
               >
-                {["Karachi", "Lahore", "Islamabad", "Multan", "Peshawar"].map(
-                  (city) => (
-                    <option key={city}>{city}</option>
-                  ),
-                )}
+                {destinationCities.map((city) => (
+                  <option key={city}>{city}</option>
+                ))}
               </select>
             </label>
             <label>
@@ -1240,7 +1316,8 @@ function SectionTitle({
 
 function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [email, setEmail] = useState(""),
-    [password, setPassword] = useState("");
+    [password, setPassword] = useState(""),
+    [loginNotice, setLoginNotice] = useState("");
   const signIn = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!email || !password) return;
@@ -1304,7 +1381,16 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
             <label>
               <input type="checkbox" /> Remember this device
             </label>
-            <button type="button">Forgot password?</button>
+            <button
+              type="button"
+              onClick={() =>
+                setLoginNotice(
+                  "Password reset requests are handled by the terminal administrator.",
+                )
+              }
+            >
+              Forgot password?
+            </button>
           </div>
           <button className="login-submit" type="submit">
             Sign in to system <ArrowRight size={16} />
@@ -1312,6 +1398,7 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           <small>
             Frontend demonstration: any non-empty credentials are accepted.
           </small>
+          {loginNotice && <p className="login-notice">{loginNotice}</p>}
         </form>
       </div>
     </div>
@@ -1406,6 +1493,8 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
     [bookings, setBookings] = useState<Booking[]>(readBookings),
     [fleet, setFleet] = useState<BusRecord[]>(readFleet),
     [trips, setTrips] = useState<TripRecord[]>(readTrips),
+    [routes, setRoutes] = useState<RouteRecord[]>(readRoutes),
+    [crew, setCrew] = useState<CrewRecord[]>(readCrew),
     [receipt, setReceipt] = useState<Booking | null>(null),
     [report, setReport] = useState<{
       kind: ReportKind;
@@ -1426,6 +1515,14 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
   useEffect(
     () => localStorage.setItem(tripStorageKey, JSON.stringify(trips)),
     [trips],
+  );
+  useEffect(
+    () => localStorage.setItem(routeStorageKey, JSON.stringify(routes)),
+    [routes],
+  );
+  useEffect(
+    () => localStorage.setItem(crewStorageKey, JSON.stringify(crew)),
+    [crew],
   );
   const showToast = (message: string) => {
     setToast(message);
@@ -1453,6 +1550,14 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
       ),
     );
     showToast("Booking cancelled and seats released.");
+  };
+  const updateBooking = (updated: Booking) => {
+    persist(
+      bookings.map((booking) =>
+        booking.id === updated.id ? updated : booking,
+      ),
+    );
+    showToast(`${updated.ticketNo} passenger details updated.`);
   };
   const confirmReservation = (id: string) => {
     const booking = bookings.find((item) => item.id === id);
@@ -1487,6 +1592,15 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
     });
     showToast(`Bus ${bus.registration} saved.`);
   };
+  const returnBusToTerminal = (id: string) => {
+    const bus = fleet.find((item) => item.id === id);
+    setFleet((current) =>
+      current.map((item) =>
+        item.id === id ? { ...item, status: "Ready" as const } : item,
+      ),
+    );
+    if (bus) showToast(`${bus.registration} marked ready at terminal.`);
+  };
   const saveTrip = (trip: TripRecord) => {
     setTrips((current) => {
       const exists = current.some((item) => item.id === trip.id);
@@ -1496,27 +1610,66 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
     });
     showToast("Recurring trip saved.");
   };
-  const dispatchTrip = (id: string) => {
+  const saveRoute = (route: RouteRecord) => {
+    setRoutes((current) => {
+      const exists = current.some((item) => item.id === route.id);
+      return exists
+        ? current.map((item) => (item.id === route.id ? route : item))
+        : [route, ...current];
+    });
+    showToast(`${routeLabel(route)} saved.`);
+  };
+  const saveCrewMember = (person: CrewRecord, previousName?: string) => {
+    setCrew((current) => {
+      const exists = previousName
+        ? current.some((item) => item.name === previousName)
+        : false;
+      return exists
+        ? current.map((item) => (item.name === previousName ? person : item))
+        : [person, ...current];
+    });
+    showToast(`${person.name} saved.`);
+  };
+  const transitionTrip = (
+    id: string,
+    action: "boarding" | "depart" | "next",
+  ) => {
+    const selectedTrip = trips.find((trip) => trip.id === id);
+    if (!selectedTrip) return;
     setTrips((current) =>
       current.map((trip) =>
         trip.id === id
-          ? {
-              ...trip,
-              status: "Scheduled" as const,
-              runNumber: trip.runNumber + 1,
-              lastDepartedAt: new Date().toISOString(),
-            }
+          ? action === "boarding"
+            ? { ...trip, status: "Boarding" as const }
+            : action === "depart"
+              ? {
+                  ...trip,
+                  status: "Departed" as const,
+                  lastDepartedAt: new Date().toISOString(),
+                }
+              : {
+                  ...trip,
+                  status: "Scheduled" as const,
+                  runNumber: trip.runNumber + 1,
+                }
           : trip,
       ),
     );
-    setFleet((current) =>
-      current.map((bus) =>
-        trips.find((trip) => trip.id === id)?.busId === bus.id
-          ? { ...bus, status: "On route" as const }
-          : bus,
-      ),
+    if (action === "depart")
+      setFleet((current) =>
+        current.map((bus) =>
+          selectedTrip.busId === bus.id
+            ? { ...bus, status: "On route" as const }
+            : bus,
+        ),
+      );
+    showToast(
+      action === "boarding"
+        ? "Boarding opened for this departure."
+        : action === "depart"
+          ? "Bus departed and is now marked on route."
+          : "Previous run closed. A fresh passenger run is open.",
     );
-    showToast("Bus dispatched. A fresh passenger run is now open.");
   };
   const openReport = (
     kind: ReportKind,
@@ -1636,6 +1789,7 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
               className="admin-icon-button"
               type="button"
               aria-label="Notifications"
+              onClick={() => showToast("No new system alerts.")}
             >
               <Bell size={16} />
               <i />
@@ -1665,6 +1819,7 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
               bookings={bookings}
               trips={trips}
               fleet={fleet}
+              routes={routes}
               onNavigate={changeView}
             />
           )}
@@ -1673,6 +1828,8 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
               bookings={bookings}
               trips={trips}
               fleet={fleet}
+              routes={routes}
+              crew={crew}
               onSave={saveBooking}
               showToast={showToast}
             />
@@ -1682,6 +1839,7 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
               bookings={bookings}
               onPrint={setReceipt}
               onCancel={cancelBooking}
+              onUpdate={updateBooking}
             />
           )}
           {activeView === "reservations" && (
@@ -1697,25 +1855,38 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
               bookings={bookings}
               trips={trips}
               fleet={fleet}
+              routes={routes}
+              crew={crew}
               onSave={saveTrip}
-              onDispatch={dispatchTrip}
+              onTransition={transitionTrip}
               onReport={openReport}
             />
           )}
           {activeView === "fleet" && (
-            <FleetView fleet={fleet} onSave={saveBus} />
+            <FleetView
+              fleet={fleet}
+              onSave={saveBus}
+              onReturn={returnBusToTerminal}
+            />
           )}
-          {activeView === "routes" && <RoutesView showToast={showToast} />}
-          {activeView === "finance" && <FinanceView bookings={bookings} />}
+          {activeView === "routes" && (
+            <RoutesView routes={routes} onSave={saveRoute} />
+          )}
+          {activeView === "finance" && (
+            <FinanceView bookings={bookings} showToast={showToast} />
+          )}
           {activeView === "reports" && (
             <ReportsView
               bookings={bookings}
               trips={trips}
               fleet={fleet}
+              routes={routes}
               onReport={openReport}
             />
           )}
-          {activeView === "crew" && <CrewView showToast={showToast} />}
+          {activeView === "crew" && (
+            <CrewView crew={crew} onSave={saveCrewMember} />
+          )}
           {activeView === "settings" && <SettingsView showToast={showToast} />}
         </main>
       </div>
@@ -1728,6 +1899,7 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
           bookings={bookings}
           trips={trips}
           fleet={fleet}
+          routes={routes}
           onClose={() => setReport(null)}
         />
       )}
@@ -1744,13 +1916,16 @@ function DashboardView({
   bookings,
   trips,
   fleet,
+  routes,
   onNavigate,
 }: {
   bookings: Booking[];
   trips: TripRecord[];
   fleet: BusRecord[];
+  routes: RouteRecord[];
   onNavigate: (view: AdminView) => void;
 }) {
+  const [revenuePeriod, setRevenuePeriod] = useState<"Today" | "Week">("Today");
   const paid = bookings.filter(
       (b) => b.paymentStatus === "Paid" && b.bookingStatus === "Confirmed",
     ),
@@ -1761,6 +1936,10 @@ function DashboardView({
     webSales = paid
       .filter((b) => b.source === "Public web")
       .reduce((sum, b) => sum + b.paid, 0);
+  const displayedRevenue =
+    revenuePeriod === "Today" ? revenue : Math.round(revenue * 5.7);
+  const displayedWebSales =
+    revenuePeriod === "Today" ? webSales : Math.round(webSales * 5.7);
   const monthlyRevenue = 1115000 + revenue;
   const monthlyTickets =
     5840 + paid.reduce((sum, booking) => sum + booking.seats.length, 0);
@@ -1840,11 +2019,9 @@ function DashboardView({
           />
           <div className="schedule-list">
             {trips
-              .filter((trip) => trip.active)
+              .filter((trip) => trip.active && trip.status !== "Departed")
               .map((t) => {
-                const r =
-                    routeRecords.find((x) => x.id === t.routeId) ??
-                    routeRecords[0],
+                const r = routes.find((x) => x.id === t.routeId) ?? routes[0],
                   bus = fleet.find((x) => x.id === t.busId) ?? fleet[0],
                   sold = bookingsForTripRun(bookings, t, bus).flatMap(
                     (booking) => booking.seats,
@@ -1887,16 +2064,22 @@ function DashboardView({
             text="Collections by sales channel"
             action={
               <div className="mini-tabs">
-                <button type="button">Week</button>
-                <button type="button" className="active">
-                  Today
-                </button>
+                {(["Week", "Today"] as const).map((item) => (
+                  <button
+                    type="button"
+                    className={revenuePeriod === item ? "active" : ""}
+                    onClick={() => setRevenuePeriod(item)}
+                    key={item}
+                  >
+                    {item}
+                  </button>
+                ))}
               </div>
             }
           />
           <div className="revenue-total">
             <small>Total collected</small>
-            <strong>{money(revenue)}</strong>
+            <strong>{money(displayedRevenue)}</strong>
             <span>
               <Activity size={13} /> 12.4% growth
             </span>
@@ -1904,15 +2087,25 @@ function DashboardView({
           <div className="channel-bars">
             <ProgressRow
               label="Counter sales"
-              value={money(revenue - webSales)}
+              value={money(displayedRevenue - displayedWebSales)}
               percent={
-                revenue ? Math.round(((revenue - webSales) / revenue) * 100) : 0
+                displayedRevenue
+                  ? Math.round(
+                      ((displayedRevenue - displayedWebSales) /
+                        displayedRevenue) *
+                        100,
+                    )
+                  : 0
               }
             />
             <ProgressRow
               label="Public website · 1Bill"
-              value={money(webSales)}
-              percent={revenue ? Math.round((webSales / revenue) * 100) : 0}
+              value={money(displayedWebSales)}
+              percent={
+                displayedRevenue
+                  ? Math.round((displayedWebSales / displayedRevenue) * 100)
+                  : 0
+              }
               gold
             />
           </div>
@@ -2016,18 +2209,22 @@ function BookingWorkspace({
   bookings,
   trips,
   fleet,
+  routes,
+  crew,
   onSave,
   showToast,
 }: {
   bookings: Booking[];
   trips: TripRecord[];
   fleet: BusRecord[];
+  routes: RouteRecord[];
+  crew: CrewRecord[];
   onSave: (booking: Booking) => void;
   showToast: (message: string) => void;
 }) {
   const defaultTrip =
     trips.find((trip) => trip.status === "Boarding" && trip.active) ??
-    trips.find((trip) => trip.active) ??
+    trips.find((trip) => trip.active && trip.status !== "Departed") ??
     tripRecords[0];
   const [saleMode, setSaleMode] = useState<"Ticket" | "Reservation">("Ticket"),
     [selectedTripId, setSelectedTripId] = useState(defaultTrip.id),
@@ -2038,7 +2235,7 @@ function BookingWorkspace({
     [driver, setDriver] = useState(defaultTrip.driver),
     [attendant, setAttendant] = useState(defaultTrip.attendant),
     [selectedSeats, setSelectedSeats] = useState<number[]>([]);
-  const route = routeRecords.find((x) => x.id === routeId) ?? routeRecords[0],
+  const route = routes.find((x) => x.id === routeId) ?? routes[0],
     bus = fleet.find((x) => x.id === busId) ?? fleet[0] ?? fleetRecords[0],
     activeTrip =
       trips.find((trip) => trip.id === selectedTripId) ?? defaultTrip,
@@ -2213,8 +2410,8 @@ function BookingWorkspace({
                     trips.find((trip) => trip.id === e.target.value) ??
                     defaultTrip;
                   const r =
-                    routeRecords.find((item) => item.id === next.routeId) ??
-                    routeRecords[0];
+                    routes.find((item) => item.id === next.routeId) ??
+                    routes[0];
                   setSelectedTripId(next.id);
                   setRouteId(next.routeId);
                   setBusId(next.busId);
@@ -2233,8 +2430,8 @@ function BookingWorkspace({
                   .filter((trip) => trip.active)
                   .map((trip) => {
                     const tripRoute =
-                      routeRecords.find((item) => item.id === trip.routeId) ??
-                      routeRecords[0];
+                      routes.find((item) => item.id === trip.routeId) ??
+                      routes[0];
                     return (
                       <option value={trip.id} key={trip.id}>
                         {trip.departure} · {routeLabel(tripRoute)} ·{" "}
@@ -2293,7 +2490,7 @@ function BookingWorkspace({
                 value={driver}
                 onChange={(e) => setDriver(e.target.value)}
               >
-                {crewRecords
+                {crew
                   .filter((m) => m.role === "Driver")
                   .map((m) => (
                     <option key={m.name}>{m.name}</option>
@@ -2308,7 +2505,7 @@ function BookingWorkspace({
                 value={attendant}
                 onChange={(e) => setAttendant(e.target.value)}
               >
-                {crewRecords
+                {crew
                   .filter((m) => m.role === "Female attendant")
                   .map((m) => (
                     <option key={m.name}>{m.name}</option>
@@ -2602,17 +2799,134 @@ function MoneyField({
   );
 }
 
+function BookingEditModal({
+  booking,
+  onClose,
+  onSave,
+}: {
+  booking: Booking;
+  onClose: () => void;
+  onSave: (booking: Booking) => void;
+}) {
+  const [draft, setDraft] = useState(booking);
+  return (
+    <div
+      className="form-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Edit ${booking.ticketNo}`}
+    >
+      <form
+        className="form-modal compact-modal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave(draft);
+        }}
+      >
+        <header>
+          <div>
+            <h2>Edit passenger details</h2>
+            <p>
+              {booking.ticketNo} · {booking.route} · Seats{" "}
+              {booking.seats.join(", ")}
+            </p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </header>
+        <div className="modal-form-grid">
+          <label className="span-2">
+            <span>Passenger name *</span>
+            <input
+              required
+              value={draft.passenger}
+              onChange={(event) =>
+                setDraft({ ...draft, passenger: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            <span>Mobile number *</span>
+            <input
+              required
+              value={draft.phone}
+              onChange={(event) =>
+                setDraft({ ...draft, phone: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            <span>CNIC / Passport *</span>
+            <input
+              required
+              value={draft.cnic}
+              onChange={(event) =>
+                setDraft({ ...draft, cnic: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            <span>Gender</span>
+            <select
+              value={draft.gender}
+              onChange={(event) =>
+                setDraft({
+                  ...draft,
+                  gender: event.target.value as Booking["gender"],
+                })
+              }
+            >
+              <option>Male</option>
+              <option>Female</option>
+            </select>
+          </label>
+          <label>
+            <span>Destination</span>
+            <input
+              value={draft.destination}
+              onChange={(event) =>
+                setDraft({ ...draft, destination: event.target.value })
+              }
+            />
+          </label>
+          <label className="span-2">
+            <span>Boarding / pickup point</span>
+            <input
+              value={draft.boardingPoint}
+              onChange={(event) =>
+                setDraft({ ...draft, boardingPoint: event.target.value })
+              }
+            />
+          </label>
+        </div>
+        <footer>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary-button" type="submit">
+            <Check size={16} /> Save changes
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 function BookingsView({
   bookings,
   onPrint,
   onCancel,
+  onUpdate,
 }: {
   bookings: Booking[];
   onPrint: (booking: Booking) => void;
   onCancel: (id: string) => void;
+  onUpdate: (booking: Booking) => void;
 }) {
   const [search, setSearch] = useState(""),
-    [filter, setFilter] = useState<"All" | BookingSource>("All");
+    [filter, setFilter] = useState<"All" | BookingSource>("All"),
+    [editing, setEditing] = useState<Booking | null>(null);
   const visible = bookings.filter(
     (b) =>
       b.paymentStatus === "Paid" &&
@@ -2629,7 +2943,40 @@ function BookingsView({
         title="Paid bookings"
         text="Every public web ticket shown here has a verified full payment."
         action={
-          <button className="secondary-button" type="button">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() =>
+              downloadCsv("madina-paid-bookings.csv", [
+                [
+                  "Ticket",
+                  "Passenger",
+                  "Mobile",
+                  "CNIC",
+                  "Route",
+                  "Bus",
+                  "Seats",
+                  "Amount",
+                  "Payment",
+                  "Date",
+                  "Time",
+                ],
+                ...visible.map((booking) => [
+                  booking.ticketNo,
+                  booking.passenger,
+                  booking.phone,
+                  booking.cnic,
+                  booking.route,
+                  booking.bus,
+                  booking.seats.join(" "),
+                  booking.paid,
+                  booking.paymentMethod,
+                  booking.date,
+                  booking.time,
+                ]),
+              ])
+            }
+          >
             <FileBarChart size={16} /> Export report
           </button>
         }
@@ -2647,8 +2994,19 @@ function BookingsView({
           bookings={visible}
           onPrint={onPrint}
           onCancel={onCancel}
+          onEdit={setEditing}
         />
       </section>
+      {editing && (
+        <BookingEditModal
+          booking={editing}
+          onClose={() => setEditing(null)}
+          onSave={(booking) => {
+            onUpdate(booking);
+            setEditing(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -2780,15 +3138,19 @@ function TripsView({
   bookings,
   trips,
   fleet,
+  routes,
+  crew,
   onSave,
-  onDispatch,
+  onTransition,
   onReport,
 }: {
   bookings: Booking[];
   trips: TripRecord[];
   fleet: BusRecord[];
+  routes: RouteRecord[];
+  crew: CrewRecord[];
   onSave: (trip: TripRecord) => void;
-  onDispatch: (id: string) => void;
+  onTransition: (id: string, action: "boarding" | "depart" | "next") => void;
   onReport: (
     kind: ReportKind,
     tripId: string,
@@ -2798,6 +3160,26 @@ function TripsView({
 }) {
   const [editing, setEditing] = useState<TripRecord | "new" | null>(null);
   const [openTrip, setOpenTrip] = useState<TripRecord | null>(null);
+  const [serviceDate, setServiceDate] = useState(today);
+  const [filter, setFilter] = useState<"All trips" | "Upcoming" | "Departed">(
+    "All trips",
+  );
+  const serviceDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
+    new Date(`${serviceDate}T00:00:00`).getDay()
+  ] as Weekday;
+  const changeDate = (offset: number) => {
+    const next = new Date(`${serviceDate}T00:00:00`);
+    next.setDate(next.getDate() + offset);
+    setServiceDate(next.toISOString().slice(0, 10));
+  };
+  const visibleTrips = trips.filter(
+    (trip) =>
+      trip.days.includes(serviceDay) &&
+      (filter === "All trips" ||
+        (filter === "Departed"
+          ? trip.status === "Departed"
+          : trip.status !== "Departed")),
+  );
   return (
     <div className="admin-view">
       <ViewHeading
@@ -2817,35 +3199,49 @@ function TripsView({
       <section className="surface data-surface">
         <div className="data-toolbar">
           <div className="date-switcher">
-            <button type="button">
+            <button type="button" onClick={() => changeDate(-1)}>
               <ArrowLeft size={15} />
             </button>
             <span>
-              <CalendarDays size={15} /> Wednesday, 02 September 2026
+              <CalendarDays size={15} />{" "}
+              {new Date(`${serviceDate}T00:00:00`).toLocaleDateString("en-PK", {
+                weekday: "long",
+                day: "2-digit",
+                month: "long",
+                year: "numeric",
+              })}
             </span>
-            <button type="button">
+            <button type="button" onClick={() => changeDate(1)}>
               <ArrowRight size={15} />
             </button>
           </div>
           <div className="filter-tabs">
-            <button type="button" className="active">
-              All trips
-            </button>
-            <button type="button">Upcoming</button>
-            <button type="button">Departed</button>
+            {(["All trips", "Upcoming", "Departed"] as const).map((item) => (
+              <button
+                type="button"
+                className={filter === item ? "active" : ""}
+                onClick={() => setFilter(item)}
+                key={item}
+              >
+                {item}
+              </button>
+            ))}
           </div>
         </div>
         <div className="trip-cards">
-          {trips.map((t) => {
-            const r =
-                routeRecords.find((x) => x.id === t.routeId) ?? routeRecords[0],
+          {visibleTrips.map((t) => {
+            const r = routes.find((x) => x.id === t.routeId) ?? routes[0],
               bus =
                 fleet.find((x) => x.id === t.busId) ??
                 fleet[0] ??
                 fleetRecords[0],
-              sold = bookingsForTripRun(bookings, t, bus).flatMap(
-                (booking) => booking.seats,
-              ).length;
+              sold = bookingsForTripRun(
+                bookings,
+                t,
+                bus,
+                t.runNumber,
+                serviceDate,
+              ).flatMap((booking) => booking.seats).length;
             return (
               <article key={t.id}>
                 <div className="trip-card-time">
@@ -2891,6 +3287,26 @@ function TripsView({
                 </b>
                 <div className="trip-actions">
                   <button
+                    className={`lifecycle-action ${t.status.toLowerCase()}`}
+                    type="button"
+                    onClick={() =>
+                      onTransition(
+                        t.id,
+                        t.status === "Scheduled"
+                          ? "boarding"
+                          : t.status === "Boarding"
+                            ? "depart"
+                            : "next",
+                      )
+                    }
+                  >
+                    {t.status === "Scheduled"
+                      ? "Start boarding"
+                      : t.status === "Boarding"
+                        ? "Depart bus"
+                        : "Open next run"}
+                  </button>
+                  <button
                     className="text-action"
                     type="button"
                     onClick={() => setEditing(t)}
@@ -2910,12 +3326,20 @@ function TripsView({
               </article>
             );
           })}
+          {!visibleTrips.length && (
+            <EmptyState
+              title="No trips for this day"
+              text="Choose another service date or create a recurring trip for this weekday."
+            />
+          )}
         </div>
       </section>
       {editing && (
         <TripFormModal
           trip={editing === "new" ? undefined : editing}
           fleet={fleet}
+          routes={routes}
+          crew={crew}
           onClose={() => setEditing(null)}
           onSave={(trip) => {
             onSave(trip);
@@ -2928,8 +3352,10 @@ function TripsView({
           trip={trips.find((trip) => trip.id === openTrip.id) ?? openTrip}
           fleet={fleet}
           bookings={bookings}
+          routes={routes}
+          serviceDate={serviceDate}
           onClose={() => setOpenTrip(null)}
-          onDispatch={() => onDispatch(openTrip.id)}
+          onTransition={(action) => onTransition(openTrip.id, action)}
           onReport={onReport}
         />
       )}
@@ -2940,9 +3366,11 @@ function TripsView({
 function FleetView({
   fleet,
   onSave,
+  onReturn,
 }: {
   fleet: BusRecord[];
   onSave: (bus: BusRecord) => void;
+  onReturn: (id: string) => void;
 }) {
   const [editing, setEditing] = useState<BusRecord | "new" | null>(null);
   return (
@@ -3016,9 +3444,16 @@ function FleetView({
                 <strong>{b.nextService}</strong>
               </span>
             </div>
-            <button type="button" onClick={() => setEditing(b)}>
-              Edit bus <ChevronRight size={15} />
-            </button>
+            <div className="fleet-card-actions">
+              {b.status === "On route" && (
+                <button type="button" onClick={() => onReturn(b.id)}>
+                  <CheckCircle2 size={15} /> Mark returned
+                </button>
+              )}
+              <button type="button" onClick={() => setEditing(b)}>
+                Edit bus <ChevronRight size={15} />
+              </button>
+            </div>
           </article>
         ))}
       </section>
@@ -3039,11 +3474,15 @@ function FleetView({
 function TripFormModal({
   trip,
   fleet,
+  routes,
+  crew,
   onClose,
   onSave,
 }: {
   trip?: TripRecord;
   fleet: BusRecord[];
+  routes: RouteRecord[];
+  crew: CrewRecord[];
   onClose: () => void;
   onSave: (trip: TripRecord) => void;
 }) {
@@ -3051,16 +3490,14 @@ function TripFormModal({
   const [draft, setDraft] = useState<TripRecord>(
     trip ?? {
       id: "new-trip",
-      routeId: routeRecords[0].id,
+      routeId: routes[0].id,
       busId:
         fleet.find((bus) => bus.status === "Ready")?.id ?? fleet[0]?.id ?? "",
       departure: "08:00",
       arrival: "14:00",
-      driver:
-        crewRecords.find((person) => person.role === "Driver")?.name ?? "",
+      driver: crew.find((person) => person.role === "Driver")?.name ?? "",
       attendant:
-        crewRecords.find((person) => person.role === "Female attendant")
-          ?.name ?? "",
+        crew.find((person) => person.role === "Female attendant")?.name ?? "",
       platform: "P-01",
       status: "Scheduled",
       days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
@@ -3104,7 +3541,7 @@ function TripFormModal({
               value={draft.routeId}
               onChange={(event) => update("routeId", event.target.value)}
             >
-              {routeRecords
+              {routes
                 .filter((route) => route.status === "Active")
                 .map((route) => (
                   <option value={route.id} key={route.id}>
@@ -3150,7 +3587,7 @@ function TripFormModal({
               value={draft.driver}
               onChange={(event) => update("driver", event.target.value)}
             >
-              {crewRecords
+              {crew
                 .filter((person) => person.role === "Driver")
                 .map((person) => (
                   <option key={person.name}>{person.name}</option>
@@ -3163,7 +3600,7 @@ function TripFormModal({
               value={draft.attendant}
               onChange={(event) => update("attendant", event.target.value)}
             >
-              {crewRecords
+              {crew
                 .filter((person) => person.role === "Female attendant")
                 .map((person) => (
                   <option key={person.name}>{person.name}</option>
@@ -3397,15 +3834,19 @@ function TripRunModal({
   trip,
   fleet,
   bookings,
+  routes,
+  serviceDate,
   onClose,
-  onDispatch,
+  onTransition,
   onReport,
 }: {
   trip: TripRecord;
   fleet: BusRecord[];
   bookings: Booking[];
+  routes: RouteRecord[];
+  serviceDate: string;
   onClose: () => void;
-  onDispatch: () => void;
+  onTransition: (action: "boarding" | "depart" | "next") => void;
   onReport: (
     kind: ReportKind,
     tripId: string,
@@ -3415,9 +3856,14 @@ function TripRunModal({
 }) {
   const bus =
     fleet.find((item) => item.id === trip.busId) ?? fleet[0] ?? fleetRecords[0];
-  const route =
-    routeRecords.find((item) => item.id === trip.routeId) ?? routeRecords[0];
-  const runBookings = bookingsForTripRun(bookings, trip, bus);
+  const route = routes.find((item) => item.id === trip.routeId) ?? routes[0];
+  const runBookings = bookingsForTripRun(
+    bookings,
+    trip,
+    bus,
+    trip.runNumber,
+    serviceDate,
+  );
   const passengerRows = runBookings.flatMap((booking) =>
     booking.seats.map((seat) => ({ booking, seat })),
   );
@@ -3435,9 +3881,13 @@ function TripRunModal({
               {routeLabel(route)} · {trip.departure}
             </h2>
             <p>
-              {bus.registration} · Run {trip.runNumber} · {trip.platform}
+              {serviceDate} · {bus.registration} · Run {trip.runNumber} ·{" "}
+              {trip.platform}
             </p>
           </div>
+          <span className={`run-status-banner ${trip.status.toLowerCase()}`}>
+            <i /> {trip.status === "Departed" ? "Bus on route" : trip.status}
+          </span>
           <button type="button" aria-label="Close" onClick={onClose}>
             <X size={19} />
           </button>
@@ -3469,26 +3919,32 @@ function TripRunModal({
         <div className="run-report-actions">
           <button
             type="button"
-            onClick={() => onReport("manifest", trip.id, trip.runNumber)}
+            onClick={() =>
+              onReport("manifest", trip.id, trip.runNumber, serviceDate)
+            }
           >
             <FileText size={16} /> Manifest
           </button>
           <button
             type="button"
-            onClick={() => onReport("cnic", trip.id, trip.runNumber)}
+            onClick={() =>
+              onReport("cnic", trip.id, trip.runNumber, serviceDate)
+            }
           >
             <FileBarChart size={16} /> CNIC sheet
           </button>
           <button
             type="button"
-            onClick={() => onReport("terminal-a4", trip.id, trip.runNumber)}
+            onClick={() =>
+              onReport("terminal-a4", trip.id, trip.runNumber, serviceDate)
+            }
           >
             <Printer size={16} /> A4 voucher
           </button>
           <button
             type="button"
             onClick={() =>
-              onReport("terminal-thermal", trip.id, trip.runNumber)
+              onReport("terminal-thermal", trip.id, trip.runNumber, serviceDate)
             }
           >
             <ReceiptText size={16} /> Thermal voucher
@@ -3554,14 +4010,24 @@ function TripRunModal({
             Close
           </button>
           <button
-            className="dispatch-button"
+            className={`dispatch-button ${trip.status.toLowerCase()}`}
             type="button"
-            onClick={() => {
-              onDispatch();
-              onClose();
-            }}
+            onClick={() =>
+              onTransition(
+                trip.status === "Scheduled"
+                  ? "boarding"
+                  : trip.status === "Boarding"
+                    ? "depart"
+                    : "next",
+              )
+            }
           >
-            <BusFront size={17} /> Dispatch bus & start new run
+            <BusFront size={17} />{" "}
+            {trip.status === "Scheduled"
+              ? "Start boarding"
+              : trip.status === "Boarding"
+                ? "Confirm bus departure"
+                : "Close departed run & open next"}
           </button>
         </footer>
       </section>
@@ -3573,11 +4039,13 @@ function ReportsView({
   bookings,
   trips,
   fleet,
+  routes,
   onReport,
 }: {
   bookings: Booking[];
   trips: TripRecord[];
   fleet: BusRecord[];
+  routes: RouteRecord[];
   onReport: (
     kind: ReportKind,
     tripId: string,
@@ -3598,8 +4066,7 @@ function ReportsView({
     );
   const bus =
     fleet.find((item) => item.id === trip.busId) ?? fleet[0] ?? fleetRecords[0];
-  const route =
-    routeRecords.find((item) => item.id === trip.routeId) ?? routeRecords[0];
+  const route = routes.find((item) => item.id === trip.routeId) ?? routes[0];
   const runBookings = bookingsForTripRun(
     bookings,
     trip,
@@ -3660,9 +4127,8 @@ function ReportsView({
           >
             {trips.map((item) => {
               const itemRoute =
-                routeRecords.find(
-                  (routeItem) => routeItem.id === item.routeId,
-                ) ?? routeRecords[0];
+                routes.find((routeItem) => routeItem.id === item.routeId) ??
+                routes[0];
               return (
                 <option value={item.id} key={item.id}>
                   {item.departure} · {routeLabel(itemRoute)}
@@ -3756,6 +4222,7 @@ function ReportModal({
   bookings,
   trips,
   fleet,
+  routes,
   onClose,
 }: {
   report: {
@@ -3767,14 +4234,14 @@ function ReportModal({
   bookings: Booking[];
   trips: TripRecord[];
   fleet: BusRecord[];
+  routes: RouteRecord[];
   onClose: () => void;
 }) {
   const trip = trips.find((item) => item.id === report.tripId) ?? trips[0];
   if (!trip) return null;
   const bus =
     fleet.find((item) => item.id === trip.busId) ?? fleet[0] ?? fleetRecords[0];
-  const route =
-    routeRecords.find((item) => item.id === trip.routeId) ?? routeRecords[0];
+  const route = routes.find((item) => item.id === trip.routeId) ?? routes[0];
   const runBookings = bookingsForTripRun(
     bookings,
     trip,
@@ -3793,6 +4260,14 @@ function ReportModal({
     "terminal-thermal": "Terminal Voucher",
   }[report.kind];
   const thermal = report.kind === "terminal-thermal";
+  const printReport = () => {
+    const printClass = thermal ? "printing-thermal" : "printing-a4";
+    const cleanup = () => document.body.classList.remove(printClass);
+    document.body.classList.add(printClass);
+    window.addEventListener("afterprint", cleanup, { once: true });
+    window.print();
+    window.setTimeout(cleanup, 1500);
+  };
   return (
     <div
       className="report-overlay"
@@ -3804,7 +4279,10 @@ function ReportModal({
         <div className="report-toolbar">
           <div>
             <strong>{title}</strong>
-            <small>{thermal ? "80mm thermal printer" : "A4 page"}</small>
+            <small>
+              {thermal ? "80mm thermal printer" : "A4 landscape"} ·{" "}
+              {rows.length} passenger seats
+            </small>
           </div>
           <div>
             <button
@@ -3817,14 +4295,14 @@ function ReportModal({
             <button
               className="primary-button"
               type="button"
-              onClick={() => window.print()}
+              onClick={printReport}
             >
               <Printer size={16} /> Print
             </button>
           </div>
         </div>
         <article
-          className={`print-document ${thermal ? "report-thermal" : "report-a4"}`}
+          className={`print-document ${thermal ? "report-thermal" : "report-a4 report-landscape"}`}
         >
           <header className="document-header">
             <div className="document-logo">ME</div>
@@ -4046,7 +4524,154 @@ function ReportModal({
   );
 }
 
-function RoutesView({ showToast }: { showToast: (message: string) => void }) {
+function RouteFormModal({
+  route,
+  onClose,
+  onSave,
+}: {
+  route?: RouteRecord;
+  onClose: () => void;
+  onSave: (route: RouteRecord) => void;
+}) {
+  const [draft, setDraft] = useState<RouteRecord>(
+    route ?? {
+      id: "new-route",
+      from: "Peshawar",
+      to: "",
+      distance: "",
+      duration: "",
+      fare: 0,
+      boarding: "Madina Terminal, Peshawar",
+      status: "Active",
+    },
+  );
+  const update = <K extends keyof RouteRecord>(key: K, value: RouteRecord[K]) =>
+    setDraft((current) => ({ ...current, [key]: value }));
+  return (
+    <div
+      className="form-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={route ? "Edit route" : "Add route"}
+    >
+      <form
+        className="form-modal compact-modal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave({ ...draft, id: route ? draft.id : `route-${Date.now()}` });
+        }}
+      >
+        <header>
+          <div>
+            <h2>{route ? "Edit route & fare" : "Add route"}</h2>
+            <p>City pair, boarding terminal and per-seat fare.</p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </header>
+        <div className="modal-form-grid">
+          <label>
+            <span>Leaving from *</span>
+            <input
+              required
+              value={draft.from}
+              onChange={(event) => update("from", event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Going to *</span>
+            <input
+              required
+              value={draft.to}
+              onChange={(event) => update("to", event.target.value)}
+              placeholder="Destination city"
+            />
+          </label>
+          <label>
+            <span>Distance</span>
+            <input
+              required
+              value={draft.distance}
+              onChange={(event) => update("distance", event.target.value)}
+              placeholder="520 km"
+            />
+          </label>
+          <label>
+            <span>Travel time</span>
+            <input
+              required
+              value={draft.duration}
+              onChange={(event) => update("duration", event.target.value)}
+              placeholder="5h 45m"
+            />
+          </label>
+          <label>
+            <span>Base fare (PKR)</span>
+            <input
+              required
+              type="number"
+              min="0"
+              step="50"
+              value={draft.fare}
+              onChange={(event) => update("fare", Number(event.target.value))}
+            />
+          </label>
+          <label>
+            <span>Status</span>
+            <select
+              value={draft.status}
+              onChange={(event) =>
+                update("status", event.target.value as RouteRecord["status"])
+              }
+            >
+              <option>Active</option>
+              <option>Paused</option>
+            </select>
+          </label>
+          <label className="span-2">
+            <span>Boarding terminal *</span>
+            <input
+              required
+              value={draft.boarding}
+              onChange={(event) => update("boarding", event.target.value)}
+            />
+          </label>
+        </div>
+        <footer>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary-button" type="submit">
+            <Check size={16} /> Save route
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function RoutesView({
+  routes,
+  onSave,
+}: {
+  routes: RouteRecord[];
+  onSave: (route: RouteRecord) => void;
+}) {
+  const [editing, setEditing] = useState<RouteRecord | "new" | null>(null);
+  const [filter, setFilter] = useState<"Active routes" | "Paused">(
+    "Active routes",
+  );
+  const [search, setSearch] = useState("");
+  const visibleRoutes = routes.filter(
+    (route) =>
+      (filter === "Active routes"
+        ? route.status === "Active"
+        : route.status === "Paused") &&
+      `${route.from} ${route.to} ${route.boarding}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+  );
   return (
     <div className="admin-view">
       <ViewHeading
@@ -4057,9 +4682,7 @@ function RoutesView({ showToast }: { showToast: (message: string) => void }) {
           <button
             className="primary-button"
             type="button"
-            onClick={() =>
-              showToast("Route form is ready for backend connection.")
-            }
+            onClick={() => setEditing("new")}
           >
             <Plus size={16} /> Add route
           </button>
@@ -4068,10 +4691,10 @@ function RoutesView({ showToast }: { showToast: (message: string) => void }) {
       <section className="surface data-surface">
         <DataToolbar
           tabs={["Active routes", "Paused"]}
-          active="Active routes"
-          onTab={() => undefined}
-          search=""
-          onSearch={() => undefined}
+          active={filter}
+          onTab={(tab) => setFilter(tab as "Active routes" | "Paused")}
+          search={search}
+          onSearch={setSearch}
           placeholder="Search a city or route"
         />
         <div className="table-wrap">
@@ -4088,7 +4711,7 @@ function RoutesView({ showToast }: { showToast: (message: string) => void }) {
               </tr>
             </thead>
             <tbody>
-              {routeRecords.map((r) => (
+              {visibleRoutes.map((r) => (
                 <tr key={r.id}>
                   <td>
                     <strong>{routeLabel(r)}</strong>
@@ -4108,15 +4731,15 @@ function RoutesView({ showToast }: { showToast: (message: string) => void }) {
                     <strong>{r.boarding}</strong>
                   </td>
                   <td>
-                    <b className="plain-status active">{r.status}</b>
+                    <b className={`plain-status ${r.status.toLowerCase()}`}>
+                      {r.status}
+                    </b>
                   </td>
                   <td>
                     <button
                       className="text-action"
                       type="button"
-                      onClick={() =>
-                        showToast(`${routeLabel(r)} fare editor opened.`)
-                      }
+                      onClick={() => setEditing(r)}
                     >
                       Edit
                     </button>
@@ -4127,11 +4750,177 @@ function RoutesView({ showToast }: { showToast: (message: string) => void }) {
           </table>
         </div>
       </section>
+      {editing && (
+        <RouteFormModal
+          route={editing === "new" ? undefined : editing}
+          onClose={() => setEditing(null)}
+          onSave={(route) => {
+            onSave(route);
+            setEditing(null);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function FinanceView({ bookings }: { bookings: Booking[] }) {
+function FinanceCloseModal({
+  bookings,
+  onClose,
+  onSave,
+}: {
+  bookings: Booking[];
+  onClose: () => void;
+  onSave: (summary: string) => void;
+}) {
+  const paid = bookings.filter(
+    (booking) =>
+      booking.paymentStatus === "Paid" && booking.bookingStatus === "Confirmed",
+  );
+  const expectedCash = paid
+    .filter((booking) => booking.paymentMethod === "Cash")
+    .reduce((sum, booking) => sum + booking.paid, 0);
+  const digital = paid
+    .filter((booking) => booking.paymentMethod !== "Cash")
+    .reduce((sum, booking) => sum + booking.paid, 0);
+  const [cashCounted, setCashCounted] = useState(expectedCash);
+  const [terminalExpense, setTerminalExpense] = useState(0);
+  const [driverAdvance, setDriverAdvance] = useState(0);
+  const [refreshment, setRefreshment] = useState(0);
+  const [remarks, setRemarks] = useState("");
+  const deductions = terminalExpense + driverAdvance + refreshment;
+  const handover = Math.max(0, cashCounted - deductions);
+  const variance = cashCounted - expectedCash;
+  return (
+    <div
+      className="form-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Close counter shift"
+    >
+      <form
+        className="form-modal finance-close-modal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSave(
+            `${money(handover)} handed over · variance ${money(Math.abs(variance))}${variance < 0 ? " short" : variance > 0 ? " over" : " balanced"}`,
+          );
+        }}
+      >
+        <header>
+          <div>
+            <h2>Close counter shift</h2>
+            <p>Reconcile cash, digital collections and terminal deductions.</p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </header>
+        <div className="close-shift-summary">
+          <span>
+            <small>Paid ticket sales</small>
+            <strong>
+              {money(paid.reduce((sum, booking) => sum + booking.paid, 0))}
+            </strong>
+          </span>
+          <span>
+            <small>Expected cash</small>
+            <strong>{money(expectedCash)}</strong>
+          </span>
+          <span>
+            <small>Digital / 1Bill</small>
+            <strong>{money(digital)}</strong>
+          </span>
+        </div>
+        <div className="modal-form-grid">
+          <label>
+            <span>Cash counted</span>
+            <input
+              type="number"
+              min="0"
+              value={cashCounted}
+              onChange={(event) => setCashCounted(Number(event.target.value))}
+            />
+          </label>
+          <label>
+            <span>Terminal expense</span>
+            <input
+              type="number"
+              min="0"
+              value={terminalExpense}
+              onChange={(event) =>
+                setTerminalExpense(Number(event.target.value))
+              }
+            />
+          </label>
+          <label>
+            <span>Paid to driver</span>
+            <input
+              type="number"
+              min="0"
+              value={driverAdvance}
+              onChange={(event) => setDriverAdvance(Number(event.target.value))}
+            />
+          </label>
+          <label>
+            <span>Refreshment charges</span>
+            <input
+              type="number"
+              min="0"
+              value={refreshment}
+              onChange={(event) => setRefreshment(Number(event.target.value))}
+            />
+          </label>
+          <label className="span-2">
+            <span>Remarks</span>
+            <textarea
+              rows={3}
+              value={remarks}
+              onChange={(event) => setRemarks(event.target.value)}
+              placeholder="Optional handover notes"
+            />
+          </label>
+        </div>
+        <div className="shift-balance">
+          <span>
+            <small>Deductions</small>
+            <strong>{money(deductions)}</strong>
+          </span>
+          <span>
+            <small>Cash variance</small>
+            <strong className={variance ? "variance" : "balanced"}>
+              {variance < 0 ? "− " : variance > 0 ? "+ " : ""}
+              {money(Math.abs(variance))}
+            </strong>
+          </span>
+          <span>
+            <small>Cash to hand over</small>
+            <strong>{money(handover)}</strong>
+          </span>
+        </div>
+        <footer>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary-button" type="submit">
+            <CheckCircle2 size={16} /> Confirm shift close
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function FinanceView({
+  bookings,
+  showToast,
+}: {
+  bookings: Booking[];
+  showToast: (message: string) => void;
+}) {
+  const [closing, setClosing] = useState(false);
+  const [lastClose, setLastClose] = useState("");
+  const [period, setPeriod] = useState<"7 days" | "30 days">("7 days");
   const paid = bookings.filter(
       (b) => b.paymentStatus === "Paid" && b.bookingStatus === "Confirmed",
     ),
@@ -4147,10 +4936,39 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
         text="Paid sales, payment channels and daily reconciliation."
         action={
           <div className="view-actions">
-            <button className="secondary-button" type="button">
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() =>
+                downloadCsv("madina-finance-ledger.csv", [
+                  [
+                    "Ticket",
+                    "Passenger",
+                    "Payment method",
+                    "Reference",
+                    "Paid",
+                    "Date",
+                    "Time",
+                  ],
+                  ...paid.map((booking) => [
+                    booking.ticketNo,
+                    booking.passenger,
+                    booking.paymentMethod,
+                    booking.paymentReference,
+                    booking.paid,
+                    booking.date,
+                    booking.time,
+                  ]),
+                ])
+              }
+            >
               <FileBarChart size={16} /> Export
             </button>
-            <button className="primary-button" type="button">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={() => setClosing(true)}
+            >
               <CheckCircle2 size={16} /> Close shift
             </button>
           </div>
@@ -4205,19 +5023,30 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
       <div className="finance-grid">
         <section className="surface finance-chart">
           <SurfaceHeader
-            title="Seven-day collections"
-            text="Paid revenue by day"
+            title={
+              period === "7 days" ? "Seven-day collections" : "Thirty-day trend"
+            }
+            text="Paid revenue trend"
             action={
               <div className="mini-tabs">
-                <button type="button" className="active">
-                  7 days
-                </button>
-                <button type="button">30 days</button>
+                {(["7 days", "30 days"] as const).map((item) => (
+                  <button
+                    type="button"
+                    className={period === item ? "active" : ""}
+                    onClick={() => setPeriod(item)}
+                    key={item}
+                  >
+                    {item}
+                  </button>
+                ))}
               </div>
             }
           />
           <div className="bar-chart">
-            {[42, 58, 46, 72, 63, 88, 76].map((h, i) => (
+            {(period === "7 days"
+              ? [42, 58, 46, 72, 63, 88, 76]
+              : [58, 66, 49, 77, 68, 92, 81]
+            ).map((h, i) => (
               <div key={i}>
                 <span>
                   <i style={{ height: `${h}%` }} />
@@ -4274,11 +5103,196 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
           compact
         />
       </section>
+      {lastClose && (
+        <div className="finance-close-note">
+          <CheckCircle2 size={16} />
+          <span>
+            <strong>Last shift closed</strong>
+            <small>{lastClose}</small>
+          </span>
+        </div>
+      )}
+      {closing && (
+        <FinanceCloseModal
+          bookings={bookings}
+          onClose={() => setClosing(false)}
+          onSave={(summary) => {
+            setLastClose(`${new Date().toLocaleString("en-PK")} · ${summary}`);
+            setClosing(false);
+            showToast("Shift closed and reconciliation saved.");
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function CrewView({ showToast }: { showToast: (message: string) => void }) {
+function CrewFormModal({
+  person,
+  onClose,
+  onSave,
+}: {
+  person?: CrewRecord;
+  onClose: () => void;
+  onSave: (person: CrewRecord, previousName?: string) => void;
+}) {
+  const [draft, setDraft] = useState<CrewRecord>(
+    person ?? {
+      name: "",
+      role: "Driver",
+      phone: "",
+      cnic: "",
+      license: "",
+      duty: "Available at terminal",
+      status: "Available",
+      initials: "",
+    },
+  );
+  const update = <K extends keyof CrewRecord>(key: K, value: CrewRecord[K]) =>
+    setDraft((current) => ({ ...current, [key]: value }));
+  return (
+    <div
+      className="form-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={person ? "Edit staff member" : "Add staff member"}
+    >
+      <form
+        className="form-modal compact-modal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const initials = draft.name
+            .split(/\s+/)
+            .filter(Boolean)
+            .slice(0, 2)
+            .map((word) => word[0])
+            .join("")
+            .toUpperCase();
+          onSave(
+            {
+              ...draft,
+              initials: initials || "ME",
+              license: draft.role === "Driver" ? draft.license : "—",
+            },
+            person?.name,
+          );
+        }}
+      >
+        <header>
+          <div>
+            <h2>{person ? "Edit staff member" : "Add staff member"}</h2>
+            <p>Identity, role and current terminal assignment.</p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </header>
+        <div className="modal-form-grid">
+          <label className="span-2">
+            <span>Full name *</span>
+            <input
+              required
+              value={draft.name}
+              onChange={(event) => update("name", event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Role</span>
+            <select
+              value={draft.role}
+              onChange={(event) =>
+                update("role", event.target.value as CrewRecord["role"])
+              }
+            >
+              <option>Driver</option>
+              <option>Female attendant</option>
+              <option>Manager</option>
+              <option>Counter agent</option>
+            </select>
+          </label>
+          <label>
+            <span>Status</span>
+            <select
+              value={draft.status}
+              onChange={(event) =>
+                update("status", event.target.value as CrewRecord["status"])
+              }
+            >
+              <option>Available</option>
+              <option>Scheduled</option>
+              <option>On duty</option>
+              <option>Off duty</option>
+            </select>
+          </label>
+          <label>
+            <span>Mobile number *</span>
+            <input
+              required
+              value={draft.phone}
+              onChange={(event) => update("phone", event.target.value)}
+              placeholder="03XX XXXXXXX"
+            />
+          </label>
+          <label>
+            <span>CNIC number *</span>
+            <input
+              required
+              value={draft.cnic}
+              onChange={(event) => update("cnic", event.target.value)}
+              placeholder="XXXXX-XXXXXXX-X"
+            />
+          </label>
+          {draft.role === "Driver" && (
+            <label className="span-2">
+              <span>HTV license number *</span>
+              <input
+                required
+                value={draft.license}
+                onChange={(event) => update("license", event.target.value)}
+              />
+            </label>
+          )}
+          <label className="span-2">
+            <span>Current assignment</span>
+            <input
+              value={draft.duty}
+              onChange={(event) => update("duty", event.target.value)}
+            />
+          </label>
+        </div>
+        <footer>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary-button" type="submit">
+            <Check size={16} /> Save staff member
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
+function CrewView({
+  crew,
+  onSave,
+}: {
+  crew: CrewRecord[];
+  onSave: (person: CrewRecord, previousName?: string) => void;
+}) {
+  const [editing, setEditing] = useState<CrewRecord | "new" | null>(null);
+  const [filter, setFilter] = useState("All staff");
+  const [search, setSearch] = useState("");
+  const visibleCrew = crew.filter(
+    (person) =>
+      (filter === "All staff" ||
+        (filter === "Drivers"
+          ? person.role === "Driver"
+          : person.role === "Female attendant")) &&
+      `${person.name} ${person.phone} ${person.cnic} ${person.duty}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+  );
   return (
     <div className="admin-view">
       <ViewHeading
@@ -4289,9 +5303,7 @@ function CrewView({ showToast }: { showToast: (message: string) => void }) {
           <button
             className="primary-button"
             type="button"
-            onClick={() =>
-              showToast("Staff form is ready for backend connection.")
-            }
+            onClick={() => setEditing("new")}
           >
             <Plus size={16} /> Add staff member
           </button>
@@ -4300,20 +5312,21 @@ function CrewView({ showToast }: { showToast: (message: string) => void }) {
       <section className="surface data-surface">
         <DataToolbar
           tabs={["All staff", "Drivers", "Female attendants"]}
-          active="All staff"
-          onTab={() => undefined}
-          search=""
-          onSearch={() => undefined}
+          active={filter}
+          onTab={setFilter}
+          search={search}
+          onSearch={setSearch}
           placeholder="Search staff member"
         />
         <div className="crew-grid">
-          {crewRecords.map((m) => (
+          {visibleCrew.map((m) => (
             <article key={m.name}>
               <span className="crew-avatar">{m.initials}</span>
               <div>
                 <strong>{m.name}</strong>
                 <small>{m.role}</small>
                 <p>{m.phone}</p>
+                <p>{m.cnic}</p>
               </div>
               <div className="crew-duty">
                 <small>Current assignment</small>
@@ -4327,7 +5340,7 @@ function CrewView({ showToast }: { showToast: (message: string) => void }) {
               <button
                 className="icon-action"
                 type="button"
-                onClick={() => showToast(`${m.name} profile opened.`)}
+                onClick={() => setEditing(m)}
               >
                 <ChevronRight size={16} />
               </button>
@@ -4335,6 +5348,16 @@ function CrewView({ showToast }: { showToast: (message: string) => void }) {
           ))}
         </div>
       </section>
+      {editing && (
+        <CrewFormModal
+          person={editing === "new" ? undefined : editing}
+          onClose={() => setEditing(null)}
+          onSave={(person, previousName) => {
+            onSave(person, previousName);
+            setEditing(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -4342,7 +5365,8 @@ function CrewView({ showToast }: { showToast: (message: string) => void }) {
 function SettingsView({ showToast }: { showToast: (message: string) => void }) {
   const [onlineSales, setOnlineSales] = useState(true),
     [autoExpiry, setAutoExpiry] = useState(true),
-    [smsTickets, setSmsTickets] = useState(true);
+    [smsTickets, setSmsTickets] = useState(true),
+    [sampleReceipt, setSampleReceipt] = useState(false);
   return (
     <div className="admin-view">
       <ViewHeading
@@ -4452,7 +5476,11 @@ function SettingsView({ showToast }: { showToast: (message: string) => void }) {
               <input value="Madina Terminal, Peshawar" readOnly />
             </label>
           </div>
-          <button className="secondary-button" type="button">
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setSampleReceipt(true)}
+          >
             <Printer size={15} /> Print sample
           </button>
         </section>
@@ -4488,6 +5516,12 @@ function SettingsView({ showToast }: { showToast: (message: string) => void }) {
           </div>
         </section>
       </div>
+      {sampleReceipt && (
+        <ReceiptModal
+          booking={initialBookings[0]}
+          onClose={() => setSampleReceipt(false)}
+        />
+      )}
     </div>
   );
 }
@@ -4588,11 +5622,13 @@ function BookingTable({
   bookings,
   onPrint,
   onCancel,
+  onEdit,
   compact = false,
 }: {
   bookings: Booking[];
   onPrint: (booking: Booking) => void;
   onCancel?: (id: string) => void;
+  onEdit?: (booking: Booking) => void;
   compact?: boolean;
 }) {
   return (
@@ -4664,6 +5700,18 @@ function BookingTable({
                       <button type="button" onClick={() => onPrint(b)}>
                         <Printer size={15} />
                       </button>
+                      {onEdit && (
+                        <button
+                          type="button"
+                          aria-label={`Edit ${b.ticketNo}`}
+                          disabled={["Cancelled", "Refunded"].includes(
+                            b.bookingStatus,
+                          )}
+                          onClick={() => onEdit(b)}
+                        >
+                          <FileText size={15} />
+                        </button>
+                      )}
                       {onCancel && (
                         <button
                           type="button"
