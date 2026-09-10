@@ -27,6 +27,9 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl git nginx mysql-server openssl rsync xz-utils
+timedatectl set-timezone Asia/Karachi
+install -m 0644 "$PROJECT_DIR/deploy/mysql.cnf" /etc/mysql/mysql.conf.d/madina-express.cnf
+systemctl restart mysql
 
 ARCH=$(uname -m)
 case "$ARCH" in

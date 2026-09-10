@@ -2,7 +2,7 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import { config } from "./config.js";
 import { pool, transaction } from "./db.js";
-import { ApiError, fail, isoDateTime, randomToken, requireFields, sqlDateTime, tokenHash } from "./helpers.js";
+import { ApiError, fail, isoDateTime, randomToken, requireFields, tokenHash } from "./helpers.js";
 import {
   expireReservations, fetchBookings, fetchBuses, fetchCrew, fetchCurrentShift,
   fetchExpenses, fetchRoutes, fetchTrips, fetchUsers, publicOccupancy,
@@ -62,6 +62,7 @@ async function loadSession(req) {
   if (!token) return null;
   const [records] = await pool.execute(
     `SELECT s.token_hash, s.csrf_token, s.finance_unlocked_until, s.expires_at,
+            (s.finance_unlocked_until IS NOT NULL AND s.finance_unlocked_until > NOW()) finance_unlocked,
             u.id, u.name, u.email, u.username, u.role, u.active, u.force_password_change
      FROM api_sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash = ? AND s.expires_at > NOW() LIMIT 1`, [tokenHash(token)],
@@ -111,16 +112,21 @@ app.get("/health", asyncRoute(async (_req, res) => {
 app.post("/auth/login", asyncRoute(async (req, res) => {
   requireFields(req.body, ["identity", "password"]);
   const identity = String(req.body.identity).trim().toLowerCase();
-  const [records] = await pool.execute("SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1", [identity, identity]);
+  const [records] = await pool.execute(
+    "SELECT *, (locked_until IS NOT NULL AND locked_until > NOW()) account_locked FROM users WHERE email = ? OR username = ? LIMIT 1",
+    [identity, identity],
+  );
   const user = records[0];
-  if (user?.locked_until && new Date(`${user.locked_until.replace(" ", "T")}+05:00`) > new Date()) {
+  if (user?.account_locked) {
     fail("Too many failed attempts. Try again later.", 429, "account_locked");
   }
   if (!user || !user.active || !(await passwordMatches(String(req.body.password), user.password_hash))) {
     if (user) {
       const attempts = Number(user.failed_login_count) + 1;
-      await pool.execute("UPDATE users SET failed_login_count = ?, locked_until = ? WHERE id = ?",
-        [attempts, attempts >= 5 ? sqlDateTime(new Date(Date.now() + 900_000)) : null, user.id]);
+      await pool.execute(
+        "UPDATE users SET failed_login_count = ?, locked_until = IF(? >= 5, DATE_ADD(NOW(), INTERVAL 15 MINUTE), NULL) WHERE id = ?",
+        [attempts, attempts, user.id],
+      );
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
     fail("The username or password is incorrect.", 401, "invalid_credentials");
@@ -204,7 +210,7 @@ app.post("/auth/finance-unlock", asyncRoute(async (req, res) => {
   res.json({ unlocked: true, expiresIn: 900 });
 }));
 
-const financeUnlocked = (req) => req.session.finance_unlocked_until && new Date(`${req.session.finance_unlocked_until.replace(" ", "T")}+05:00`) > new Date();
+const financeUnlocked = (req) => Boolean(Number(req.session.finance_unlocked));
 app.get("/finance/status", (req, res) => {
   requireRole(req.user, ["admin"]);
   res.json({ unlocked: Boolean(financeUnlocked(req)) });

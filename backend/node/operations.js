@@ -119,10 +119,14 @@ export async function cancelBooking(id, user, req) {
 export async function confirmReservation(id, data, user, req) {
   if (!(await fetchCurrentShift(user.id))) fail("Open a counter shift before collecting reservation payment.", 409, "shift_not_open");
   return transaction(async (connection) => {
-    const records = await query(connection, "SELECT * FROM bookings WHERE id = ? FOR UPDATE", [id]);
+    const records = await query(
+      connection,
+      "SELECT *, (expires_at IS NOT NULL AND expires_at <= NOW()) is_expired FROM bookings WHERE id = ? FOR UPDATE",
+      [id],
+    );
     const row = records[0];
     if (!row || row.booking_status !== "Reserved") fail("Active reservation not found.", 404, "not_found");
-    if (row.expires_at && new Date(`${row.expires_at.replace(" ", "T")}+05:00`) <= new Date()) fail("This reservation has expired.", 409, "reservation_expired");
+    if (row.is_expired) fail("This reservation has expired.", 409, "reservation_expired");
     const method = allowed(String(data.paymentMethod || "Cash"), ["Cash", "Card", "Bank transfer", "1Bill"], "paymentMethod");
     let reference = String(data.paymentReference || "").trim();
     if (method !== "Cash" && !reference) fail("A verified payment reference is required.", 422, "validation_error");

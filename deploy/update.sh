@@ -15,6 +15,11 @@ if [[ -n $(git status --porcelain) ]]; then
 fi
 
 git pull --ff-only origin main
+timedatectl set-timezone Asia/Karachi
+if ! cmp -s "$PROJECT_DIR/deploy/mysql.cnf" /etc/mysql/mysql.conf.d/madina-express.cnf; then
+  install -m 0644 "$PROJECT_DIR/deploy/mysql.cnf" /etc/mysql/mysql.conf.d/madina-express.cnf
+  systemctl restart mysql
+fi
 npm ci
 VITE_PUBLIC_BASE=/ VITE_API_BASE=/api VITE_ENABLE_PUBLIC_SITE=false npm run build
 npm run server:check

@@ -112,10 +112,10 @@ try {
 
   createdExpenseReference = `NODE-EXP-${Date.now()}`;
   const expense = await request("POST", "/expenses", { date: new Date().toISOString().slice(0, 10), category: "Terminal", description: "Automated Node expense", amount: 100, paymentMethod: "Cash", reference: createdExpenseReference, notes: "Cleanup expected" }, csrf);
-  check(
-    expense.status === 201 && Number(expense.body.expense?.amount) === 100,
-    `Node.js records audited expenses (${expense.status}: ${expense.body.error?.code || "unexpected response"})`,
-  );
+  if (expense.status !== 201 || Number(expense.body.expense?.amount) !== 100) {
+    throw new Error(`Node.js records audited expenses (${expense.status}: ${expense.body.error?.code || "unexpected response"})`);
+  }
+  check(true, "Node.js records audited expenses");
   createdExpenseId = Number(expense.body.expense.id);
   check((await request("GET", "/expenses")).status === 200, "unlocked expense history loads");
   const current = await request("GET", "/shifts/current");
