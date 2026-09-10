@@ -74,5 +74,15 @@ systemctl daemon-reload
 nginx -t
 systemctl enable --now certbot-ip-renew.timer
 systemctl restart nginx madina-express
-curl --fail --silent --show-error "https://$SERVER_IP/api/health" >/dev/null
+
+attempt=0
+until curl --fail --silent "https://$SERVER_IP/api/health" >/dev/null; do
+  attempt=$((attempt + 1))
+  if [[ $attempt -ge 30 ]]; then
+    systemctl status madina-express nginx --no-pager --full || true
+    echo "HTTPS did not become healthy in time." >&2
+    exit 1
+  fi
+  sleep 1
+done
 echo "Trusted HTTPS is active at https://$SERVER_IP"

@@ -7,6 +7,8 @@ import mysql from "mysql2/promise";
 const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const profilePath = resolve(".qa-browser", "cdp-profile");
 const debugPort = 9333;
+const appUrl = (process.env.BROWSER_APP_URL || "http://localhost/madina-express").replace(/\/$/, "");
+const apiHealthUrl = process.env.BROWSER_API_URL || "http://localhost:3101/health";
 let qaAdminId = null;
 let qaConnection = null;
 mkdirSync(resolve(".qa-browser"), { recursive: true });
@@ -58,7 +60,7 @@ function readBackendEnv() {
 try {
   await waitForDebugger();
   const created = await fetch(
-    `http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent("http://localhost/madina-express/")}`,
+    `http://127.0.0.1:${debugPort}/json/new?${encodeURIComponent(`${appUrl}/`)}`,
     { method: "PUT" },
   ).then((response) => response.json());
   const socket = new WebSocket(created.webSocketDebuggerUrl);
@@ -115,7 +117,7 @@ try {
 
   await send("Page.enable");
   await send("Runtime.enable");
-  await navigate("http://localhost/madina-express/");
+  await navigate(`${appUrl}/`);
   await delay(1200);
   const publicState = await evaluate(`({
     title: document.title,
@@ -126,10 +128,10 @@ try {
   expect(publicState.title.includes("Madina Express"), "application page title renders");
   expect(publicState.loginVisible, "public URL shows staff sign-in while client website is disabled");
   expect(!publicState.publicSearchVisible && !publicState.publicBookingCopy, "client booking website is hidden");
-  const apiProbe = await evaluate(`fetch('http://localhost:3101/health', { credentials: 'include' }).then(async (response) => ({ status: response.status, text: await response.text() })).catch((error) => ({ error: error.message }))`);
+  const apiProbe = await evaluate(`fetch(${JSON.stringify(apiHealthUrl)}, { credentials: 'include' }).then(async (response) => ({ status: response.status, text: await response.text() })).catch((error) => ({ error: error.message }))`);
   expect(apiProbe.status === 200 && apiProbe.text.includes('"runtime":"node"'), "browser connects to the Node.js API");
 
-  await navigate("http://localhost/madina-express/manage");
+  await navigate(`${appUrl}/manage`);
   const guardedPath = await evaluate("location.pathname");
   expect(guardedPath.endsWith("/login"), "management URL redirects anonymous users to sign in");
 
@@ -149,21 +151,28 @@ try {
   if (!invalidLogin.includes("incorrect")) console.log(`Invalid-login notice: ${invalidLogin || "(empty)"}`);
   expect(invalidLogin.includes("incorrect"), "login form displays the API authentication error");
 
-  const environment = readBackendEnv();
-  const qaUsername = `browser-admin-${Date.now()}`;
-  const qaPassword = "BrowserAdmin!2026Test";
-  qaConnection = await mysql.createConnection({
-    host: environment.DB_HOST,
-    port: Number(environment.DB_PORT || 3306),
-    user: environment.DB_USER,
-    password: environment.DB_PASSWORD,
-    database: environment.DB_NAME,
-  });
-  const [qaAdmin] = await qaConnection.execute(
-    "INSERT INTO users (name, email, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, 'admin', 1)",
-    ["Browser QA Administrator", `${qaUsername}@example.invalid`, qaUsername, await bcrypt.hash(qaPassword, 12)],
-  );
-  qaAdminId = Number(qaAdmin.insertId);
+  let qaUsername = process.env.BROWSER_USERNAME;
+  let qaPassword = process.env.BROWSER_PASSWORD;
+  if (Boolean(qaUsername) !== Boolean(qaPassword)) {
+    throw new Error("Set both BROWSER_USERNAME and BROWSER_PASSWORD, or neither.");
+  }
+  if (!qaUsername) {
+    const environment = readBackendEnv();
+    qaUsername = `browser-admin-${Date.now()}`;
+    qaPassword = "BrowserAdmin!2026Test";
+    qaConnection = await mysql.createConnection({
+      host: environment.DB_HOST,
+      port: Number(environment.DB_PORT || 3306),
+      user: environment.DB_USER,
+      password: environment.DB_PASSWORD,
+      database: environment.DB_NAME,
+    });
+    const [qaAdmin] = await qaConnection.execute(
+      "INSERT INTO users (name, email, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, 'admin', 1)",
+      ["Browser QA Administrator", `${qaUsername}@example.invalid`, qaUsername, await bcrypt.hash(qaPassword, 12)],
+    );
+    qaAdminId = Number(qaAdmin.insertId);
+  }
   const loginResult = await evaluate(`(async () => {
     const setValue = (element, value) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
