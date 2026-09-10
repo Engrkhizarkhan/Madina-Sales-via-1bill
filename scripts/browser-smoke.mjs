@@ -1,10 +1,14 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import bcrypt from "bcryptjs";
+import mysql from "mysql2/promise";
 
 const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const profilePath = resolve(".qa-browser", "cdp-profile");
 const debugPort = 9333;
+let qaAdminId = null;
+let qaConnection = null;
 mkdirSync(resolve(".qa-browser"), { recursive: true });
 rmSync(profilePath, { recursive: true, force: true });
 
@@ -146,6 +150,20 @@ try {
   expect(invalidLogin.includes("incorrect"), "login form displays the API authentication error");
 
   const environment = readBackendEnv();
+  const qaUsername = `browser-admin-${Date.now()}`;
+  const qaPassword = "BrowserAdmin!2026Test";
+  qaConnection = await mysql.createConnection({
+    host: environment.DB_HOST,
+    port: Number(environment.DB_PORT || 3306),
+    user: environment.DB_USER,
+    password: environment.DB_PASSWORD,
+    database: environment.DB_NAME,
+  });
+  const [qaAdmin] = await qaConnection.execute(
+    "INSERT INTO users (name, email, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, 'admin', 1)",
+    ["Browser QA Administrator", `${qaUsername}@example.invalid`, qaUsername, await bcrypt.hash(qaPassword, 12)],
+  );
+  qaAdminId = Number(qaAdmin.insertId);
   const loginResult = await evaluate(`(async () => {
     const setValue = (element, value) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -153,8 +171,8 @@ try {
       element.dispatchEvent(new Event('input', { bubbles: true }));
     };
     const inputs = document.querySelectorAll('.login-form input');
-    setValue(inputs[0], ${JSON.stringify(environment.ADMIN_USERNAME)});
-    setValue(inputs[1], ${JSON.stringify(environment.ADMIN_PASSWORD)});
+    setValue(inputs[0], ${JSON.stringify(qaUsername)});
+    setValue(inputs[1], ${JSON.stringify(qaPassword)});
     document.querySelector('.login-form').requestSubmit();
     for (let attempt = 0; attempt < 50 && !document.querySelector('.admin-shell'); attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -233,4 +251,10 @@ try {
   socket.close();
 } finally {
   chrome.kill();
+  if (qaConnection && qaAdminId) {
+    await qaConnection.execute("DELETE FROM api_sessions WHERE user_id = ?", [qaAdminId]);
+    await qaConnection.execute("DELETE FROM audit_logs WHERE user_id = ?", [qaAdminId]);
+    await qaConnection.execute("DELETE FROM users WHERE id = ?", [qaAdminId]);
+  }
+  if (qaConnection) await qaConnection.end();
 }

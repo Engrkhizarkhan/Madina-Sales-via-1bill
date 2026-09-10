@@ -14,8 +14,9 @@ if (![database, appUser].every((value) => /^[a-zA-Z0-9_]+$/.test(value))) {
   throw new Error("Database and user names may contain only letters, numbers and underscores.");
 }
 
+const adminSocket = env("MYSQL_ADMIN_SOCKET");
 const admin = await mysql.createConnection({
-  host: env("DB_HOST", "127.0.0.1"),
+  ...(adminSocket ? { socketPath: adminSocket } : { host: env("DB_HOST", "127.0.0.1") }),
   port: Number(env("DB_PORT", "3306")),
   user: env("MYSQL_ADMIN_USER", "root"),
   password: env("MYSQL_ADMIN_PASSWORD", ""),
@@ -30,7 +31,6 @@ try {
     await admin.query(`ALTER USER '${appUser}'@'${host}' IDENTIFIED BY ${quotedPassword}`);
     await admin.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON \`${database}\`.* TO '${appUser}'@'${host}'`);
   }
-  await admin.query("FLUSH PRIVILEGES");
   await admin.changeUser({ database });
   await admin.query(await readFile(resolve("backend", "database", "schema.sql"), "utf8"));
   const migrationDirectory = resolve("backend", "database", "migrations");
@@ -68,12 +68,12 @@ try {
   for (const bus of buses) await admin.execute("INSERT IGNORE INTO buses (id, registration, service, seats, model, model_year, status, next_service) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", bus);
 
   const crew = [
-    ["Muhammad Ameen", "Driver", "0300 1122456", "17301-2481162-1", "HTV-PSH-10428", "Peshawar → Karachi", "On duty", "MA"],
+    ["Muhammad Ameen", "Driver", "0300 1122456", "17301-2481162-1", "HTV-PSH-10428", "Peshawar to Karachi", "On duty", "MA"],
     ["Adeel Shah", "Driver", "0304 3310098", "17301-8842160-7", "HTV-PSH-11802", "Available at terminal", "Available", "AS"],
-    ["Ayesha Khan", "Female attendant", "0315 6621908", "17301-6621908-4", "—", "Peshawar → Karachi", "On duty", "AK"],
+    ["Ayesha Khan", "Female attendant", "0315 6621908", "17301-6621908-4", "—", "Peshawar to Karachi", "On duty", "AK"],
     ["Nazia Bibi", "Female attendant", "0332 5514402", "17301-5514402-8", "—", "Available at terminal", "Available", "NB"],
-    ["Faisal Khan", "Driver", "0307 9912045", "17301-9912045-2", "HTV-PSH-12561", "Peshawar → Lahore", "Scheduled", "FK"],
-    ["Sadia Noor", "Female attendant", "0318 7441280", "17301-7441280-5", "—", "Peshawar → Lahore", "Scheduled", "SN"],
+    ["Faisal Khan", "Driver", "0307 9912045", "17301-9912045-2", "HTV-PSH-12561", "Peshawar to Lahore", "Scheduled", "FK"],
+    ["Sadia Noor", "Female attendant", "0318 7441280", "17301-7441280-5", "—", "Peshawar to Lahore", "Scheduled", "SN"],
   ];
   for (const person of crew) await admin.execute("INSERT IGNORE INTO crew (name, role, phone, cnic, license, duty, status, initials) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", person);
 

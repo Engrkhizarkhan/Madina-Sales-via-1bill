@@ -15,8 +15,20 @@ CREATE TABLE IF NOT EXISTS counter_shifts (
   INDEX idx_counter_shift_date (business_date)
 ) ENGINE=InnoDB;
 
-ALTER TABLE counter_shifts
-  ADD COLUMN IF NOT EXISTS opening_transaction_id BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER opening_cash;
+SET @has_opening_transaction_id = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'counter_shifts'
+    AND COLUMN_NAME = 'opening_transaction_id'
+);
+SET @add_opening_transaction_id = IF(
+  @has_opening_transaction_id = 0,
+  'ALTER TABLE counter_shifts ADD COLUMN opening_transaction_id BIGINT UNSIGNED NOT NULL DEFAULT 0 AFTER opening_cash',
+  'SELECT 1'
+);
+PREPARE migration_stmt FROM @add_opening_transaction_id;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
 
 CREATE TABLE IF NOT EXISTS expenses (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -35,9 +47,35 @@ CREATE TABLE IF NOT EXISTS expenses (
   INDEX idx_expense_date_category (expense_date, category)
 ) ENGINE=InnoDB;
 
-ALTER TABLE shift_closures
-  ADD COLUMN IF NOT EXISTS shift_id BIGINT UNSIGNED NULL AFTER id,
-  ADD COLUMN IF NOT EXISTS opening_cash DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER counter_name;
+SET @has_shift_id = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'shift_closures'
+    AND COLUMN_NAME = 'shift_id'
+);
+SET @add_shift_id = IF(
+  @has_shift_id = 0,
+  'ALTER TABLE shift_closures ADD COLUMN shift_id BIGINT UNSIGNED NULL AFTER id',
+  'SELECT 1'
+);
+PREPARE migration_stmt FROM @add_shift_id;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
+
+SET @has_opening_cash = (
+  SELECT COUNT(*) FROM information_schema.COLUMNS
+  WHERE TABLE_SCHEMA = DATABASE()
+    AND TABLE_NAME = 'shift_closures'
+    AND COLUMN_NAME = 'opening_cash'
+);
+SET @add_opening_cash = IF(
+  @has_opening_cash = 0,
+  'ALTER TABLE shift_closures ADD COLUMN opening_cash DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER counter_name',
+  'SELECT 1'
+);
+PREPARE migration_stmt FROM @add_opening_cash;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
 
 SET @has_fk = (
   SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS

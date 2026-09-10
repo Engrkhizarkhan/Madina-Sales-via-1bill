@@ -15,7 +15,7 @@ import {
 
 const app = express();
 app.disable("x-powered-by");
-app.set("trust proxy", "loopback");
+app.set("trust proxy", config.trustProxy);
 
 app.use((req, res, next) => {
   const origin = req.get("origin");

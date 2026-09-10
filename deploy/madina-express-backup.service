@@ -1,0 +1,7 @@
+[Unit]
+Description=Back up the Madina Express MySQL database
+After=mysql.service
+
+[Service]
+Type=oneshot
+ExecStart=__PROJECT_DIR__/deploy/backup.sh

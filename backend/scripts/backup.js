@@ -10,7 +10,9 @@ const backupDirectory = resolve("backend", "backups");
 await mkdir(backupDirectory, { recursive: true });
 const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 const destination = resolve(backupDirectory, `madina-express-${stamp}.sql`);
-const executable = process.env.MYSQLDUMP_PATH || "C:\\xamppp\\mysql\\bin\\mysqldump.exe";
+const executable = process.env.MYSQLDUMP_PATH || (process.platform === "win32"
+  ? "C:\\xamppp\\mysql\\bin\\mysqldump.exe"
+  : "mysqldump");
 const child = spawn(executable, [
   `--host=${process.env.DB_HOST || "127.0.0.1"}`,
   `--port=${process.env.DB_PORT || "3306"}`,

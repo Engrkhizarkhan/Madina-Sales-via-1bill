@@ -13,6 +13,7 @@ export const config = {
   env: process.env.APP_ENV || "production",
   port: Number(process.env.NODE_API_PORT || 3101),
   host: process.env.NODE_API_HOST || "localhost",
+  trustProxy: process.env.TRUST_PROXY === "1" ? 1 : "loopback",
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "http://localhost")
     .split(",")
     .map((value) => value.trim())

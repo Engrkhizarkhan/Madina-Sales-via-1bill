@@ -1,4 +1,5 @@
 import "dotenv/config";
+import bcrypt from "bcryptjs";
 import { config } from "../node/config.js";
 import { pool, closePool } from "../node/db.js";
 
@@ -11,13 +12,17 @@ let createdShiftId = null;
 let createdExpenseId = null;
 let createdExpenseReference = null;
 let createdUserId = null;
+let testAdminId = null;
 
 const [auditRows] = await pool.query("SELECT COALESCE(MAX(id), 0) id FROM audit_logs");
 const initialAuditId = Number(auditRows[0].id);
-const [adminRows] = await pool.execute("SELECT id, force_password_change FROM users WHERE username = ? LIMIT 1", [process.env.ADMIN_USERNAME]);
-const admin = adminRows[0];
-const originalForcePasswordChange = Number(admin?.force_password_change || 0);
-if (admin) await pool.execute("UPDATE users SET force_password_change = 0 WHERE id = ?", [admin.id]);
+const testAdminUsername = `node-admin-${Date.now()}`;
+const testAdminPassword = "NodeAdmin!2026Test";
+const [testAdminResult] = await pool.execute(
+  "INSERT INTO users (name, email, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, 'admin', 0)",
+  ["Automated Node Administrator", `${testAdminUsername}@example.invalid`, testAdminUsername, await bcrypt.hash(testAdminPassword, 12)],
+);
+testAdminId = Number(testAdminResult.insertId);
 
 const check = (condition, label) => {
   if (!condition) throw new Error(label);
@@ -55,7 +60,7 @@ try {
   check(publicResult.status === 404 && publicResult.body.error.code === "public_site_disabled", "public website remains disabled until 1Bill is configured");
   check((await request("POST", "/auth/login", { identity: "not-a-user", password: "wrong" })).status === 401, "invalid staff login is rejected");
 
-  const login = await request("POST", "/auth/login", { identity: process.env.ADMIN_USERNAME, password: process.env.ADMIN_PASSWORD });
+  const login = await request("POST", "/auth/login", { identity: testAdminUsername, password: testAdminPassword });
   check(login.status === 200 && login.body.csrfToken, "Node.js login creates a MySQL-backed session");
   const csrf = login.body.csrfToken;
   const bootstrap = await request("GET", "/admin/bootstrap");
@@ -102,7 +107,7 @@ try {
   const locked = await request("GET", "/expenses");
   check(locked.status === 403 && locked.body.error.code === "finance_locked", "finance remains locked by default");
   check((await request("POST", "/auth/finance-unlock", { password: "wrong-password" }, csrf)).status === 422, "wrong finance password is rejected");
-  const unlocked = await request("POST", "/auth/finance-unlock", { password: process.env.ADMIN_PASSWORD }, csrf);
+  const unlocked = await request("POST", "/auth/finance-unlock", { password: testAdminPassword }, csrf);
   check(unlocked.status === 200 && unlocked.body.unlocked, "administrator password unlocks finance");
 
   createdExpenseReference = `NODE-EXP-${Date.now()}`;
@@ -163,7 +168,10 @@ try {
       await pool.execute("DELETE FROM api_sessions WHERE user_id = ?", [createdUserId]);
       await pool.execute("DELETE FROM users WHERE id = ?", [createdUserId]);
     }
-    if (admin) await pool.execute("UPDATE users SET force_password_change = ? WHERE id = ?", [originalForcePasswordChange, admin.id]);
+    if (testAdminId) {
+      await pool.execute("DELETE FROM api_sessions WHERE user_id = ?", [testAdminId]);
+      await pool.execute("DELETE FROM users WHERE id = ?", [testAdminId]);
+    }
   } finally {
     await closePool();
   }

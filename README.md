@@ -55,3 +55,5 @@ The integration suite checks MySQL health, anonymous access denial, the disabled
 The application is operational locally, but real online payments remain intentionally disabled by default. Production 1Bill activation requires Madina Express merchant credentials, the provider's private request/signature fields, signed callback validation, reconciliation, and void/refund endpoint approval. The code does not invent or simulate those credentials in production.
 
 See [SOFTWARE_AUDIT.md](./SOFTWARE_AUDIT.md) for the detailed audit and remaining operational enhancements.
+
+For a fresh Ubuntu VM without a domain name, use the native Git, Node.js, Nginx and MySQL instructions in [deploy/README.md](./deploy/README.md). Docker is not required.
