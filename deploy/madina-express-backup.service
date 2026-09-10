@@ -4,4 +4,4 @@ After=mysql.service
 
 [Service]
 Type=oneshot
-ExecStart=__PROJECT_DIR__/deploy/backup.sh
+ExecStart=/usr/bin/bash __PROJECT_DIR__/deploy/backup.sh
