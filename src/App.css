@@ -3976,6 +3976,325 @@ td small {
   }
 }
 
+/* Clear, counter-first typography and protected finance tools */
+.admin-shell {
+  font-family: "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.45;
+}
+.admin-shell .admin-sidebar nav button,
+.admin-shell .sidebar-footer button,
+.admin-shell .admin-user strong,
+.admin-shell .admin-user small,
+.admin-shell .admin-page-title strong {
+  font-size: 15px;
+}
+.admin-shell .nav-group > p,
+.admin-shell .view-eyebrow {
+  font-size: 12px;
+  letter-spacing: .08em;
+}
+.admin-shell label > span,
+.admin-shell fieldset legend,
+.admin-shell .form-field > span {
+  font-size: 15px;
+  font-weight: 650;
+}
+.admin-shell input,
+.admin-shell select,
+.admin-shell textarea,
+.admin-shell button,
+.admin-shell .choice,
+.admin-shell .payment-method {
+  font-size: 15px;
+}
+.admin-shell input,
+.admin-shell select,
+.admin-shell textarea {
+  min-height: 44px;
+}
+.admin-shell textarea { min-height: 84px; }
+.admin-shell .trip-status,
+.admin-shell .trip-summary-bar small,
+.admin-shell .trip-summary-bar strong,
+.admin-shell .legend,
+.admin-shell .seat-card-footer,
+.admin-shell td small,
+.admin-shell .surface-header p,
+.admin-shell .metric-card small,
+.admin-shell .metric-card p {
+  font-size: 14px;
+}
+.admin-shell th { font-size: 14px; }
+.admin-shell td,
+.admin-shell td strong { font-size: 15px; }
+.admin-shell .panel-heading h2,
+.admin-shell .surface-header h2 { font-size: 19px; }
+.admin-shell .primary-button,
+.admin-shell .secondary-button { font-size: 15px; min-height: 44px; }
+
+.admin-shift {
+  border: 1px solid #d5ded9;
+  background: #fff;
+  color: #33443b;
+  cursor: pointer;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 9px;
+}
+.admin-shift:hover { border-color: #9eb2a7; background: #f8faf9; }
+.admin-shift.is-open i { background: #1f9d61; box-shadow: 0 0 0 3px #d9f4e6; }
+.sale-toolbar { padding: 14px 18px; border-top: 1px solid #e2e8e4; }
+.mode-tabs { max-width: 460px; }
+.mode-tabs button { min-height: 44px; }
+.simple-form-heading {
+  margin: 22px 0 12px;
+  font-size: 18px;
+  color: #17251e;
+}
+.shift-required-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+  background: #fff8e7;
+  border-bottom: 1px solid #ead8a7;
+  color: #604c19;
+}
+.shift-required-banner > span { display: flex; align-items: center; gap: 9px; }
+.shift-required-banner .primary-button { min-height: 38px; }
+
+.finance-lock-page {
+  position: relative;
+  min-height: calc(100vh - 120px);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #eef2ef;
+}
+.finance-blur-preview {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  padding: 28px;
+  filter: blur(12px);
+  opacity: .55;
+}
+.finance-blur-preview div {
+  min-height: 190px;
+  border-radius: 16px;
+  background: linear-gradient(145deg, #fff, #dce7e1);
+  border: 1px solid #cddbd3;
+}
+.finance-unlock-card {
+  position: relative;
+  z-index: 1;
+  width: min(420px, calc(100% - 36px));
+  padding: 30px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .96);
+  border: 1px solid #d2ddd7;
+  box-shadow: 0 20px 60px rgba(22, 43, 32, .16);
+}
+.finance-unlock-card h1 { margin: 14px 0 6px; font-size: 25px; }
+.finance-unlock-card > p { margin: 0 0 20px; color: #607168; }
+.finance-unlock-card label { display: grid; gap: 7px; }
+.finance-unlock-card .primary-button { width: 100%; justify-content: center; margin-top: 16px; }
+.finance-lock-icon { width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; background: #e4f1ea; color: #176b42; }
+.form-error { color: #b42318 !important; font-weight: 600; margin: 9px 0 0 !important; }
+
+.expense-entry { padding: 22px; }
+.expense-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+  align-items: end;
+}
+.expense-form label { display: grid; gap: 7px; }
+.expense-form .span-2 { grid-column: span 2; }
+.expense-form .primary-button { justify-content: center; }
+.table-loading { padding: 24px; color: #607168; }
+.shift-open-modal { max-width: 560px; }
+
+@media (max-width: 900px) {
+  .expense-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 620px) {
+  .expense-form { grid-template-columns: 1fr; }
+  .expense-form .span-2 { grid-column: auto; }
+  .finance-blur-preview { grid-template-columns: 1fr; }
+  .admin-shift { padding: 0 9px; }
+}
+
+.app-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: #123f35;
+  background: #f4f8f6;
+  font-weight: 700;
+}
+
+.app-loading .secondary-button {
+  margin-left: 8px;
+}
+
+.system-note {
+  margin: 0 26px 14px;
+  padding: 10px 12px;
+  border: 1px solid #e4b04d;
+  border-radius: 9px;
+  color: #704b08;
+  background: #fff8e7;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Operational readability and refund workflow */
+.view-heading {
+  align-items: flex-end;
+}
+.view-heading > div {
+  min-width: 0;
+}
+.view-heading .view-eyebrow {
+  margin: 0 0 7px;
+  color: var(--green-700);
+  font-size: 12px;
+  font-weight: 850;
+  letter-spacing: 0.1em;
+}
+.view-heading > div > p:last-child {
+  max-width: 720px;
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.surface-header h2 {
+  font-size: 16px;
+}
+.surface-header p {
+  font-size: 13px;
+  line-height: 1.45;
+}
+.surface-header > button,
+.metric-card small,
+.metric-card p,
+.schedule-route small,
+.schedule-load small,
+.breakdown-row strong,
+.breakdown-row small,
+.breakdown-row > b,
+.bar-chart small {
+  font-size: 12px;
+}
+.metric-card strong {
+  font-size: clamp(19px, 2vw, 25px);
+}
+.plain-status,
+.status-badge {
+  font-size: 11px;
+}
+.danger-button {
+  min-height: 42px;
+  padding: 0 15px;
+  border: 1px solid #b73737;
+  border-radius: 8px;
+  background: #b73737;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.danger-button:hover {
+  background: #982c2c;
+}
+.refund-impact {
+  margin: 0 22px 18px;
+  padding: 13px 14px;
+  border: 1px solid #ead5a9;
+  border-radius: 9px;
+  background: #fff9ec;
+  color: #8b5b12;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.refund-impact.full {
+  border-color: #e8c1c1;
+  background: #fff3f3;
+  color: #9b3131;
+}
+.refund-impact svg {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+.refund-impact strong,
+.refund-impact small {
+  display: block;
+}
+.refund-impact strong {
+  font-size: 14px;
+}
+.refund-impact small {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.refund-register {
+  margin-top: 14px;
+}
+.receipt-refund {
+  padding: 6px 0;
+  border-bottom: 1px dashed #d7ddd9;
+}
+.receipt-refund span,
+.receipt-refund strong {
+  display: block;
+  font-size: 9px;
+  line-height: 1.4;
+}
+.receipt-refund span {
+  color: #738078;
+}
+.receipt-refund strong,
+.refund-line strong {
+  color: #a33131;
+}
+.receipt-status.partially-refunded {
+  background: #fff2d9;
+  color: #936119;
+}
+
+@media (max-width: 720px) {
+  .view-heading {
+    align-items: flex-start;
+  }
+  .view-heading > div > p:last-child {
+    font-size: 13px;
+  }
+  .refund-summary {
+    grid-template-columns: 1fr;
+  }
+  .danger-button {
+    width: 100%;
+  }
+}
+
 /* Completed operations workflows */
 .trip-cards article {
   grid-template-columns:
@@ -5055,10 +5374,10 @@ td small {
 }
 .admin-sidebar nav p,
 .nav-group p {
-  font-size: 9px;
+  font-size: 11px;
 }
 .admin-sidebar button {
-  font-size: 13px;
+  font-size: 14px;
 }
 .admin-sidebar button b {
   font-size: 10px;
@@ -5067,7 +5386,7 @@ td small {
   font-size: 13px;
 }
 .sidebar-brand small {
-  font-size: 9px;
+  font-size: 12px;
 }
 .admin-page-title strong {
   font-size: 16px;
@@ -5077,7 +5396,7 @@ td small {
 }
 .admin-user small,
 .admin-shift {
-  font-size: 10px;
+  font-size: 12px;
 }
 .sale-toolbar {
   min-height: 48px;
@@ -5088,7 +5407,7 @@ td small {
 }
 .mode-tabs button,
 .filter-tabs button {
-  font-size: 12px;
+  font-size: 14px;
 }
 .admin-shell .panel-heading h2,
 .admin-shell .bookings-header h2 {
@@ -5096,14 +5415,14 @@ td small {
 }
 .admin-shell .panel-heading p,
 .admin-shell .bookings-header p {
-  font-size: 12px;
+  font-size: 14px;
 }
 .admin-shell .section-label {
-  font-size: 10px;
+  font-size: 12px;
 }
 .admin-shell label > span,
 .admin-shell fieldset legend {
-  font-size: 12px;
+  font-size: 14px;
 }
 .admin-shell input,
 .admin-shell select,
@@ -5112,29 +5431,29 @@ td small {
 }
 .admin-shell .choice,
 .admin-shell .payment-method {
-  font-size: 12px;
+  font-size: 14px;
 }
 .admin-shell .trip-status,
 .admin-shell .trip-summary-bar small,
 .admin-shell .trip-summary-bar strong,
 .admin-shell .legend,
 .admin-shell .seat-card-footer {
-  font-size: 12px;
+  font-size: 13px;
 }
 .admin-shell th {
-  font-size: 10px;
+  font-size: 12px;
 }
 .admin-shell td,
 .admin-shell td strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 .admin-shell td small {
-  font-size: 10px;
+  font-size: 12px;
 }
 .admin-shell .primary-button,
 .admin-shell .secondary-button {
   min-height: 42px;
-  font-size: 12px;
+  font-size: 14px;
 }
 .metric-card small,
 .metric-card p,
@@ -5146,18 +5465,18 @@ td small {
 .fleet-details small,
 .crew-grid article > div > small,
 .crew-grid article > div > p {
-  font-size: 11px;
+  font-size: 13px;
 }
 .trip-cards article > div > strong,
 .trip-card-route strong,
 .fleet-details strong,
 .crew-grid article > div > strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 .text-action,
 .confirm-action,
 .fleet-card > button {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 @media (max-width: 920px) {
@@ -5190,3 +5509,38 @@ td small {
     margin-left: auto;
   }
 }
+
+/* Final readability override */
+.admin-shell { font-family: "Segoe UI", Inter, ui-sans-serif, system-ui, sans-serif; font-size: 16px; line-height: 1.45; }
+.admin-shell .admin-sidebar nav button,
+.admin-shell .sidebar-footer button,
+.admin-shell .admin-user strong,
+.admin-shell .admin-user small,
+.admin-shell .admin-page-title strong,
+.admin-shell input,
+.admin-shell select,
+.admin-shell textarea,
+.admin-shell button,
+.admin-shell .choice,
+.admin-shell .payment-method { font-size: 15px; }
+.admin-shell label > span,
+.admin-shell fieldset legend { font-size: 15px; font-weight: 650; }
+.admin-shell input,
+.admin-shell select { min-height: 44px; }
+.admin-shell .trip-status,
+.admin-shell .trip-summary-bar small,
+.admin-shell .trip-summary-bar strong,
+.admin-shell .legend,
+.admin-shell .seat-card-footer,
+.admin-shell td small,
+.admin-shell .surface-header p,
+.admin-shell .metric-card small,
+.admin-shell .metric-card p { font-size: 14px; }
+.admin-shell th { font-size: 14px; }
+.admin-shell td,
+.admin-shell td strong { font-size: 15px; }
+.admin-shell .panel-heading h2,
+.admin-shell .bookings-header h2,
+.admin-shell .surface-header h2 { font-size: 19px; }
+.admin-shell .primary-button,
+.admin-shell .secondary-button { min-height: 44px; font-size: 15px; }

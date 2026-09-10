@@ -5,13 +5,22 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "server": "node backend/node/server.js",
+    "server:check": "node --check backend/node/server.js && node --check backend/node/app.js && node --check backend/node/operations.js && node --check backend/node/repository.js",
+    "db:install": "node backend/scripts/install.js",
+    "db:backup": "node backend/scripts/backup.js",
+    "test:api": "node backend/tests/integration.js",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "@openai/sites-vite-plugin": "^0.2.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "lucide-react": "^1.38.0",
+    "mysql2": "^3.24.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

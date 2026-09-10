@@ -6,7 +6,6 @@ import {
   Armchair,
   BadgeCheck,
   Banknote,
-  Bell,
   BookOpenCheck,
   Bus,
   BusFront,
@@ -15,7 +14,6 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
-  CircleDollarSign,
   Clock3,
   CreditCard,
   FileBarChart,
@@ -49,11 +47,28 @@ import {
   XCircle,
 } from "lucide-react";
 import "./App.css";
+import { api, ApiError } from "./api";
 
 type PaymentMethod = "Cash" | "Card" | "Bank transfer" | "1Bill";
-type PaymentStatus = "Paid" | "Unpaid" | "Refunded";
+type PaymentStatus = "Paid" | "Unpaid" | "Partially refunded" | "Refunded";
 type BookingStatus = "Confirmed" | "Reserved" | "Cancelled" | "Refunded";
 type BookingSource = "Public web" | "Counter";
+type RefundReason =
+  | "Passenger request"
+  | "Trip cancelled"
+  | "Duplicate payment"
+  | "Service disruption"
+  | "Other";
+type RefundTransaction = {
+  id: string;
+  amount: number;
+  method: PaymentMethod;
+  reason: RefundReason;
+  reference: string;
+  notes: string;
+  processedAt: string;
+  processedBy: string;
+};
 type AdminView =
   | "dashboard"
   | "sale"
@@ -63,6 +78,7 @@ type AdminView =
   | "fleet"
   | "routes"
   | "finance"
+  | "expenses"
   | "reports"
   | "crew"
   | "settings";
@@ -81,6 +97,7 @@ type RouteRecord = {
   status: "Active" | "Paused";
 };
 type CrewRecord = {
+  id?: number;
   name: string;
   role: "Driver" | "Female attendant" | "Manager" | "Counter agent";
   phone: string;
@@ -144,10 +161,70 @@ type Booking = {
   attendant: string;
   createdAt: string;
   expiresAt?: string;
+  tripId?: string;
   tripRunId?: string;
   seatPrintedAt?: string;
   issuedBy?: string;
   terminal?: string;
+  refunds?: RefundTransaction[];
+};
+type StaffUser = {
+  id: number;
+  name: string;
+  email: string;
+  username: string;
+  role: "admin" | "manager" | "counter" | "dispatcher" | "finance";
+  forcePasswordChange: boolean;
+  active?: boolean;
+  lastLoginAt?: string;
+  createdAt?: string;
+};
+type ShiftRecord = {
+  id: number;
+  businessDate: string;
+  counterName: string;
+  openingCash: number;
+  expectedCash: number;
+  digitalCollections: number;
+  status: "Open" | "Closed";
+  openedAt: string;
+};
+type ExpenseRecord = {
+  id: number;
+  date: string;
+  category: string;
+  description: string;
+  amount: number;
+  paymentMethod: "Cash" | "Card" | "Bank transfer";
+  reference: string;
+  notes: string;
+  createdBy: string;
+  createdAt: string;
+};
+type PublicOccupancy = {
+  tripRunId: string;
+  bus: string;
+  date: string;
+  time: string;
+  seats: number[];
+};
+type PublicBootstrap = {
+  trips: TripRecord[];
+  fleet: BusRecord[];
+  routes: RouteRecord[];
+  occupancy: PublicOccupancy[];
+  paymentMode: string;
+};
+type AdminBootstrap = {
+  bookings: Booking[];
+  fleet: BusRecord[];
+  trips: TripRecord[];
+  routes: RouteRecord[];
+  crew: CrewRecord[];
+  users: StaffUser[];
+  shift: ShiftRecord | null;
+  user: StaffUser;
+  paymentMode: string;
 };
 type PassengerForm = {
   passenger: string;
@@ -162,12 +239,11 @@ type PassengerForm = {
   paymentReference: string;
 };
 
-const today = new Date().toISOString().slice(0, 10);
-const storageKey = "madina-express-operations-v2";
-const fleetStorageKey = "madina-express-fleet-v1";
-const tripStorageKey = "madina-express-trips-v1";
-const routeStorageKey = "madina-express-routes-v1";
-const crewStorageKey = "madina-express-crew-v1";
+const dateInPakistan = (value: Date | string = new Date()) =>
+  new Date(value).toLocaleDateString("en-CA", {
+    timeZone: "Asia/Karachi",
+  });
+const today = dateInPakistan();
 const weekdays: Weekday[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const routeRecords: RouteRecord[] = [
   {
@@ -512,65 +588,12 @@ const crewRecords: CrewRecord[] = [
     initials: "SN",
   },
 ];
+void routeRecords;
+void crewRecords;
 
 const money = (value: number) =>
-  `PKR ${Math.max(0, value).toLocaleString("en-PK")}`;
+  `${value < 0 ? "− " : ""}PKR ${Math.abs(value).toLocaleString("en-PK")}`;
 const routeLabel = (route: RouteRecord) => `${route.from} → ${route.to}`;
-function readBookings() {
-  try {
-    const stored = localStorage.getItem(storageKey);
-    return stored ? (JSON.parse(stored) as Booking[]) : initialBookings;
-  } catch {
-    return initialBookings;
-  }
-}
-function storeBookings(bookings: Booking[]) {
-  localStorage.setItem(storageKey, JSON.stringify(bookings));
-  window.dispatchEvent(new Event("madina-bookings-updated"));
-}
-function readFleet() {
-  try {
-    const stored = localStorage.getItem(fleetStorageKey);
-    return stored ? (JSON.parse(stored) as BusRecord[]) : fleetRecords;
-  } catch {
-    return fleetRecords;
-  }
-}
-function readTrips() {
-  try {
-    const stored = localStorage.getItem(tripStorageKey);
-    if (!stored) return tripRecords;
-    return (JSON.parse(stored) as TripRecord[]).map((trip) => ({
-      ...trip,
-      days: trip.days?.length ? trip.days : weekdays,
-      active: trip.active ?? true,
-      runNumber: trip.runNumber ?? 1,
-    }));
-  } catch {
-    return tripRecords;
-  }
-}
-function readRoutes() {
-  try {
-    const stored = localStorage.getItem(routeStorageKey);
-    return stored ? (JSON.parse(stored) as RouteRecord[]) : routeRecords;
-  } catch {
-    return routeRecords;
-  }
-}
-function readCrew() {
-  try {
-    const stored = localStorage.getItem(crewStorageKey);
-    if (!stored) return crewRecords;
-    return (JSON.parse(stored) as CrewRecord[]).map((person) => ({
-      ...person,
-      cnic: person.cnic ?? "",
-      license: person.license ?? "—",
-    }));
-  } catch {
-    return crewRecords;
-  }
-}
 const tripRunKey = (
   trip: TripRecord,
   run = trip.runNumber,
@@ -604,6 +627,12 @@ const formatPrintTime = (value?: string) =>
         minute: "2-digit",
       })
     : "—";
+const refundedTotal = (booking: Booking) =>
+  (booking.refunds ?? []).reduce((sum, refund) => sum + refund.amount, 0);
+const refundableBalance = (booking: Booking) =>
+  Math.max(0, booking.paid - refundedTotal(booking));
+const netCollected = (booking: Booking) =>
+  Math.max(0, booking.paid - refundedTotal(booking));
 function downloadCsv(filename: string, rows: (string | number)[][]) {
   const csv = rows
     .map((row) =>
@@ -618,35 +647,75 @@ function downloadCsv(filename: string, rows: (string | number)[][]) {
   URL.revokeObjectURL(url);
 }
 
+const appBase = import.meta.env.BASE_URL.replace(/\/$/, "");
+const publicSiteEnabled = import.meta.env.VITE_ENABLE_PUBLIC_SITE === "true";
+const localPath = () => {
+  const pathname = window.location.pathname;
+  const withoutBase = appBase && pathname.startsWith(appBase)
+    ? pathname.slice(appBase.length)
+    : pathname;
+  return withoutBase || "/";
+};
+
 function App() {
-  const [path, setPath] = useState(window.location.pathname);
+  const [path, setPath] = useState(localPath);
   useEffect(() => {
-    const onPopState = () => setPath(window.location.pathname);
+    const onPopState = () => setPath(localPath());
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
   const navigate = (nextPath: string) => {
-    window.history.pushState({}, "", nextPath);
+    window.history.pushState({}, "", `${appBase}${nextPath}` || "/");
     setPath(nextPath);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-  if (path.startsWith("/login")) return <LoginPage onNavigate={navigate} />;
   if (path.startsWith("/manage")) {
-    if (
-      !import.meta.env.DEV &&
-      sessionStorage.getItem("madina-express-session") !== "active"
-    )
-      return <LoginPage onNavigate={navigate} />;
-    return (
-      <ManagementApp
-        onLogout={() => {
-          sessionStorage.removeItem("madina-express-session");
-          navigate("/login");
-        }}
-      />
-    );
+    return <ManagementGate onNavigate={navigate} />;
   }
-  return <PublicHome onNavigate={navigate} />;
+  if (publicSiteEnabled && path.startsWith("/booking")) {
+    return <PublicHome onNavigate={navigate} />;
+  }
+  return <LoginPage onNavigate={navigate} />;
+}
+
+function ManagementGate({
+  onNavigate,
+}: {
+  onNavigate: (path: string) => void;
+}) {
+  const [user, setUser] = useState<StaffUser | null>(null);
+  const [checking, setChecking] = useState(true);
+  useEffect(() => {
+    api
+      .me<{ user: StaffUser }>()
+      .then((result) => setUser(result.user))
+      .catch(() => onNavigate("/login"))
+      .finally(() => setChecking(false));
+  }, [onNavigate]);
+  if (checking) return <AppLoading message="Checking secure staff session…" />;
+  if (!user) return null;
+  return (
+    <ManagementApp
+      user={user}
+      onUserChange={setUser}
+      onLogout={async () => {
+        try {
+          await api.logout();
+        } finally {
+          onNavigate("/login");
+        }
+      }}
+    />
+  );
+}
+
+function AppLoading({ message }: { message: string }) {
+  return (
+    <div className="app-loading" role="status">
+      <RefreshCw className="spin" size={22} />
+      <span>{message}</span>
+    </div>
+  );
 }
 
 function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
@@ -654,15 +723,47 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     [to, setTo] = useState("Karachi"),
     [date, setDate] = useState(today),
     [searched, setSearched] = useState(false),
-    [publicTrips] = useState<TripRecord[]>(readTrips),
-    [publicFleet] = useState<BusRecord[]>(readFleet),
-    [publicRoutes] = useState<RouteRecord[]>(readRoutes);
+    [publicTrips, setPublicTrips] = useState<TripRecord[]>([]),
+    [publicFleet, setPublicFleet] = useState<BusRecord[]>([]),
+    [publicRoutes, setPublicRoutes] = useState<RouteRecord[]>([]),
+    [occupancy, setOccupancy] = useState<PublicOccupancy[]>([]),
+    [paymentMode, setPaymentMode] = useState("disabled"),
+    [loadError, setLoadError] = useState("");
+  useEffect(() => {
+    api
+      .publicBootstrap<PublicBootstrap>()
+      .then((result) => {
+        setPublicTrips(result.trips);
+        setPublicFleet(result.fleet);
+        setPublicRoutes(result.routes);
+        setOccupancy(result.occupancy);
+        setPaymentMode(result.paymentMode);
+        const firstOrigin = result.routes[0]?.from;
+        setFrom((currentOrigin) => {
+          if (
+            firstOrigin &&
+            !result.routes.some((route) => route.from === currentOrigin)
+          ) {
+            setTo(
+              result.routes.find((route) => route.from === firstOrigin)?.to ??
+                "",
+            );
+            return firstOrigin;
+          }
+          return currentOrigin;
+        });
+      })
+      .catch((error: unknown) =>
+        setLoadError(error instanceof Error ? error.message : "Timetable could not be loaded."),
+      );
+  }, []);
   const [checkoutTrip, setCheckoutTrip] = useState<{
     route: RouteRecord;
     bus: BusRecord;
     schedule: TripRecord;
     time: string;
     fare: number;
+    occupiedSeats: number[];
   } | null>(null);
   const [ticketReceipt, setTicketReceipt] = useState<Booking | null>(null);
   const originCities = Array.from(
@@ -692,26 +793,34 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             schedule.routeId === matchingRoute.id &&
             schedule.active &&
             schedule.status !== "Departed" &&
-            schedule.days.includes(travelDay),
+            schedule.days.includes(travelDay) &&
+            (date !== today ||
+              schedule.departure >
+                new Date().toLocaleTimeString("en-GB", {
+                  timeZone: "Asia/Karachi",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: false,
+                })),
         )
         .map((schedule) => {
           const bus =
             publicFleet.find((item) => item.id === schedule.busId) ??
             publicFleet[0] ??
             fleetRecords[0];
-          const sold = bookingsForTripRun(
-            readBookings(),
-            schedule,
-            bus,
-            schedule.runNumber,
-            date,
-          ).flatMap((booking) => booking.seats).length;
+          const occupiedSeats =
+            occupancy.find(
+              (item) =>
+                item.tripRunId ===
+                tripRunKey(schedule, schedule.runNumber, date),
+            )?.seats ?? [];
           return {
             schedule,
             time: schedule.departure,
             bus,
             fare: matchingRoute.fare,
-            seats: Math.max(0, bus.seats - sold),
+            seats: Math.max(0, bus.seats - occupiedSeats.length),
+            occupiedSeats,
           };
         })
     : [];
@@ -775,7 +884,10 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             </div>
           </div>
           <div className="hero-visual">
-            <img src="/og.png" alt="Madina Express modern intercity coach" />
+            <img
+              src={`${import.meta.env.BASE_URL}og.png`}
+              alt="Madina Express modern intercity coach"
+            />
             <div className="hero-rating">
               <span>
                 <Star size={14} fill="currentColor" /> 4.8
@@ -797,6 +909,12 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <ShieldCheck size={15} /> Powered by 1Bill
             </div>
           </div>
+          {loadError && <p className="form-error">{loadError}</p>}
+          {paymentMode === "demo" && (
+            <p className="system-note">
+              Payment sandbox is active. No real money is charged in this environment.
+            </p>
+          )}
           <form
             className="public-search"
             onSubmit={(event) => {
@@ -905,6 +1023,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                   </div>
                   <button
                     type="button"
+                    disabled={paymentMode === "disabled" || trip.seats === 0}
                     onClick={() =>
                       setCheckoutTrip({
                         route: matchingRoute,
@@ -912,6 +1031,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                         schedule: trip.schedule,
                         time: trip.time,
                         fare: trip.fare,
+                        occupiedSeats: trip.occupiedSeats,
                       })
                     }
                   >
@@ -985,6 +1105,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
         <PublicCheckout
           trip={checkoutTrip}
           date={date}
+          paymentMode={paymentMode}
           onClose={() => setCheckoutTrip(null)}
           onPaid={(booking) => {
             setCheckoutTrip(null);
@@ -1005,6 +1126,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
 function PublicCheckout({
   trip,
   date,
+  paymentMode,
   onClose,
   onPaid,
 }: {
@@ -1014,8 +1136,10 @@ function PublicCheckout({
     schedule: TripRecord;
     time: string;
     fare: number;
+    occupiedSeats: number[];
   };
   date: string;
+  paymentMode: string;
   onClose: () => void;
   onPaid: (booking: Booking) => void;
 }) {
@@ -1031,23 +1155,8 @@ function PublicCheckout({
     [invoice] = useState(() => `1B${Date.now().toString().slice(-10)}`);
   const total = selectedSeats.length * trip.fare;
   const occupied = useMemo(
-    () =>
-      new Set(
-        readBookings()
-          .filter(
-            (booking) =>
-              booking.date === date &&
-              booking.time === trip.time &&
-              booking.bus === trip.bus.registration &&
-              (booking.tripRunId
-                ? booking.tripRunId ===
-                  tripRunKey(trip.schedule, trip.schedule.runNumber, date)
-                : trip.schedule.runNumber === 1) &&
-              ["Confirmed", "Reserved"].includes(booking.bookingStatus),
-          )
-          .flatMap((booking) => booking.seats),
-      ),
-    [date, trip.bus.registration, trip.schedule, trip.time],
+    () => new Set(trip.occupiedSeats),
+    [trip.occupiedSeats],
   );
   const toggleSeat = (seat: number) => {
     if (occupied.has(seat)) return;
@@ -1059,7 +1168,7 @@ function PublicCheckout({
           : current,
     );
   };
-  const completePayment = () => {
+  const completePayment = async () => {
     if (
       !selectedSeats.length ||
       !passenger.name.trim() ||
@@ -1071,47 +1180,33 @@ function PublicCheckout({
       );
       return;
     }
+    if (paymentMode === "disabled") {
+      setError("Online payment is not configured. Please book at the counter.");
+      return;
+    }
     setError("");
     setProcessing(true);
-    window.setTimeout(() => {
-      const stamp = Date.now();
-      const booking: Booking = {
-        id: String(stamp),
-        ticketNo: `ME-${date.slice(2).replaceAll("-", "")}-${String(stamp).slice(-4)}`,
-        source: "Public web",
+    try {
+      const result = await api.createPublicBooking<Booking>({
         passenger: passenger.name.trim(),
         phone: passenger.phone.trim(),
         cnic: passenger.cnic.trim(),
         gender: passenger.gender,
-        route: routeLabel(trip.route),
-        destination: trip.route.to,
         boardingPoint: trip.route.boarding,
-        bus: trip.bus.registration,
-        service: trip.bus.service,
-        seats: selectedSeats,
-        fare: trip.fare,
-        discount: 0,
-        total,
-        paid: total,
-        balance: 0,
-        paymentMethod: "1Bill",
-        paymentReference: invoice,
-        paymentStatus: "Paid",
-        bookingStatus: "Confirmed",
+        tripId: trip.schedule.id,
         date,
-        time: trip.time,
-        driver: "Assigned crew",
-        attendant: "Female attendant assigned",
-        createdAt: new Date().toISOString(),
-        tripRunId: tripRunKey(trip.schedule, trip.schedule.runNumber, date),
-        seatPrintedAt: new Date().toISOString(),
-        issuedBy: "Public website",
-        terminal: trip.route.boarding,
-      };
-      storeBookings([booking, ...readBookings()]);
+        seats: selectedSeats,
+      });
+      onPaid(result.booking);
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : "Payment could not be completed.",
+      );
+    } finally {
       setProcessing(false);
-      onPaid(booking);
-    }, 1200);
+    }
   };
   return (
     <div
@@ -1263,7 +1358,7 @@ function PublicCheckout({
               <button
                 className="pay-button"
                 type="button"
-                disabled={processing}
+                disabled={processing || paymentMode === "disabled"}
                 onClick={completePayment}
               >
                 {processing ? (
@@ -1317,22 +1412,28 @@ function SectionTitle({
 function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
-    [loginNotice, setLoginNotice] = useState("");
-  const signIn = (event: FormEvent<HTMLFormElement>) => {
+    [loginNotice, setLoginNotice] = useState(""),
+    [signingIn, setSigningIn] = useState(false);
+  const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!email || !password) return;
-    sessionStorage.setItem("madina-express-session", "active");
-    onNavigate("/manage");
+    setSigningIn(true);
+    setLoginNotice("");
+    try {
+      await api.login<{ user: StaffUser }>(email, password);
+      onNavigate("/manage");
+    } catch (error) {
+      setLoginNotice(
+        error instanceof ApiError
+          ? error.message
+          : "The server is unavailable. Please try again.",
+      );
+    } finally {
+      setSigningIn(false);
+    }
   };
   return (
     <div className="login-page">
-      <button
-        type="button"
-        className="login-back"
-        onClick={() => onNavigate("/")}
-      >
-        <ArrowLeft size={15} /> Back to website
-      </button>
       <div className="login-shell">
         <section className="login-brand-panel">
           <div className="public-brand light">
@@ -1392,12 +1493,11 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
               Forgot password?
             </button>
           </div>
-          <button className="login-submit" type="submit">
-            Sign in to system <ArrowRight size={16} />
+          <button className="login-submit" type="submit" disabled={signingIn}>
+            {signingIn ? "Signing in…" : "Sign in to system"}{" "}
+            {!signingIn && <ArrowRight size={16} />}
           </button>
-          <small>
-            Frontend demonstration: any non-empty credentials are accepted.
-          </small>
+          <small>Use the staff account issued by your administrator.</small>
           {loginNotice && <p className="login-notice">{loginNotice}</p>}
         </form>
       </div>
@@ -1413,7 +1513,7 @@ const navGroups = [
       { id: "sale" as AdminView, label: "New sale", icon: Ticket },
       {
         id: "bookings" as AdminView,
-        label: "Paid bookings",
+        label: "Bookings & refunds",
         icon: BookOpenCheck,
       },
       {
@@ -1434,11 +1534,19 @@ const navGroups = [
       { id: "fleet" as AdminView, label: "Buses", icon: Bus },
       { id: "routes" as AdminView, label: "Routes", icon: MapPinned },
       { id: "finance" as AdminView, label: "Finance", icon: Banknote },
+      { id: "expenses" as AdminView, label: "Expenses", icon: ReceiptText },
       { id: "reports" as AdminView, label: "Reports & print", icon: FileText },
       { id: "crew" as AdminView, label: "Staff & crew", icon: UserRoundCog },
     ],
   },
 ];
+const roleViews: Record<StaffUser["role"], AdminView[]> = {
+  admin: ["dashboard", "sale", "bookings", "reservations", "trips", "fleet", "routes", "finance", "expenses", "reports", "crew", "settings"],
+  manager: ["dashboard", "sale", "bookings", "reservations", "trips", "fleet", "routes", "reports", "crew", "settings"],
+  counter: ["dashboard", "sale", "bookings", "reservations", "reports", "settings"],
+  dispatcher: ["trips", "fleet", "reports", "crew", "settings"],
+  finance: ["bookings", "reports", "settings"],
+};
 const viewMeta: Record<AdminView, { title: string; description: string }> = {
   dashboard: {
     title: "Operations dashboard",
@@ -1449,8 +1557,8 @@ const viewMeta: Record<AdminView, { title: string; description: string }> = {
     description: "Issue a paid ticket or create a counter reservation",
   },
   bookings: {
-    title: "Paid bookings",
-    description: "Search, print and manage confirmed passenger tickets",
+    title: "Bookings & refunds",
+    description: "Search, print, update and refund passenger tickets",
   },
   reservations: {
     title: "Reservations",
@@ -1472,6 +1580,10 @@ const viewMeta: Record<AdminView, { title: string; description: string }> = {
     title: "Finance",
     description: "Track collections, payment channels and settlements",
   },
+  expenses: {
+    title: "Expenses",
+    description: "Record and review operating expenses",
+  },
   reports: {
     title: "Reports & print",
     description: "Passenger lists, CNIC sheets and terminal vouchers",
@@ -1486,15 +1598,36 @@ const viewMeta: Record<AdminView, { title: string; description: string }> = {
   },
 };
 
-function ManagementApp({ onLogout }: { onLogout: () => void }) {
-  const [activeView, setActiveView] = useState<AdminView>("dashboard"),
+const defaultAdminView = (user: StaffUser): AdminView => {
+  if (user.forcePasswordChange) return "settings";
+  if (["admin", "manager", "counter"].includes(user.role)) return "sale";
+  return roleViews[user.role][0];
+};
+
+function ManagementApp({
+  user,
+  onUserChange,
+  onLogout,
+}: {
+  user: StaffUser;
+  onUserChange: (user: StaffUser) => void;
+  onLogout: () => void | Promise<void>;
+}) {
+  const [activeView, setActiveView] = useState<AdminView>(
+      defaultAdminView(user),
+    ),
     [sidebarOpen, setSidebarOpen] = useState(false),
     [sidebarCollapsed, setSidebarCollapsed] = useState(false),
-    [bookings, setBookings] = useState<Booking[]>(readBookings),
-    [fleet, setFleet] = useState<BusRecord[]>(readFleet),
-    [trips, setTrips] = useState<TripRecord[]>(readTrips),
-    [routes, setRoutes] = useState<RouteRecord[]>(readRoutes),
-    [crew, setCrew] = useState<CrewRecord[]>(readCrew),
+    [bookings, setBookings] = useState<Booking[]>([]),
+    [fleet, setFleet] = useState<BusRecord[]>([]),
+    [trips, setTrips] = useState<TripRecord[]>([]),
+    [routes, setRoutes] = useState<RouteRecord[]>([]),
+    [crew, setCrew] = useState<CrewRecord[]>([]),
+    [staffUsers, setStaffUsers] = useState<StaffUser[]>([]),
+    [currentShift, setCurrentShift] = useState<ShiftRecord | null>(null),
+    [openingShift, setOpeningShift] = useState(false),
+    [closingShift, setClosingShift] = useState(false),
+    [financeUnlocked, setFinanceUnlocked] = useState(false),
     [receipt, setReceipt] = useState<Booking | null>(null),
     [report, setReport] = useState<{
       kind: ReportKind;
@@ -1502,174 +1635,175 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
       runNumber: number;
       date: string;
     } | null>(null),
-    [toast, setToast] = useState("");
+    [toast, setToast] = useState(""),
+    [loading, setLoading] = useState(true),
+    [loadError, setLoadError] = useState(""),
+    [paymentMode, setPaymentMode] = useState("disabled");
   useEffect(() => {
-    const sync = () => setBookings(readBookings());
-    window.addEventListener("madina-bookings-updated", sync);
-    return () => window.removeEventListener("madina-bookings-updated", sync);
-  }, []);
-  useEffect(
-    () => localStorage.setItem(fleetStorageKey, JSON.stringify(fleet)),
-    [fleet],
-  );
-  useEffect(
-    () => localStorage.setItem(tripStorageKey, JSON.stringify(trips)),
-    [trips],
-  );
-  useEffect(
-    () => localStorage.setItem(routeStorageKey, JSON.stringify(routes)),
-    [routes],
-  );
-  useEffect(
-    () => localStorage.setItem(crewStorageKey, JSON.stringify(crew)),
-    [crew],
-  );
+    api
+      .adminBootstrap<AdminBootstrap>()
+      .then((result) => {
+        setBookings(result.bookings);
+        setFleet(result.fleet);
+        setTrips(result.trips);
+        setRoutes(result.routes);
+        setCrew(result.crew);
+        setStaffUsers(result.users);
+        setCurrentShift(result.shift);
+        setPaymentMode(result.paymentMode);
+        onUserChange(result.user);
+      })
+      .catch((error: unknown) =>
+        setLoadError(error instanceof Error ? error.message : "Operations data could not be loaded."),
+      )
+      .finally(() => setLoading(false));
+  }, [onUserChange]);
   const showToast = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   };
-  const persist = (next: Booking[]) => {
-    setBookings(next);
-    storeBookings(next);
+  const failure = (error: unknown) =>
+    showToast(error instanceof Error ? error.message : "The request failed.");
+  const beginShiftClose = async () => {
+    try {
+      const result = await api.currentShift<ShiftRecord>();
+      if (!result.shift) {
+        setCurrentShift(null);
+        return showToast("No open shift was found.");
+      }
+      setCurrentShift(result.shift);
+      setClosingShift(true);
+    } catch (error) {
+      failure(error);
+    }
   };
-  const saveBooking = (booking: Booking) => {
-    persist([booking, ...bookings]);
-    if (booking.bookingStatus === "Confirmed") setReceipt(booking);
-    showToast(
-      booking.bookingStatus === "Reserved"
-        ? `Reservation ${booking.ticketNo} saved.`
-        : `Paid ticket ${booking.ticketNo} issued.`,
-    );
+  const saveBooking = async (booking: Booking) => {
+    try {
+      const result = await api.createBooking<Booking>(booking);
+      setBookings((current) => [result.booking, ...current]);
+      if (result.booking.bookingStatus === "Confirmed") setReceipt(result.booking);
+      showToast(
+        result.booking.bookingStatus === "Reserved"
+          ? `Reservation ${result.booking.ticketNo} saved.`
+          : `Paid ticket ${result.booking.ticketNo} issued.`,
+      );
+    } catch (error) {
+      failure(error);
+    }
   };
-  const cancelBooking = (id: string) => {
-    persist(
-      bookings.map((booking) =>
-        booking.id === id
-          ? { ...booking, bookingStatus: "Cancelled" as const }
-          : booking,
-      ),
-    );
-    showToast("Booking cancelled and seats released.");
+  const cancelBooking = async (id: string) => {
+    try {
+      const result = await api.cancelBooking<Booking>(id);
+      setBookings((current) => current.map((item) => item.id === id ? result.booking : item));
+      showToast("Booking cancelled and seats released.");
+    } catch (error) {
+      failure(error);
+    }
   };
-  const updateBooking = (updated: Booking) => {
-    persist(
-      bookings.map((booking) =>
-        booking.id === updated.id ? updated : booking,
-      ),
-    );
-    showToast(`${updated.ticketNo} passenger details updated.`);
+  const updateBooking = async (updated: Booking) => {
+    try {
+      const result = await api.updateBooking<Booking>(updated.id, updated);
+      setBookings((current) => current.map((item) => item.id === updated.id ? result.booking : item));
+      showToast(`${updated.ticketNo} passenger details updated.`);
+    } catch (error) {
+      failure(error);
+    }
   };
-  const confirmReservation = (id: string) => {
-    const booking = bookings.find((item) => item.id === id);
-    if (!booking) return;
-    const confirmed: Booking = {
-      ...booking,
-      ticketNo: booking.ticketNo.replace("RS-", "ME-"),
-      paid: booking.total,
-      balance: 0,
-      paymentStatus: "Paid",
-      bookingStatus: "Confirmed",
-      paymentReference: `COUNTER-${Date.now().toString().slice(-6)}`,
-      seatPrintedAt: new Date().toISOString(),
-      issuedBy: "Salman Khan",
-      terminal: "Madina Terminal, Peshawar",
-    };
-    persist(bookings.map((item) => (item.id === id ? confirmed : item)));
-    setReceipt(confirmed);
-    showToast("Payment collected. Confirmed ticket issued.");
+  const processRefund = async (id: string, refund: RefundTransaction) => {
+    try {
+      const result = await api.refundBooking<Booking>(id, refund);
+      setBookings((current) => current.map((item) => item.id === id ? result.booking : item));
+      showToast(`${money(refund.amount)} refund recorded with an audit trail.`);
+    } catch (error) {
+      failure(error);
+    }
+  };
+  const confirmReservation = async (id: string) => {
+    try {
+      const result = await api.confirmReservation<Booking>(id);
+      setBookings((current) => current.map((item) => item.id === id ? result.booking : item));
+      setReceipt(result.booking);
+      showToast("Payment collected. Confirmed ticket issued.");
+    } catch (error) {
+      failure(error);
+    }
   };
   const changeView = (view: AdminView) => {
+    if (!roleViews[user.role].includes(view)) return;
     setActiveView(view);
     setSidebarOpen(false);
     window.scrollTo({ top: 0 });
   };
-  const saveBus = (bus: BusRecord) => {
-    setFleet((current) => {
-      const exists = current.some((item) => item.id === bus.id);
-      return exists
-        ? current.map((item) => (item.id === bus.id ? bus : item))
-        : [bus, ...current];
-    });
-    showToast(`Bus ${bus.registration} saved.`);
+  const saveBus = async (bus: BusRecord) => {
+    try {
+      const isNew = !fleet.some((item) => item.id === bus.id);
+      const result = await api.saveBus<BusRecord>(bus.id, bus, isNew);
+      setFleet((current) => isNew ? [result.bus, ...current] : current.map((item) => item.id === bus.id ? result.bus : item));
+      showToast(`Bus ${result.bus.registration} saved.`);
+    } catch (error) {
+      failure(error);
+    }
   };
-  const returnBusToTerminal = (id: string) => {
+  const returnBusToTerminal = async (id: string) => {
     const bus = fleet.find((item) => item.id === id);
-    setFleet((current) =>
-      current.map((item) =>
-        item.id === id ? { ...item, status: "Ready" as const } : item,
-      ),
-    );
-    if (bus) showToast(`${bus.registration} marked ready at terminal.`);
+    if (!bus) return;
+    try {
+      const result = await api.saveBus<BusRecord>(id, { ...bus, status: "Ready" }, false);
+      setFleet((current) => current.map((item) => item.id === id ? result.bus : item));
+      showToast(`${bus.registration} marked ready at terminal.`);
+    } catch (error) {
+      failure(error);
+    }
   };
-  const saveTrip = (trip: TripRecord) => {
-    setTrips((current) => {
-      const exists = current.some((item) => item.id === trip.id);
-      return exists
-        ? current.map((item) => (item.id === trip.id ? trip : item))
-        : [trip, ...current];
-    });
-    showToast("Recurring trip saved.");
+  const saveTrip = async (trip: TripRecord) => {
+    try {
+      const isNew = !trips.some((item) => item.id === trip.id);
+      const result = await api.saveTrip<TripRecord>(trip.id, trip, isNew);
+      setTrips((current) => isNew ? [result.trip, ...current] : current.map((item) => item.id === trip.id ? result.trip : item));
+      showToast("Recurring trip saved.");
+    } catch (error) {
+      failure(error);
+    }
   };
-  const saveRoute = (route: RouteRecord) => {
-    setRoutes((current) => {
-      const exists = current.some((item) => item.id === route.id);
-      return exists
-        ? current.map((item) => (item.id === route.id ? route : item))
-        : [route, ...current];
-    });
-    showToast(`${routeLabel(route)} saved.`);
+  const saveRoute = async (route: RouteRecord) => {
+    try {
+      const isNew = !routes.some((item) => item.id === route.id);
+      const result = await api.saveRoute<RouteRecord>(route.id, route, isNew);
+      setRoutes((current) => isNew ? [result.route, ...current] : current.map((item) => item.id === route.id ? result.route : item));
+      showToast(`${routeLabel(result.route)} saved.`);
+    } catch (error) {
+      failure(error);
+    }
   };
-  const saveCrewMember = (person: CrewRecord, previousName?: string) => {
-    setCrew((current) => {
-      const exists = previousName
-        ? current.some((item) => item.name === previousName)
-        : false;
-      return exists
-        ? current.map((item) => (item.name === previousName ? person : item))
-        : [person, ...current];
-    });
-    showToast(`${person.name} saved.`);
+  const saveCrewMember = async (person: CrewRecord, previousName?: string) => {
+    try {
+      const result = await api.saveCrew<CrewRecord>(previousName, person);
+      setCrew((current) => previousName ? current.map((item) => item.name === previousName ? result.person : item) : [result.person, ...current]);
+      showToast(`${result.person.name} saved.`);
+    } catch (error) {
+      failure(error);
+    }
   };
-  const transitionTrip = (
+  const transitionTrip = async (
     id: string,
     action: "boarding" | "depart" | "next",
   ) => {
-    const selectedTrip = trips.find((trip) => trip.id === id);
-    if (!selectedTrip) return;
-    setTrips((current) =>
-      current.map((trip) =>
-        trip.id === id
-          ? action === "boarding"
-            ? { ...trip, status: "Boarding" as const }
-            : action === "depart"
-              ? {
-                  ...trip,
-                  status: "Departed" as const,
-                  lastDepartedAt: new Date().toISOString(),
-                }
-              : {
-                  ...trip,
-                  status: "Scheduled" as const,
-                  runNumber: trip.runNumber + 1,
-                }
-          : trip,
-      ),
-    );
-    if (action === "depart")
-      setFleet((current) =>
-        current.map((bus) =>
-          selectedTrip.busId === bus.id
-            ? { ...bus, status: "On route" as const }
-            : bus,
-        ),
+    try {
+      const result = await api.transitionTrip<TripRecord>(id, action);
+      setTrips((current) => current.map((trip) => trip.id === id ? result.trip : trip));
+      if (action === "depart") {
+        setFleet((current) => current.map((bus) => result.trip.busId === bus.id ? { ...bus, status: "On route" } : bus));
+      }
+      showToast(
+        action === "boarding"
+          ? "Boarding opened for this departure."
+          : action === "depart"
+            ? "Bus departed and is now marked on route."
+            : "Previous run closed. A fresh passenger run is open.",
       );
-    showToast(
-      action === "boarding"
-        ? "Boarding opened for this departure."
-        : action === "depart"
-          ? "Bus departed and is now marked on route."
-          : "Previous run closed. A fresh passenger run is open.",
-    );
+    } catch (error) {
+      failure(error);
+    }
   };
   const openReport = (
     kind: ReportKind,
@@ -1683,8 +1817,32 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
     paidCount = bookings.filter(
       (booking) =>
         booking.bookingStatus === "Confirmed" &&
-        booking.paymentStatus === "Paid",
+        booking.paid > 0,
     ).length;
+  if (loading) return <AppLoading message="Loading transport operations…" />;
+  if (loadError) {
+    return (
+      <div className="app-loading" role="alert">
+        <XCircle size={22} />
+        <span>{loadError}</span>
+        <button type="button" className="secondary-button" onClick={onLogout}>
+          Return to sign in
+        </button>
+      </div>
+    );
+  }
+  const initials = user.name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+  const visibleNavGroups = navGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => roleViews[user.role].includes(item.id)),
+    }))
+    .filter((group) => group.items.length > 0);
   return (
     <div
       className={`admin-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
@@ -1721,7 +1879,7 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
           </button>
         </div>
         <nav aria-label="Operations modules">
-          {navGroups.map((group) => (
+          {visibleNavGroups.map((group) => (
             <div className="nav-group" key={group.label}>
               <p>{group.label}</p>
               {group.items.map((item) => {
@@ -1782,24 +1940,21 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
             </div>
           </div>
           <div className="admin-topbar-right">
-            <span className="admin-shift">
-              <i /> System online
-            </span>
-            <button
-              className="admin-icon-button"
-              type="button"
-              aria-label="Notifications"
-              onClick={() => showToast("No new system alerts.")}
-            >
-              <Bell size={16} />
-              <i />
-            </button>
+            {["admin", "manager", "counter"].includes(user.role) && (
+              <button
+                className={`admin-shift ${currentShift ? "is-open" : ""}`}
+                type="button"
+                onClick={() => currentShift ? void beginShiftClose() : setOpeningShift(true)}
+              >
+                <i /> {currentShift ? `Close shift · ${currentShift.counterName}` : "Open shift"}
+              </button>
+            )}
             <span className="admin-divider" />
             <div className="admin-user">
-              <span className="avatar">SK</span>
+              <span className="avatar">{initials}</span>
               <div>
-                <strong>Salman Khan</strong>
-                <small>Admin · Counter 01</small>
+                <strong>{user.name}</strong>
+                <small>{user.role} · Counter 01</small>
               </div>
             </div>
             <button
@@ -1821,6 +1976,7 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
               fleet={fleet}
               routes={routes}
               onNavigate={changeView}
+              userName={user.name}
             />
           )}
           {activeView === "sale" && (
@@ -1830,6 +1986,8 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
               fleet={fleet}
               routes={routes}
               crew={crew}
+              shiftOpen={currentShift !== null}
+              onRequestOpenShift={() => setOpeningShift(true)}
               onSave={saveBooking}
               showToast={showToast}
             />
@@ -1838,8 +1996,10 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
             <BookingsView
               bookings={bookings}
               onPrint={setReceipt}
-              onCancel={cancelBooking}
               onUpdate={updateBooking}
+              onRefund={processRefund}
+              canEdit={["admin", "manager", "counter"].includes(user.role)}
+              canRefund={["admin", "manager", "finance"].includes(user.role)}
             />
           )}
           {activeView === "reservations" && (
@@ -1873,7 +2033,20 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
             <RoutesView routes={routes} onSave={saveRoute} />
           )}
           {activeView === "finance" && (
-            <FinanceView bookings={bookings} showToast={showToast} />
+            <FinanceProtected
+              unlocked={financeUnlocked}
+              onUnlocked={() => setFinanceUnlocked(true)}
+            >
+              <FinanceView bookings={bookings} />
+            </FinanceProtected>
+          )}
+          {activeView === "expenses" && (
+            <FinanceProtected
+              unlocked={financeUnlocked}
+              onUnlocked={() => setFinanceUnlocked(true)}
+            >
+              <ExpensesView showToast={showToast} />
+            </FinanceProtected>
           )}
           {activeView === "reports" && (
             <ReportsView
@@ -1887,7 +2060,18 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
           {activeView === "crew" && (
             <CrewView crew={crew} onSave={saveCrewMember} />
           )}
-          {activeView === "settings" && <SettingsView showToast={showToast} />}
+          {activeView === "settings" && (
+            <SettingsView
+              user={user}
+              onUserChange={onUserChange}
+              paymentMode={paymentMode}
+              staffUsers={staffUsers}
+              onUserCreated={(created) =>
+                setStaffUsers((current) => [created, ...current])
+              }
+              showToast={showToast}
+            />
+          )}
         </main>
       </div>
       {receipt && (
@@ -1901,6 +2085,37 @@ function ManagementApp({ onLogout }: { onLogout: () => void }) {
           fleet={fleet}
           routes={routes}
           onClose={() => setReport(null)}
+        />
+      )}
+      {openingShift && (
+        <ShiftOpenModal
+          onClose={() => setOpeningShift(false)}
+          onSave={async (details) => {
+            try {
+              const result = await api.openShift<ShiftRecord>(details);
+              setCurrentShift(result.shift);
+              setOpeningShift(false);
+              showToast(`Shift opened at ${result.shift.counterName}.`);
+            } catch (error) {
+              failure(error);
+            }
+          }}
+        />
+      )}
+      {closingShift && currentShift && (
+        <FinanceCloseModal
+          shift={currentShift}
+          onClose={() => setClosingShift(false)}
+          onSave={async (summary) => {
+            try {
+              await api.closeShift(summary);
+              setCurrentShift(null);
+              setClosingShift(false);
+              showToast("Shift closed and reconciliation saved.");
+            } catch (error) {
+              failure(error);
+            }
+          }}
         />
       )}
       {toast && (
@@ -1918,66 +2133,103 @@ function DashboardView({
   fleet,
   routes,
   onNavigate,
+  userName,
 }: {
   bookings: Booking[];
   trips: TripRecord[];
   fleet: BusRecord[];
   routes: RouteRecord[];
   onNavigate: (view: AdminView) => void;
+  userName: string;
 }) {
   const [revenuePeriod, setRevenuePeriod] = useState<"Today" | "Week">("Today");
-  const paid = bookings.filter(
-      (b) => b.paymentStatus === "Paid" && b.bookingStatus === "Confirmed",
-    ),
-    revenue = paid.reduce((sum, b) => sum + b.paid, 0),
-    reservations = bookings.filter(
-      (b) => b.bookingStatus === "Reserved",
-    ).length,
-    webSales = paid
-      .filter((b) => b.source === "Public web")
-      .reduce((sum, b) => sum + b.paid, 0);
-  const displayedRevenue =
-    revenuePeriod === "Today" ? revenue : Math.round(revenue * 5.7);
-  const displayedWebSales =
-    revenuePeriod === "Today" ? webSales : Math.round(webSales * 5.7);
-  const monthlyRevenue = 1115000 + revenue;
-  const monthlyTickets =
-    5840 + paid.reduce((sum, booking) => sum + booking.seats.length, 0);
+  const settled = bookings.filter((booking) => booking.paid > 0);
+  const paid = settled.filter(
+    (booking) => booking.bookingStatus === "Confirmed",
+  );
+  const inLastDays = (date: string, days: number) => {
+    const difference =
+      new Date(`${today}T00:00:00`).getTime() -
+      new Date(`${date}T00:00:00`).getTime();
+    return difference >= 0 && difference < days * 86400000;
+  };
+  const collectionForDays = (days: number, source?: BookingSource) => {
+    const gross = settled
+      .filter(
+        (booking) =>
+          inLastDays(booking.date, days) &&
+          (!source || booking.source === source),
+      )
+      .reduce((sum, booking) => sum + booking.paid, 0);
+    const refunds = settled
+      .filter((booking) => !source || booking.source === source)
+      .flatMap((booking) => booking.refunds ?? [])
+      .filter((refund) => inLastDays(dateInPakistan(refund.processedAt), days))
+      .reduce((sum, refund) => sum + refund.amount, 0);
+    return Math.max(0, gross - refunds);
+  };
+  const periodDays = revenuePeriod === "Today" ? 1 : 7;
+  const displayedRevenue = collectionForDays(periodDays);
+  const displayedWebSales = collectionForDays(periodDays, "Public web");
+  const todayPaidSeats = paid
+    .filter((booking) => booking.date === today)
+    .reduce((sum, booking) => sum + booking.seats.length, 0);
+  const reservations = bookings.filter(
+    (booking) => booking.bookingStatus === "Reserved",
+  ).length;
+  const pakistanHour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      hour12: false,
+      timeZone: "Asia/Karachi",
+    }).format(new Date()),
+  );
+  const greeting =
+    pakistanHour < 12 ? "morning" : pakistanHour < 17 ? "afternoon" : "evening";
+  const dateHeading = new Intl.DateTimeFormat("en-GB", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long",
+    timeZone: "Asia/Karachi",
+  })
+    .format(new Date())
+    .toUpperCase();
   const metrics = [
     {
-      label: "Monthly sales",
-      value: money(monthlyRevenue),
-      note: `${Math.min(100, Math.round((monthlyRevenue / 1400000) * 100))}% of PKR 1.4M target`,
-      icon: CircleDollarSign,
-      tone: "green",
-    },
-    {
-      label: "Tickets this month",
-      value: monthlyTickets.toLocaleString("en-PK"),
-      note: `${Math.min(100, Math.round((monthlyTickets / 7000) * 100))}% of 7,000 target`,
+      label: "Today's tickets",
+      value: todayPaidSeats.toLocaleString("en-PK"),
+      note: "Confirmed passenger seats",
       icon: Ticket,
-      tone: "blue",
-    },
-    {
-      label: "Today's revenue",
-      value: money(revenue),
-      note: `${paid.reduce((sum, booking) => sum + booking.seats.length, 0)} paid seats`,
-      icon: Banknote,
-      tone: "gold",
+      tone: "green",
     },
     {
       label: "Active reservations",
       value: String(reservations),
-      note: "Counter holds only",
+      note: "Counter holds awaiting payment",
       icon: CalendarCheck,
+      tone: "blue",
+    },
+    {
+      label: "Scheduled trips",
+      value: String(trips.filter((trip) => trip.active && trip.status !== "Departed").length),
+      note: "Upcoming departures",
+      icon: BusFront,
+      tone: "gold",
+    },
+    {
+      label: "Buses ready",
+      value: String(fleet.filter((bus) => bus.status === "Ready").length),
+      note: `${fleet.filter((bus) => bus.status === "Maintenance").length} in maintenance`,
+      icon: Bus,
       tone: "orange",
     },
   ];
+  const showDashboardFinance = false;
   return (
     <div className="admin-view dashboard-view">
       <ViewHeading
-        eyebrow="WEDNESDAY · 02 SEPTEMBER"
-        title="Good afternoon, Salman"
+        eyebrow={dateHeading}
+        title={`Good ${greeting}, ${userName.split(" ")[0]}`}
         text="Here is what is happening across Madina Express today."
         action={
           <button
@@ -2058,7 +2310,7 @@ function DashboardView({
               })}
           </div>
         </section>
-        <section className="surface revenue-panel">
+        {showDashboardFinance && <section className="surface revenue-panel">
           <SurfaceHeader
             title="Revenue overview"
             text="Collections by sales channel"
@@ -2078,10 +2330,10 @@ function DashboardView({
             }
           />
           <div className="revenue-total">
-            <small>Total collected</small>
+            <small>Net collected</small>
             <strong>{money(displayedRevenue)}</strong>
             <span>
-              <Activity size={13} /> 12.4% growth
+              <Activity size={13} /> After refunds
             </span>
           </div>
           <div className="channel-bars">
@@ -2110,12 +2362,12 @@ function DashboardView({
             />
           </div>
           <SettlementNote
-            title="1Bill settlement matched"
-            text="Last reconciled today at 13:45"
+            title="Refund-aware totals"
+            text="Gross payments less recorded refunds for this period."
           />
-        </section>
+        </section>}
       </div>
-      <section className="surface recent-panel">
+      {showDashboardFinance && <section className="surface recent-panel">
         <SurfaceHeader
           title="Recent sales activity"
           text="Latest paid tickets from web and counter"
@@ -2130,13 +2382,15 @@ function DashboardView({
           onPrint={() => undefined}
           compact
         />
-      </section>
+      </section>}
     </div>
   );
 }
 
 function ViewHeading({
+  eyebrow,
   title,
+  text,
   action,
 }: {
   eyebrow: string;
@@ -2146,7 +2400,11 @@ function ViewHeading({
 }) {
   return (
     <div className="view-heading">
-      <h1>{title}</h1>
+      <div>
+        <p className="view-eyebrow">{eyebrow}</p>
+        <h1>{title}</h1>
+        <p>{text}</p>
+      </div>
       {action}
     </div>
   );
@@ -2211,6 +2469,8 @@ function BookingWorkspace({
   fleet,
   routes,
   crew,
+  shiftOpen,
+  onRequestOpenShift,
   onSave,
   showToast,
 }: {
@@ -2219,6 +2479,8 @@ function BookingWorkspace({
   fleet: BusRecord[];
   routes: RouteRecord[];
   crew: CrewRecord[];
+  shiftOpen: boolean;
+  onRequestOpenShift: () => void;
   onSave: (booking: Booking) => void;
   showToast: (message: string) => void;
 }) {
@@ -2280,19 +2542,7 @@ function BookingWorkspace({
         currentRunId,
         activeTrip.runNumber,
       ],
-    ),
-    tripSales = bookings
-      .filter(
-        (b) =>
-          b.bus === bus.registration &&
-          b.date === travelDate &&
-          b.time === departureTime &&
-          (b.tripRunId
-            ? b.tripRunId === currentRunId
-            : activeTrip.runNumber === 1) &&
-          b.paymentStatus === "Paid",
-      )
-      .reduce((sum, b) => sum + b.paid, 0);
+    );
   const update = <K extends keyof PassengerForm>(
     key: K,
     value: PassengerForm[K],
@@ -2314,6 +2564,10 @@ function BookingWorkspace({
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (!shiftOpen) {
+      showToast("Open a shift before selling or reserving a ticket.");
+      return;
+    }
     if (
       !passenger.passenger.trim() ||
       !passenger.phone.trim() ||
@@ -2360,6 +2614,7 @@ function BookingWorkspace({
       driver,
       attendant,
       createdAt: new Date().toISOString(),
+      tripId: activeTrip.id,
       tripRunId: currentRunId,
       seatPrintedAt: new Date().toISOString(),
       issuedBy: "Salman Khan",
@@ -2372,25 +2627,13 @@ function BookingWorkspace({
   };
   return (
     <div className="admin-view sale-view">
-      <div className="sale-toolbar">
-        <div className="mode-tabs">
-          <button
-            type="button"
-            className={saleMode === "Ticket" ? "active" : ""}
-            onClick={() => setSaleMode("Ticket")}
-          >
-            <Ticket size={16} /> Paid ticket
-          </button>
-          <button
-            type="button"
-            className={saleMode === "Reservation" ? "active" : ""}
-            onClick={() => setSaleMode("Reservation")}
-          >
-            <CalendarCheck size={16} /> Reservation
-          </button>
-        </div>
-      </div>
       <div className="booking-surface">
+        {!shiftOpen && (
+          <div className="shift-required-banner" role="status">
+            <span><LockKeyhole size={18} /><strong>Open a shift to use the POS</strong></span>
+            <button className="primary-button" type="button" onClick={onRequestOpenShift}>Open shift</button>
+          </div>
+        )}
         <section className="trip-panel admin-trip-panel">
           <div className="panel-heading">
             <h2>Trip and crew</h2>
@@ -2529,20 +2772,35 @@ function BookingWorkspace({
               </strong>
             </span>
             <span>
-              <small>Trip collection</small>
-              <strong>{money(tripSales)}</strong>
+              <small>Departure</small>
+              <strong>{departureTime}</strong>
             </span>
           </div>
         </section>
+        <div className="sale-toolbar">
+          <div className="mode-tabs" aria-label="Sale type">
+            <button
+              type="button"
+              className={saleMode === "Ticket" ? "active" : ""}
+              onClick={() => setSaleMode("Ticket")}
+            >
+              <Ticket size={16} /> Paid ticket
+            </button>
+            <button
+              type="button"
+              className={saleMode === "Reservation" ? "active" : ""}
+              onClick={() => setSaleMode("Reservation")}
+            >
+              <CalendarCheck size={16} /> Reservation
+            </button>
+          </div>
+        </div>
         <form className="workspace-grid admin-booking-grid" onSubmit={submit}>
           <section className="passenger-card">
             <div className="panel-heading">
-              <h2>
-                Passenger {saleMode === "Ticket" ? "& payment" : "details"}
-              </h2>
+              <h2>Passenger</h2>
               <ShieldCheck size={20} />
             </div>
-            <div className="section-label">PASSENGER DETAILS</div>
             <div className="form-grid">
               <label className="span-2">
                 <span>Passenger name *</span>
@@ -2624,9 +2882,7 @@ function BookingWorkspace({
                 />
               </label>
             </div>
-            <div className="section-label payment-label">
-              {saleMode === "Ticket" ? "PAYMENT DETAILS" : "FARE SUMMARY"}
-            </div>
+            <h3 className="simple-form-heading">{saleMode === "Ticket" ? "Payment" : "Fare"}</h3>
             <div className="form-grid fare-grid">
               <MoneyField
                 label="Fare per seat"
@@ -2913,26 +3169,206 @@ function BookingEditModal({
   );
 }
 
+function RefundModal({
+  booking,
+  onClose,
+  onRefund,
+}: {
+  booking: Booking;
+  onClose: () => void;
+  onRefund: (id: string, refund: RefundTransaction) => void;
+}) {
+  const available = refundableBalance(booking);
+  const [amount, setAmount] = useState(available);
+  const [method, setMethod] = useState<PaymentMethod>(booking.paymentMethod);
+  const [reason, setReason] = useState<RefundReason>("Passenger request");
+  const [reference, setReference] = useState("");
+  const [notes, setNotes] = useState("");
+  const [error, setError] = useState("");
+  const fullRefund = amount === available;
+  return (
+    <div
+      className="form-modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Refund ${booking.ticketNo}`}
+    >
+      <form
+        className="form-modal compact-modal refund-modal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!Number.isFinite(amount) || amount <= 0 || amount > available) {
+            setError(`Enter an amount between PKR 1 and ${money(available)}.`);
+            return;
+          }
+          if (method !== "Cash" && !reference.trim()) {
+            setError("Enter the bank, card or 1Bill refund reference.");
+            return;
+          }
+          onRefund(booking.id, {
+            id: `RF-${Date.now()}`,
+            amount,
+            method,
+            reason,
+            reference:
+              reference.trim() || `CASH-${Date.now().toString().slice(-6)}`,
+            notes: notes.trim(),
+            processedAt: new Date().toISOString(),
+            processedBy: "Salman Khan",
+          });
+          onClose();
+        }}
+      >
+        <header>
+          <div>
+            <h2>Issue refund</h2>
+            <p>
+              {booking.ticketNo} · {booking.passenger} · Seats{" "}
+              {booking.seats.join(", ")}
+            </p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose}>
+            <X size={19} />
+          </button>
+        </header>
+        <div className="close-shift-summary refund-summary">
+          <span>
+            <small>Originally paid</small>
+            <strong>{money(booking.paid)}</strong>
+          </span>
+          <span>
+            <small>Already refunded</small>
+            <strong>{money(refundedTotal(booking))}</strong>
+          </span>
+          <span>
+            <small>Available to refund</small>
+            <strong>{money(available)}</strong>
+          </span>
+        </div>
+        <div className="modal-form-grid">
+          <label>
+            <span>Refund amount *</span>
+            <input
+              type="number"
+              min="1"
+              max={available}
+              step="1"
+              required
+              value={amount}
+              onChange={(event) => {
+                setAmount(Number(event.target.value));
+                setError("");
+              }}
+            />
+          </label>
+          <label>
+            <span>Refund method *</span>
+            <select
+              value={method}
+              onChange={(event) => {
+                setMethod(event.target.value as PaymentMethod);
+                setError("");
+              }}
+            >
+              {(["Cash", "1Bill", "Card", "Bank transfer"] as PaymentMethod[]).map(
+                (option) => (
+                  <option key={option}>{option}</option>
+                ),
+              )}
+            </select>
+          </label>
+          <label>
+            <span>Reason *</span>
+            <select
+              value={reason}
+              onChange={(event) =>
+                setReason(event.target.value as RefundReason)
+              }
+            >
+              {([
+                "Passenger request",
+                "Trip cancelled",
+                "Duplicate payment",
+                "Service disruption",
+                "Other",
+              ] as RefundReason[]).map((option) => (
+                <option key={option}>{option}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>{method === "Cash" ? "Cash voucher reference" : "Refund reference *"}</span>
+            <input
+              value={reference}
+              onChange={(event) => {
+                setReference(event.target.value);
+                setError("");
+              }}
+              placeholder={method === "Cash" ? "Optional; generated if blank" : "Required for reconciliation"}
+            />
+          </label>
+          <label className="span-2">
+            <span>Internal notes</span>
+            <textarea
+              rows={3}
+              value={notes}
+              onChange={(event) => setNotes(event.target.value)}
+              placeholder="Optional details for the shift manager"
+            />
+          </label>
+        </div>
+        <div className={`refund-impact ${fullRefund ? "full" : "partial"}`}>
+          <RefreshCw size={17} />
+          <span>
+            <strong>{fullRefund ? "Full refund" : "Partial refund"}</strong>
+            <small>
+              {fullRefund
+                ? "The booking will be marked refunded and all seats will be released."
+                : `The ticket stays confirmed with ${money(available - amount)} still collected.`}
+            </small>
+          </span>
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        <footer>
+          <button className="secondary-button" type="button" onClick={onClose}>
+            Keep booking
+          </button>
+          <button className="danger-button" type="submit">
+            <RefreshCw size={16} /> Refund {money(amount)}
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 function BookingsView({
   bookings,
   onPrint,
-  onCancel,
   onUpdate,
+  onRefund,
+  canEdit,
+  canRefund,
 }: {
   bookings: Booking[];
   onPrint: (booking: Booking) => void;
-  onCancel: (id: string) => void;
   onUpdate: (booking: Booking) => void;
+  onRefund: (id: string, refund: RefundTransaction) => void;
+  canEdit: boolean;
+  canRefund: boolean;
 }) {
   const [search, setSearch] = useState(""),
     [filter, setFilter] = useState<"All" | BookingSource>("All"),
-    [editing, setEditing] = useState<Booking | null>(null);
+    [editing, setEditing] = useState<Booking | null>(null),
+    [refunding, setRefunding] = useState<Booking | null>(null);
   const visible = bookings.filter(
     (b) =>
-      b.paymentStatus === "Paid" &&
+      b.paid > 0 &&
       b.bookingStatus !== "Reserved" &&
       (filter === "All" || b.source === filter) &&
-      `${b.ticketNo} ${b.passenger} ${b.phone} ${b.cnic} ${b.route}`
+      `${b.ticketNo} ${b.passenger} ${b.phone} ${b.cnic} ${b.route} ${(b.refunds ?? [])
+        .map((refund) => `${refund.reference} ${refund.reason}`)
+        .join(" ")}`
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
@@ -2940,8 +3376,8 @@ function BookingsView({
     <div className="admin-view">
       <ViewHeading
         eyebrow="TICKET REGISTER"
-        title="Paid bookings"
-        text="Every public web ticket shown here has a verified full payment."
+        title="Bookings & refunds"
+        text="Find paid tickets, correct passenger details and issue traceable refunds."
         action={
           <button
             className="secondary-button"
@@ -2957,7 +3393,10 @@ function BookingsView({
                   "Bus",
                   "Seats",
                   "Amount",
+                  "Refunded",
+                  "Net collected",
                   "Payment",
+                  "Payment status",
                   "Date",
                   "Time",
                 ],
@@ -2970,7 +3409,10 @@ function BookingsView({
                   booking.bus,
                   booking.seats.join(" "),
                   booking.paid,
+                  refundedTotal(booking),
+                  netCollected(booking),
                   booking.paymentMethod,
+                  booking.paymentStatus,
                   booking.date,
                   booking.time,
                 ]),
@@ -2993,8 +3435,8 @@ function BookingsView({
         <BookingTable
           bookings={visible}
           onPrint={onPrint}
-          onCancel={onCancel}
-          onEdit={setEditing}
+          onEdit={canEdit ? setEditing : undefined}
+          onRefund={canRefund ? setRefunding : undefined}
         />
       </section>
       {editing && (
@@ -3005,6 +3447,13 @@ function BookingsView({
             onUpdate(booking);
             setEditing(null);
           }}
+        />
+      )}
+      {refunding && (
+        <RefundModal
+          booking={refunding}
+          onClose={() => setRefunding(null)}
+          onRefund={onRefund}
         />
       )}
     </div>
@@ -3903,7 +4352,10 @@ function TripRunModal({
             <small>Collection</small>
             <strong>
               {money(
-                runBookings.reduce((sum, booking) => sum + booking.paid, 0),
+                runBookings.reduce(
+                  (sum, booking) => sum + netCollected(booking),
+                  0,
+                ),
               )}
             </strong>
           </span>
@@ -4180,7 +4632,10 @@ function ReportsView({
             <small>Collection</small>
             <strong>
               {money(
-                runBookings.reduce((sum, booking) => sum + booking.paid, 0),
+                runBookings.reduce(
+                  (sum, booking) => sum + netCollected(booking),
+                  0,
+                ),
               )}
             </strong>
           </span>
@@ -4252,7 +4707,10 @@ function ReportModal({
   const rows = runBookings.flatMap((booking) =>
     booking.seats.map((seat) => ({ booking, seat })),
   );
-  const total = runBookings.reduce((sum, booking) => sum + booking.paid, 0);
+  const total = runBookings.reduce(
+    (sum, booking) => sum + netCollected(booking),
+    0,
+  );
   const title = {
     manifest: "Passenger Manifest",
     cnic: "Passenger CNIC Sheet",
@@ -4416,7 +4874,7 @@ function ReportModal({
                       <td>{booking.destination}</td>
                       <td>{booking.seats.join(", ")}</td>
                       <td>{booking.paymentMethod}</td>
-                      <td>{money(booking.paid)}</td>
+                      <td>{money(netCollected(booking))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -4436,7 +4894,10 @@ function ReportModal({
                     {money(
                       runBookings
                         .filter((booking) => booking.paymentMethod === "1Bill")
-                        .reduce((sum, booking) => sum + booking.paid, 0),
+                        .reduce(
+                          (sum, booking) => sum + netCollected(booking),
+                          0,
+                        ),
                     )}
                   </strong>
                 </span>
@@ -4764,32 +5225,195 @@ function RoutesView({
   );
 }
 
-function FinanceCloseModal({
-  bookings,
+function FinanceProtected({
+  unlocked,
+  onUnlocked,
+  children,
+}: {
+  unlocked: boolean;
+  onUnlocked: () => void;
+  children: React.ReactNode;
+}) {
+  const [password, setPassword] = useState("");
+  const [checking, setChecking] = useState(!unlocked);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (unlocked) return;
+    api.financeStatus()
+      .then((result) => {
+        if (result.unlocked) onUnlocked();
+      })
+      .catch(() => undefined)
+      .finally(() => setChecking(false));
+  }, [onUnlocked, unlocked]);
+  if (unlocked) return <>{children}</>;
+  return (
+    <div className="finance-lock-page">
+      <div className="finance-blur-preview" aria-hidden="true">
+        <div /><div /><div /><div />
+      </div>
+      <form
+        className="finance-unlock-card"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setSubmitting(true);
+          setError("");
+          try {
+            await api.unlockFinance(password);
+            onUnlocked();
+          } catch (unlockError) {
+            setError(unlockError instanceof Error ? unlockError.message : "Finance could not be unlocked.");
+          } finally {
+            setSubmitting(false);
+          }
+        }}
+      >
+        <span className="finance-lock-icon"><LockKeyhole size={25} /></span>
+        <h1>Finance is locked</h1>
+        <p>Enter the main administrator password. Access remains unlocked for 15 minutes.</p>
+        <label>
+          <span>Administrator password</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="current-password"
+            disabled={checking || submitting}
+            required
+          />
+        </label>
+        {error && <p className="form-error">{error}</p>}
+        <button className="primary-button" type="submit" disabled={checking || submitting}>
+          <KeyRound size={16} /> {checking ? "Checking…" : submitting ? "Unlocking…" : "Unlock finance"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function ShiftOpenModal({
   onClose,
   onSave,
 }: {
-  bookings: Booking[];
   onClose: () => void;
-  onSave: (summary: string) => void;
+  onSave: (details: { counterName: string; openingCash: number }) => void | Promise<void>;
 }) {
-  const paid = bookings.filter(
-    (booking) =>
-      booking.paymentStatus === "Paid" && booking.bookingStatus === "Confirmed",
+  const [counterName, setCounterName] = useState("Counter 01");
+  const [openingCash, setOpeningCash] = useState(0);
+  return (
+    <div className="form-modal-overlay" role="dialog" aria-modal="true" aria-label="Open shift">
+      <form
+        className="form-modal compact-modal shift-open-modal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void onSave({ counterName: counterName.trim(), openingCash });
+        }}
+      >
+        <header>
+          <div><h2>Open shift</h2><p>Record the counter and starting cash before selling tickets.</p></div>
+          <button type="button" aria-label="Close" onClick={onClose}><X size={19} /></button>
+        </header>
+        <div className="modal-form-grid">
+          <label><span>Counter name</span><input value={counterName} onChange={(event) => setCounterName(event.target.value)} required /></label>
+          <label><span>Opening cash</span><input type="number" min="0" step="1" value={openingCash} onChange={(event) => setOpeningCash(Number(event.target.value))} required /></label>
+        </div>
+        <footer>
+          <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
+          <button className="primary-button" type="submit"><CheckCircle2 size={16} /> Open shift</button>
+        </footer>
+      </form>
+    </div>
   );
-  const expectedCash = paid
-    .filter((booking) => booking.paymentMethod === "Cash")
-    .reduce((sum, booking) => sum + booking.paid, 0);
-  const digital = paid
-    .filter((booking) => booking.paymentMethod !== "Cash")
-    .reduce((sum, booking) => sum + booking.paid, 0);
-  const [cashCounted, setCashCounted] = useState(expectedCash);
+}
+
+function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
+  const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [draft, setDraft] = useState({
+    date: today,
+    category: "Terminal",
+    description: "",
+    amount: 0,
+    paymentMethod: "Cash" as ExpenseRecord["paymentMethod"],
+    reference: "",
+    notes: "",
+  });
+  useEffect(() => {
+    api.listExpenses<ExpenseRecord>()
+      .then((result) => setExpenses(result.expenses))
+      .catch((error: unknown) => showToast(error instanceof Error ? error.message : "Expenses could not be loaded."))
+      .finally(() => setLoading(false));
+  }, [showToast]);
+  const updateDraft = (key: keyof typeof draft, value: string | number) =>
+    setDraft((current) => ({ ...current, [key]: value }));
+  return (
+    <div className="admin-view expenses-view">
+      <ViewHeading eyebrow="ADMIN ONLY" title="Expenses" text="Record day-to-day operating costs with a clear audit trail." />
+      <section className="surface expense-entry">
+        <SurfaceHeader title="Add expense" text="Cash expenses are linked to the open counter shift." />
+        <form
+          className="expense-form"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            try {
+              const result = await api.createExpense<ExpenseRecord>(draft);
+              setExpenses((current) => [result.expense, ...current]);
+              setDraft((current) => ({ ...current, description: "", amount: 0, reference: "", notes: "" }));
+              showToast("Expense saved.");
+            } catch (error) {
+              showToast(error instanceof Error ? error.message : "Expense could not be saved.");
+            }
+          }}
+        >
+          <label><span>Date</span><input type="date" value={draft.date} onChange={(e) => updateDraft("date", e.target.value)} required /></label>
+          <label><span>Category</span><select value={draft.category} onChange={(e) => updateDraft("category", e.target.value)}>{["Terminal", "Fuel", "Maintenance", "Driver advance", "Refreshment", "Utilities", "Salary", "Other"].map((item) => <option key={item}>{item}</option>)}</select></label>
+          <label className="span-2"><span>Description</span><input value={draft.description} onChange={(e) => updateDraft("description", e.target.value)} placeholder="What was this expense for?" required /></label>
+          <label><span>Amount</span><input type="number" min="0.01" step="0.01" value={draft.amount} onChange={(e) => updateDraft("amount", Number(e.target.value))} required /></label>
+          <label><span>Paid by</span><select value={draft.paymentMethod} onChange={(e) => updateDraft("paymentMethod", e.target.value)}><option>Cash</option><option>Card</option><option>Bank transfer</option></select></label>
+          <label><span>Reference</span><input value={draft.reference} onChange={(e) => updateDraft("reference", e.target.value)} placeholder={draft.paymentMethod === "Cash" ? "Optional" : "Required"} /></label>
+          <label><span>Notes</span><input value={draft.notes} onChange={(e) => updateDraft("notes", e.target.value)} placeholder="Optional" /></label>
+          <button className="primary-button" type="submit"><Plus size={16} /> Save expense</button>
+        </form>
+      </section>
+      <section className="surface data-surface">
+        <SurfaceHeader title="Expense history" text="Latest recorded operating costs" />
+        {loading ? <p className="table-loading">Loading expenses…</p> : (
+          <div className="table-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Method</th><th>Amount</th><th>Recorded by</th></tr></thead><tbody>
+            {expenses.length ? expenses.map((expense) => <tr key={expense.id}><td>{expense.date}</td><td>{expense.category}</td><td><strong>{expense.description}</strong><small>{expense.reference || expense.notes || "—"}</small></td><td>{expense.paymentMethod}</td><td><strong>{money(expense.amount)}</strong></td><td>{expense.createdBy}</td></tr>) : <tr><td colSpan={6}><EmptyState title="No expenses recorded" text="Use the form above to add the first expense." /></td></tr>}
+          </tbody></table></div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function FinanceCloseModal({
+  shift,
+  onClose,
+  onSave,
+}: {
+  shift: ShiftRecord;
+  onClose: () => void;
+  onSave: (summary: {
+    cashCounted: number;
+    terminalExpense: number;
+    driverAdvance: number;
+    refreshment: number;
+    remarks: string;
+    display: string;
+  }) => void;
+}) {
+  const expectedCashBeforeDeductions = shift.expectedCash;
+  const digital = shift.digitalCollections;
+  const [cashCounted, setCashCounted] = useState(expectedCashBeforeDeductions);
   const [terminalExpense, setTerminalExpense] = useState(0);
   const [driverAdvance, setDriverAdvance] = useState(0);
   const [refreshment, setRefreshment] = useState(0);
   const [remarks, setRemarks] = useState("");
   const deductions = terminalExpense + driverAdvance + refreshment;
-  const handover = Math.max(0, cashCounted - deductions);
+  const expectedCash = Math.max(0, expectedCashBeforeDeductions - deductions);
+  const handover = Math.max(0, cashCounted - shift.openingCash);
   const variance = cashCounted - expectedCash;
   return (
     <div
@@ -4802,9 +5426,14 @@ function FinanceCloseModal({
         className="form-modal finance-close-modal"
         onSubmit={(event) => {
           event.preventDefault();
-          onSave(
-            `${money(handover)} handed over · variance ${money(Math.abs(variance))}${variance < 0 ? " short" : variance > 0 ? " over" : " balanced"}`,
-          );
+          onSave({
+            cashCounted,
+            terminalExpense,
+            driverAdvance,
+            refreshment,
+            remarks,
+            display: `${money(handover)} handed over · variance ${money(Math.abs(variance))}${variance < 0 ? " short" : variance > 0 ? " over" : " balanced"}`,
+          });
         }}
       >
         <header>
@@ -4818,10 +5447,8 @@ function FinanceCloseModal({
         </header>
         <div className="close-shift-summary">
           <span>
-            <small>Paid ticket sales</small>
-            <strong>
-              {money(paid.reduce((sum, booking) => sum + booking.paid, 0))}
-            </strong>
+            <small>Opening cash</small>
+            <strong>{money(shift.openingCash)}</strong>
           </span>
           <span>
             <small>Expected cash</small>
@@ -4911,29 +5538,63 @@ function FinanceCloseModal({
   );
 }
 
-function FinanceView({
-  bookings,
-  showToast,
-}: {
-  bookings: Booking[];
-  showToast: (message: string) => void;
-}) {
-  const [closing, setClosing] = useState(false);
-  const [lastClose, setLastClose] = useState("");
+function FinanceView({ bookings }: { bookings: Booking[] }) {
   const [period, setPeriod] = useState<"7 days" | "30 days">("7 days");
-  const paid = bookings.filter(
-      (b) => b.paymentStatus === "Paid" && b.bookingStatus === "Confirmed",
-    ),
-    total = paid.reduce((s, b) => s + b.paid, 0),
-    byMethod = (m: PaymentMethod) =>
-      paid.filter((b) => b.paymentMethod === m).reduce((s, b) => s + b.paid, 0),
-    oneBill = byMethod("1Bill");
+  const settled = bookings.filter((booking) => booking.paid > 0);
+  const refunds = settled.flatMap((booking) =>
+    (booking.refunds ?? []).map((refund) => ({ booking, refund })),
+  );
+  const gross = settled.reduce((sum, booking) => sum + booking.paid, 0);
+  const refundTotal = refunds.reduce(
+    (sum, item) => sum + item.refund.amount,
+    0,
+  );
+  const total = Math.max(0, gross - refundTotal);
+  const byMethod = (method: PaymentMethod) => {
+    const collected = settled
+      .filter((booking) => booking.paymentMethod === method)
+      .reduce((sum, booking) => sum + booking.paid, 0);
+    const returned = refunds
+      .filter((item) => item.refund.method === method)
+      .reduce((sum, item) => sum + item.refund.amount, 0);
+    return collected - returned;
+  };
+  const oneBill = byMethod("1Bill");
+  const chartDays = period === "7 days" ? 7 : 30;
+  const bucketDays = period === "7 days" ? 1 : 3;
+  const bucketCount = Math.ceil(chartDays / bucketDays);
+  const chartPoints = Array.from({ length: bucketCount }, (_, index) => {
+    const endOffset = (bucketCount - index - 1) * bucketDays;
+    const dates = Array.from({ length: bucketDays }, (__, dayIndex) => {
+      const date = new Date(`${today}T12:00:00`);
+      date.setDate(date.getDate() - endOffset - dayIndex);
+      return dateInPakistan(date);
+    });
+    const collected = settled
+      .filter((booking) => dates.includes(booking.date))
+      .reduce((sum, booking) => sum + booking.paid, 0);
+    const returned = refunds
+      .filter((item) => dates.includes(dateInPakistan(item.refund.processedAt)))
+      .reduce((sum, item) => sum + item.refund.amount, 0);
+    const labelDate = new Date(`${dates[0]}T12:00:00`);
+    return {
+      label:
+        period === "7 days"
+          ? labelDate.toLocaleDateString("en-PK", { weekday: "short" })
+          : labelDate.toLocaleDateString("en-PK", {
+              day: "numeric",
+              month: "short",
+            }),
+      value: Math.max(0, collected - returned),
+    };
+  });
+  const chartMaximum = Math.max(1, ...chartPoints.map((point) => point.value));
   return (
     <div className="admin-view">
       <ViewHeading
         eyebrow="COLLECTIONS & SETTLEMENTS"
         title="Finance"
-        text="Paid sales, payment channels and daily reconciliation."
+        text="Gross sales, traceable refunds, payment channels and daily reconciliation."
         action={
           <div className="view-actions">
             <button
@@ -4942,34 +5603,48 @@ function FinanceView({
               onClick={() =>
                 downloadCsv("madina-finance-ledger.csv", [
                   [
+                    "Type",
                     "Ticket",
                     "Passenger",
                     "Payment method",
                     "Reference",
-                    "Paid",
+                    "Amount",
+                    "Reason",
                     "Date",
                     "Time",
+                    "Processed by",
                   ],
-                  ...paid.map((booking) => [
+                  ...settled.map((booking) => [
+                    "Sale",
                     booking.ticketNo,
                     booking.passenger,
                     booking.paymentMethod,
                     booking.paymentReference,
                     booking.paid,
+                    "",
                     booking.date,
                     booking.time,
+                    booking.issuedBy ?? "Online",
+                  ]),
+                  ...refunds.map(({ booking, refund }) => [
+                    "Refund",
+                    booking.ticketNo,
+                    booking.passenger,
+                    refund.method,
+                    refund.reference,
+                    -refund.amount,
+                    refund.reason,
+                    dateInPakistan(refund.processedAt),
+                    new Date(refund.processedAt).toLocaleTimeString("en-PK", {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    }),
+                    refund.processedBy,
                   ]),
                 ])
               }
             >
               <FileBarChart size={16} /> Export
-            </button>
-            <button
-              className="primary-button"
-              type="button"
-              onClick={() => setClosing(true)}
-            >
-              <CheckCircle2 size={16} /> Close shift
             </button>
           </div>
         }
@@ -4978,29 +5653,31 @@ function FinanceView({
         {[
           {
             l: "Gross sales",
-            v: money(total),
-            n: "All paid tickets",
+            v: money(gross),
+            n: `${settled.length} paid bookings before refunds`,
             i: Banknote,
             t: "green",
           },
           {
             l: "1Bill collections",
             v: money(oneBill),
-            n: `${paid.filter((b) => b.paymentMethod === "1Bill").length} verified payments`,
+            n: "Net of 1Bill refunds",
             i: CreditCard,
             t: "gold",
           },
           {
             l: "Counter collections",
             v: money(total - oneBill),
-            n: "Cash, card and bank",
+            n: "Net cash, card and bank",
             i: WalletCards,
             t: "blue",
           },
           {
             l: "Refunds",
-            v: "PKR 0",
-            n: "No refunds today",
+            v: money(refundTotal),
+            n: refunds.length
+              ? `${refunds.length} recorded refund${refunds.length === 1 ? "" : "s"}`
+              : "No refunds recorded",
             i: RefreshCw,
             t: "orange",
           },
@@ -5026,7 +5703,7 @@ function FinanceView({
             title={
               period === "7 days" ? "Seven-day collections" : "Thirty-day trend"
             }
-            text="Paid revenue trend"
+            text="Net collections after refunds"
             action={
               <div className="mini-tabs">
                 {(["7 days", "30 days"] as const).map((item) => (
@@ -5042,18 +5719,20 @@ function FinanceView({
               </div>
             }
           />
-          <div className="bar-chart">
-            {(period === "7 days"
-              ? [42, 58, 46, 72, 63, 88, 76]
-              : [58, 66, 49, 77, 68, 92, 81]
-            ).map((h, i) => (
-              <div key={i}>
+          <div
+            className="bar-chart"
+            style={{ gridTemplateColumns: `repeat(${chartPoints.length}, 1fr)` }}
+          >
+            {chartPoints.map((point) => (
+              <div key={point.label} title={money(point.value)}>
                 <span>
-                  <i style={{ height: `${h}%` }} />
+                  <i
+                    style={{
+                      height: `${point.value ? Math.max(5, Math.round((point.value / chartMaximum) * 100)) : 0}%`,
+                    }}
+                  />
                 </span>
-                <small>
-                  {["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"][i]}
-                </small>
+                <small>{point.label}</small>
               </div>
             ))}
           </div>
@@ -5066,7 +5745,9 @@ function FinanceView({
           {(["Cash", "1Bill", "Card", "Bank transfer"] as PaymentMethod[]).map(
             (m) => {
               const amount = byMethod(m),
-                pct = total ? Math.round((amount / total) * 100) : 0;
+                pct = total
+                  ? Math.max(0, Math.min(100, Math.round((amount / total) * 100)))
+                  : 0;
               return (
                 <div className="breakdown-row" key={m}>
                   <span
@@ -5087,42 +5768,89 @@ function FinanceView({
             },
           )}
           <SettlementNote
-            title="Daily settlement is balanced"
-            text="1Bill and counter totals match the ticket ledger."
+            title="Refunds included"
+            text="Each method shows collections minus refunds paid through that method."
           />
         </section>
       </div>
       <section className="surface data-surface finance-ledger">
         <SurfaceHeader
           title="Transaction ledger"
-          text="Latest verified payments"
+          text="Latest paid bookings with their refund status"
         />
         <BookingTable
-          bookings={paid.slice(0, 6)}
+          bookings={settled.slice(0, 6)}
           onPrint={() => undefined}
           compact
         />
       </section>
-      {lastClose && (
-        <div className="finance-close-note">
-          <CheckCircle2 size={16} />
-          <span>
-            <strong>Last shift closed</strong>
-            <small>{lastClose}</small>
-          </span>
-        </div>
-      )}
-      {closing && (
-        <FinanceCloseModal
-          bookings={bookings}
-          onClose={() => setClosing(false)}
-          onSave={(summary) => {
-            setLastClose(`${new Date().toLocaleString("en-PK")} · ${summary}`);
-            setClosing(false);
-            showToast("Shift closed and reconciliation saved.");
-          }}
+      <section className="surface data-surface refund-register">
+        <SurfaceHeader
+          title="Refund register"
+          text="Amount, reason, reference and staff member for every refund"
         />
-      )}
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Ticket</th>
+                <th>Passenger</th>
+                <th>Refund</th>
+                <th>Method / reference</th>
+                <th>Reason</th>
+                <th>Processed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {refunds.length ? (
+                [...refunds]
+                  .sort(
+                    (a, b) =>
+                      new Date(b.refund.processedAt).getTime() -
+                      new Date(a.refund.processedAt).getTime(),
+                  )
+                  .map(({ booking, refund }) => (
+                    <tr key={refund.id}>
+                      <td>
+                        <strong>{booking.ticketNo}</strong>
+                        <small>{booking.route}</small>
+                      </td>
+                      <td>
+                        <strong>{booking.passenger}</strong>
+                        <small>{booking.phone}</small>
+                      </td>
+                      <td>
+                        <strong>{money(refund.amount)}</strong>
+                        <small>{booking.paymentStatus}</small>
+                      </td>
+                      <td>
+                        <strong>{refund.method}</strong>
+                        <small>{refund.reference}</small>
+                      </td>
+                      <td>
+                        <strong>{refund.reason}</strong>
+                        <small>{refund.notes || "No additional notes"}</small>
+                      </td>
+                      <td>
+                        <strong>{formatPrintTime(refund.processedAt)}</strong>
+                        <small>{refund.processedBy}</small>
+                      </td>
+                    </tr>
+                  ))
+              ) : (
+                <tr>
+                  <td colSpan={6}>
+                    <EmptyState
+                      title="No refunds recorded"
+                      text="Refunds issued from Bookings will appear here."
+                    />
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }
@@ -5362,26 +6090,74 @@ function CrewView({
   );
 }
 
-function SettingsView({ showToast }: { showToast: (message: string) => void }) {
-  const [onlineSales, setOnlineSales] = useState(true),
-    [autoExpiry, setAutoExpiry] = useState(true),
-    [smsTickets, setSmsTickets] = useState(true),
-    [sampleReceipt, setSampleReceipt] = useState(false);
+function SettingsView({
+  user,
+  onUserChange,
+  paymentMode,
+  staffUsers,
+  onUserCreated,
+  showToast,
+}: {
+  user: StaffUser;
+  onUserChange: (user: StaffUser) => void;
+  paymentMode: string;
+  staffUsers: StaffUser[];
+  onUserCreated: (user: StaffUser) => void;
+  showToast: (message: string) => void;
+}) {
+  const [sampleReceipt, setSampleReceipt] = useState(false),
+    [currentPassword, setCurrentPassword] = useState(""),
+    [newPassword, setNewPassword] = useState(""),
+    [confirmPassword, setConfirmPassword] = useState(""),
+    [savingPassword, setSavingPassword] = useState(false),
+    [newStaff, setNewStaff] = useState({
+      name: "",
+      email: "",
+      username: "",
+      role: "counter" as StaffUser["role"],
+      password: "",
+    }),
+    [creatingStaff, setCreatingStaff] = useState(false);
+  const changePassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (newPassword !== confirmPassword) {
+      showToast("The new passwords do not match.");
+      return;
+    }
+    setSavingPassword(true);
+    try {
+      await api.changePassword(currentPassword, newPassword);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      onUserChange({ ...user, forcePasswordChange: false });
+      showToast("Password changed successfully.");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Password change failed.");
+    } finally {
+      setSavingPassword(false);
+    }
+  };
+  const createStaff = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCreatingStaff(true);
+    try {
+      const result = await api.createUser<StaffUser>(newStaff);
+      onUserCreated(result.user);
+      setNewStaff({ name: "", email: "", username: "", role: "counter", password: "" });
+      showToast(`${result.user.name} can now sign in.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Staff account could not be created.");
+    } finally {
+      setCreatingStaff(false);
+    }
+  };
   return (
     <div className="admin-view">
       <ViewHeading
         eyebrow="CONFIGURATION"
         title="System settings"
-        text="Payment, ticketing, reservation and frontend data preferences."
-        action={
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => showToast("Settings saved on this device.")}
-          >
-            <Check size={16} /> Save changes
-          </button>
-        }
+        text="Security, payment readiness, ticketing rules and system status."
       />
       <div className="settings-grid">
         <section className="surface settings-card">
@@ -5389,61 +6165,86 @@ function SettingsView({ showToast }: { showToast: (message: string) => void }) {
             icon={<CreditCard size={19} />}
             title="1Bill payment gateway"
             text="Controls the public website payment experience."
-            status
+            status={paymentMode !== "disabled"}
           />
           <div className="settings-fields">
             <label>
-              <span>Merchant ID</span>
-              <input value="ME••••7281" readOnly />
+              <span>Gateway status</span>
+              <input value={paymentMode === "demo" ? "Demo adapter" : paymentMode === "disabled" ? "Not configured" : "Production"} readOnly />
             </label>
             <label>
               <span>Payment environment</span>
-              <select defaultValue="Sandbox">
-                <option>Sandbox</option>
-                <option>Production</option>
-              </select>
+              <input value={paymentMode} readOnly />
             </label>
             <label className="span-2">
               <span>Callback URL</span>
               <input
-                value="https://api.madinaexpress.pk/payments/1bill/callback"
+                value="Configured on the secured backend"
                 readOnly
               />
             </label>
           </div>
-          <SettingRow
-            title="Accept online ticket sales"
-            text="Customers can pay in full and receive a confirmed e-ticket."
-            enabled={onlineSales}
-            onToggle={() => setOnlineSales(!onlineSales)}
-          />
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() =>
-              showToast("1Bill connection test completed in preview mode.")
-            }
-          >
-            <RefreshCw size={15} /> Test connection
-          </button>
+          <div className="policy-box">
+            <ShieldCheck size={17} />
+            <span>
+              <strong>{paymentMode === "demo" ? "Demonstration payments only" : "Server-controlled payment mode"}</strong>
+              <small>{paymentMode === "demo" ? "No real money is collected until authorized 1Bill merchant credentials are installed." : "Payment secrets are never exposed in this browser."}</small>
+            </span>
+          </div>
         </section>
+        {user.role === "admin" && (
+          <section className="surface settings-card">
+            <SettingsTitle
+              icon={<UsersRound size={19} />}
+              title="Staff access"
+              text={`${staffUsers.length} sign-in account${staffUsers.length === 1 ? "" : "s"}`}
+              status
+            />
+            <form className="settings-fields" onSubmit={createStaff}>
+              <label>
+                <span>Full name</span>
+                <input required value={newStaff.name} onChange={(event) => setNewStaff({ ...newStaff, name: event.target.value })} />
+              </label>
+              <label>
+                <span>Email</span>
+                <input type="email" required value={newStaff.email} onChange={(event) => setNewStaff({ ...newStaff, email: event.target.value })} />
+              </label>
+              <label>
+                <span>Username</span>
+                <input required value={newStaff.username} onChange={(event) => setNewStaff({ ...newStaff, username: event.target.value })} />
+              </label>
+              <label>
+                <span>Role</span>
+                <select value={newStaff.role} onChange={(event) => setNewStaff({ ...newStaff, role: event.target.value as StaffUser["role"] })}>
+                  <option value="manager">Manager</option>
+                  <option value="counter">Counter agent</option>
+                  <option value="dispatcher">Dispatcher</option>
+                  <option value="finance">Finance</option>
+                  <option value="admin">Administrator</option>
+                </select>
+              </label>
+              <label className="span-2">
+                <span>Temporary password</span>
+                <input type="password" minLength={12} required value={newStaff.password} onChange={(event) => setNewStaff({ ...newStaff, password: event.target.value })} />
+              </label>
+              <button className="primary-button span-2" type="submit" disabled={creatingStaff}>
+                <Plus size={15} /> {creatingStaff ? "Creating…" : "Create staff account"}
+              </button>
+            </form>
+            <div className="integration-list">
+              {staffUsers.slice(0, 5).map((account) => (
+                <span key={account.id}>
+                  <i /> {account.name} <b>{account.role}</b>
+                </span>
+              ))}
+            </div>
+          </section>
+        )}
         <section className="surface settings-card">
           <SettingsTitle
             icon={<Ticket size={19} />}
             title="Ticket & reservation policy"
             text="Rules applied at the counter and public website."
-          />
-          <SettingRow
-            title="Auto-expire counter reservations"
-            text="Release unpaid seats after two hours."
-            enabled={autoExpiry}
-            onToggle={() => setAutoExpiry(!autoExpiry)}
-          />
-          <SettingRow
-            title="SMS confirmed tickets"
-            text="Send ticket number and journey details after payment."
-            enabled={smsTickets}
-            onToggle={() => setSmsTickets(!smsTickets)}
           />
           <div className="policy-box">
             <ShieldCheck size={17} />
@@ -5455,6 +6256,72 @@ function SettingsView({ showToast }: { showToast: (message: string) => void }) {
               </small>
             </span>
           </div>
+          <div className="policy-box refund-policy-box">
+            <RefreshCw size={17} />
+            <span>
+              <strong>Refund control</strong>
+              <small>
+                Staff must record an amount, reason, method and reference. A
+                full refund releases the seats; a partial refund keeps the
+                ticket confirmed.
+              </small>
+            </span>
+          </div>
+        </section>
+        <section className="surface settings-card">
+          <SettingsTitle
+            icon={<LockKeyhole size={19} />}
+            title="Account security"
+            text={`${user.name} · ${user.role}`}
+            status={!user.forcePasswordChange}
+          />
+          {user.forcePasswordChange && (
+            <p className="form-error">
+              Change the temporary password before operational use.
+            </p>
+          )}
+          <form className="settings-fields" onSubmit={changePassword}>
+            <label className="span-2">
+              <span>Current password</span>
+              <input
+                type="password"
+                autoComplete="current-password"
+                required
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>New password</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                minLength={12}
+                required
+                value={newPassword}
+                onChange={(event) => setNewPassword(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Confirm new password</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                minLength={12}
+                required
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+              />
+            </label>
+            <button
+              className="primary-button span-2"
+              type="submit"
+              disabled={savingPassword}
+            >
+              <KeyRound size={15} />
+              {savingPassword ? "Changing…" : "Change password"}
+            </button>
+          </form>
         </section>
         <section className="surface settings-card">
           <SettingsTitle
@@ -5495,23 +6362,22 @@ function SettingsView({ showToast }: { showToast: (message: string) => void }) {
               <Check size={18} />
             </span>
             <div>
-              <strong>Frontend demonstration storage</strong>
+              <strong>MySQL operational database connected</strong>
               <p>
-                Bookings created here are stored in this browser. Connect the
-                prepared screens to a secured API and database for shared,
-                multi-device production data.
+                Bookings, refunds, vehicles, routes, trips, staff, finance and
+                audit events are shared through the secured backend.
               </p>
             </div>
           </div>
           <div className="integration-list">
             <span>
-              <i /> PostgreSQL / ERP API <b>Integration ready</b>
+              <i /> MySQL / MariaDB <b>Connected</b>
             </span>
             <span>
-              <i /> Automated backups <b>Requires backend</b>
+              <i /> Automated backups <b>Script ready</b>
             </span>
             <span>
-              <i /> Role permissions <b>Requires identity service</b>
+              <i /> Role permissions <b>Enabled</b>
             </span>
           </div>
         </section>
@@ -5545,35 +6411,6 @@ function SettingsTitle({
         <p>{text}</p>
       </div>
       {status && <b className="plain-status active">Configured</b>}
-    </div>
-  );
-}
-function SettingRow({
-  title,
-  text,
-  enabled,
-  onToggle,
-}: {
-  title: string;
-  text: string;
-  enabled: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <div className="setting-row">
-      <div>
-        <strong>{title}</strong>
-        <small>{text}</small>
-      </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={enabled}
-        className={`toggle ${enabled ? "on" : ""}`}
-        onClick={onToggle}
-      >
-        <span />
-      </button>
     </div>
   );
 }
@@ -5623,12 +6460,14 @@ function BookingTable({
   onPrint,
   onCancel,
   onEdit,
+  onRefund,
   compact = false,
 }: {
   bookings: Booking[];
   onPrint: (booking: Booking) => void;
   onCancel?: (id: string) => void;
   onEdit?: (booking: Booking) => void;
+  onRefund?: (booking: Booking) => void;
   compact?: boolean;
 }) {
   return (
@@ -5684,8 +6523,12 @@ function BookingTable({
                   </small>
                 </td>
                 <td>
-                  <strong>{money(b.total)}</strong>
-                  <small>{b.paymentStatus}</small>
+                  <strong>{money(b.paid || b.total)}</strong>
+                  <small>
+                    {refundedTotal(b)
+                      ? `${money(refundedTotal(b))} refunded · ${money(netCollected(b))} net`
+                      : b.paymentStatus}
+                  </small>
                 </td>
                 <td>
                   <span
@@ -5697,12 +6540,18 @@ function BookingTable({
                 {!compact && (
                   <td>
                     <div className="row-actions">
-                      <button type="button" onClick={() => onPrint(b)}>
+                      <button
+                        type="button"
+                        title="Print ticket"
+                        aria-label={`Print ${b.ticketNo}`}
+                        onClick={() => onPrint(b)}
+                      >
                         <Printer size={15} />
                       </button>
                       {onEdit && (
                         <button
                           type="button"
+                          title="Edit passenger details"
                           aria-label={`Edit ${b.ticketNo}`}
                           disabled={["Cancelled", "Refunded"].includes(
                             b.bookingStatus,
@@ -5712,9 +6561,25 @@ function BookingTable({
                           <FileText size={15} />
                         </button>
                       )}
+                      {onRefund && (
+                        <button
+                          type="button"
+                          title="Issue refund"
+                          aria-label={`Refund ${b.ticketNo}`}
+                          disabled={
+                            refundableBalance(b) <= 0 ||
+                            b.bookingStatus === "Reserved"
+                          }
+                          onClick={() => onRefund(b)}
+                        >
+                          <RefreshCw size={15} />
+                        </button>
+                      )}
                       {onCancel && (
                         <button
                           type="button"
+                          title="Cancel booking"
+                          aria-label={`Cancel ${b.ticketNo}`}
                           disabled={["Cancelled", "Refunded"].includes(
                             b.bookingStatus,
                           )}
@@ -5875,7 +6740,9 @@ function ReceiptModal({
             <strong>
               {booking.bookingStatus === "Reserved"
                 ? "Reservation slip"
-                : "Confirmed ticket"}
+                : booking.bookingStatus === "Refunded"
+                  ? "Refunded ticket"
+                  : "Confirmed ticket"}
             </strong>
             <small>80mm thermal receipt</small>
           </div>
@@ -5901,7 +6768,7 @@ function ReceiptModal({
               <strong>{booking.ticketNo}</strong>
             </span>
             <span
-              className={`receipt-status ${booking.paymentStatus.toLowerCase()}`}
+              className={`receipt-status ${booking.paymentStatus.toLowerCase().replaceAll(" ", "-")}`}
             >
               {booking.paymentStatus}
             </span>
@@ -5960,14 +6827,14 @@ function ReceiptModal({
           </div>
           <div className="receipt-line">
             <span>
-              {booking.paymentStatus === "Paid"
-                ? `Paid via ${booking.paymentMethod}`
-                : "Amount due"}
+              {booking.paymentStatus === "Unpaid"
+                ? "Amount due"
+                : `Net paid via ${booking.paymentMethod}`}
             </span>
             <strong>
-              {booking.paymentStatus === "Paid"
-                ? money(booking.paid)
-                : money(booking.balance)}
+              {booking.paymentStatus === "Unpaid"
+                ? money(booking.balance)
+                : money(netCollected(booking))}
             </strong>
           </div>
           {booking.paymentReference && (
@@ -5976,30 +6843,54 @@ function ReceiptModal({
               <strong>{booking.paymentReference}</strong>
             </div>
           )}
+          {refundedTotal(booking) > 0 && (
+            <>
+              <div className="receipt-line refund-line">
+                <span>Total refunded</span>
+                <strong>- {money(refundedTotal(booking))}</strong>
+              </div>
+              {(booking.refunds ?? []).map((refund) => (
+                <div className="receipt-refund" key={refund.id}>
+                  <span>
+                    {formatPrintTime(refund.processedAt)} · {refund.reason}
+                  </span>
+                  <strong>
+                    {money(refund.amount)} · {refund.method} · {refund.reference}
+                  </strong>
+                </div>
+              ))}
+            </>
+          )}
           <div className="receipt-barcode">
             <span />
             <small>{booking.ticketNo}</small>
           </div>
-          <div className="boarding-coupon">
-            <strong>BOARDING COUPON</strong>
-            <span>
-              <small>Seat</small>
-              <b>{booking.seats.join(", ")}</b>
-            </span>
-            <span>
-              <small>Bus</small>
-              <b>{booking.bus}</b>
-            </span>
-            <span>
-              <small>Time</small>
-              <b>{booking.time}</b>
-            </span>
-          </div>
+          {booking.bookingStatus !== "Refunded" && (
+            <div className="boarding-coupon">
+              <strong>BOARDING COUPON</strong>
+              <span>
+                <small>Seat</small>
+                <b>{booking.seats.join(", ")}</b>
+              </span>
+              <span>
+                <small>Bus</small>
+                <b>{booking.bus}</b>
+              </span>
+              <span>
+                <small>Time</small>
+                <b>{booking.time}</b>
+              </span>
+            </div>
+          )}
           <footer>
             <p>
-              {booking.paymentStatus === "Paid"
-                ? "PAID & CONFIRMED · Please arrive 30 minutes before departure."
-                : "UNPAID HOLD · Pay before the expiry time to confirm."}
+              {booking.paymentStatus === "Refunded"
+                ? "REFUNDED · This ticket is no longer valid for boarding."
+                : booking.paymentStatus === "Partially refunded"
+                  ? "PARTIALLY REFUNDED · Ticket remains valid for boarding."
+                  : booking.paymentStatus === "Paid"
+                    ? "PAID & CONFIRMED · Please arrive 30 minutes before departure."
+                    : "UNPAID HOLD · Pay before the expiry time to confirm."}
             </p>
             <small>
               Terms and conditions apply. Keep this ticket for boarding.
@@ -6015,7 +6906,10 @@ function ReceiptModal({
             type="button"
             onClick={() => window.print()}
           >
-            <Printer size={16} /> Print ticket
+            <Printer size={16} />{" "}
+            {booking.bookingStatus === "Refunded"
+              ? "Print refund record"
+              : "Print ticket"}
           </button>
         </div>
       </div>

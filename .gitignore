@@ -11,7 +11,10 @@ node_modules
 dist
 dist-ssr
 *.local
+backend/.env
+backend/backups/*.sql
 projectScope/
+.qa-browser/
 
 # Editor directories and files
 .vscode/*
