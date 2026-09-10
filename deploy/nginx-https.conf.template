@@ -14,9 +14,8 @@ server {
 }
 
 server {
-    listen 443 ssl default_server;
-    listen [::]:443 ssl default_server;
-    http2 on;
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
     server_name __SERVER_IP__;
 
     ssl_certificate /etc/letsencrypt/live/__SERVER_IP__/fullchain.pem;

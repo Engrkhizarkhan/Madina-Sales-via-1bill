@@ -5,13 +5,13 @@ if [[ ${EUID} -ne 0 ]]; then
   echo "Run this command with sudo." >&2
   exit 1
 fi
-if [[ $# -ne 2 ]]; then
-  echo "Usage: sudo bash deploy/enable-ip-tls.sh SERVER_IP ADMIN_EMAIL" >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  echo "Usage: sudo bash deploy/enable-ip-tls.sh SERVER_IP [ADMIN_EMAIL]" >&2
   exit 1
 fi
 
 SERVER_IP=$1
-ADMIN_EMAIL=$2
+ADMIN_EMAIL=${2:--}
 PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 if [[ ! $SERVER_IP =~ ^[0-9a-fA-F:.]+$ ]]; then
@@ -26,10 +26,15 @@ if [[ ! -x /opt/certbot/bin/certbot ]]; then
 fi
 /opt/certbot/bin/pip install --upgrade 'certbot>=5.4,<6'
 
+CONTACT_ARGUMENTS=(--register-unsafely-without-email)
+if [[ $ADMIN_EMAIL != "-" ]]; then
+  CONTACT_ARGUMENTS=(--email "$ADMIN_EMAIL")
+fi
+
 /opt/certbot/bin/certbot certonly \
   --non-interactive \
   --agree-tos \
-  --email "$ADMIN_EMAIL" \
+  "${CONTACT_ARGUMENTS[@]}" \
   --preferred-profile shortlived \
   --webroot \
   --webroot-path /var/www/certbot \

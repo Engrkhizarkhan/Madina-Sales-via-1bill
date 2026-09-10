@@ -20,6 +20,8 @@ sudo bash deploy/install-ubuntu.sh SERVER_IP YOUR_ADMIN_EMAIL
 sudo bash deploy/enable-ip-tls.sh SERVER_IP YOUR_ADMIN_EMAIL
 ```
 
+If a certificate contact email is not available, pass `-` as the second argument. A real monitored address is preferred for expiry and account notices.
+
 The installer creates random database and temporary administrator passwords. The initial administrator login is saved root-only at `/root/madina-express-initial-login.txt`. Sign in over HTTPS and change it immediately.
 
 The installer also enables a daily MySQL backup timer. Backups are written to `/var/backups/madina-express`; copy them to separate storage so a VM failure cannot remove both the live database and its backups.
