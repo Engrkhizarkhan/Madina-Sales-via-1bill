@@ -5544,3 +5544,250 @@ td small {
 .admin-shell .surface-header h2 { font-size: 19px; }
 .admin-shell .primary-button,
 .admin-shell .secondary-button { min-height: 44px; font-size: 15px; }
+
+/* Professional operations UI: balanced type, scrollable navigation and stable tables */
+.admin-sidebar {
+  overflow: hidden;
+}
+.admin-sidebar nav {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.32) transparent;
+}
+.admin-sidebar nav::-webkit-scrollbar {
+  width: 6px;
+}
+.admin-sidebar nav::-webkit-scrollbar-thumb {
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.sidebar-footer {
+  flex: 0 0 auto;
+}
+.admin-main {
+  padding: 24px clamp(18px, 2.2vw, 32px) 48px;
+}
+.view-heading {
+  min-height: auto;
+  margin-bottom: 20px;
+  align-items: center;
+}
+.view-heading h1 {
+  font-size: clamp(23px, 2vw, 27px);
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+}
+.view-heading .view-eyebrow {
+  font-size: 12px;
+}
+.view-heading > div > p:last-child {
+  font-size: 15px;
+  line-height: 1.55;
+}
+.dashboard-view .view-heading h1 {
+  font-size: clamp(22px, 1.9vw, 26px);
+}
+.metric-card {
+  min-height: 112px;
+  padding: 17px;
+}
+.metric-card strong {
+  font-size: 22px;
+}
+.admin-shell .metric-card small,
+.admin-shell .metric-card p,
+.admin-shell .surface-header p {
+  font-size: 14px;
+  line-height: 1.45;
+}
+.admin-shell .surface-header h2 {
+  font-size: 17px;
+}
+.surface-header {
+  min-height: 66px;
+}
+.table-wrap {
+  overflow: auto;
+}
+.admin-shell table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.admin-shell th {
+  font-size: 13px;
+  line-height: 1.35;
+  letter-spacing: 0.035em;
+  white-space: nowrap;
+}
+.admin-shell td,
+.admin-shell td strong {
+  font-size: 15px;
+  line-height: 1.45;
+}
+.admin-shell td small {
+  font-size: 13px;
+  line-height: 1.4;
+}
+.date-switcher {
+  gap: 10px;
+}
+.date-switcher label {
+  min-width: 270px;
+  height: 44px;
+  padding: 0 8px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--green-800);
+}
+.date-switcher label > span {
+  margin: 0;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.date-switcher input {
+  min-height: 34px !important;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  font-size: 14px !important;
+  font-weight: 700;
+}
+.date-switcher > button {
+  width: auto;
+  min-width: 62px;
+  height: 40px;
+  padding: 0 11px;
+  font-size: 13px;
+  font-weight: 750;
+}
+.trip-cards {
+  overflow-x: auto;
+}
+.trip-table-head,
+.trip-cards article {
+  min-width: 1220px;
+  display: grid;
+  grid-template-columns: 82px minmax(220px, 1.2fr) 135px minmax(190px, 0.9fr) 120px 105px 275px;
+  align-items: center;
+  gap: 14px;
+}
+.trip-table-head {
+  min-height: 42px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  background: #f7f9f8;
+  color: #64736b;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.035em;
+}
+.trip-cards article {
+  min-height: 88px;
+  padding: 12px 16px;
+}
+.trip-card-time strong {
+  font-size: 17px;
+}
+.trip-card-time small,
+.trip-cards article > div > small,
+.trip-cards article > div > p,
+.trip-card-route small {
+  margin-top: 3px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+.trip-cards article > div > strong,
+.trip-card-route strong {
+  font-size: 15px;
+  line-height: 1.4;
+}
+.trip-actions {
+  min-width: 0;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+}
+.lifecycle-action {
+  min-height: 38px;
+  font-size: 13px;
+}
+.record-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  white-space: nowrap;
+}
+.crew-grid article {
+  grid-template-columns: 44px 1fr minmax(190px, 0.8fr) 105px 78px;
+}
+.danger-text-button {
+  border-color: #efd0d0 !important;
+  background: #fff7f7 !important;
+  color: #a53535 !important;
+}
+.delete-modal {
+  width: min(520px, 100%) !important;
+}
+.delete-modal-body {
+  margin: 20px;
+  padding: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  border: 1px solid #edd2d2;
+  border-radius: 10px;
+  background: #fff7f7;
+}
+.delete-modal-body > span {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: #f7dede;
+  color: #a53535;
+}
+.delete-modal-body strong {
+  color: #722828;
+  font-size: 15px;
+}
+.delete-modal-body p {
+  margin: 5px 0 0;
+  color: #755b5b;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.delete-error {
+  margin: 0 20px 12px;
+}
+.admin-shell .form-modal > header h2,
+.admin-shell .settings-title h2 {
+  font-size: 17px;
+}
+.admin-shell .form-modal > header p,
+.admin-shell .settings-title p,
+.admin-shell .info-banner span,
+.admin-shell .policy-box small,
+.admin-shell .data-status p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .date-switcher,
+  .date-switcher label {
+    width: 100%;
+  }
+  .date-switcher label {
+    min-width: 0;
+  }
+}

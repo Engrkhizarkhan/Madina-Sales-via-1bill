@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { pool, transaction } from "./db.js";
 import { allowed, decimal, fail, isoDateTime, pakistanDate, parseJson, requireFields, sqlDateTime, trimTime, uuid } from "./helpers.js";
-import { fetchBooking, fetchBuses, fetchCrew, fetchCurrentShift, fetchExpenses, fetchRoutes, fetchTrips, fetchUsers } from "./repository.js";
+import { fetchBooking, fetchBuses, fetchCrew, fetchExpenses, fetchRoutes, fetchTrips, fetchUsers } from "./repository.js";
 
 const query = async (executor, sql, parameters = []) => {
   const [result] = await executor.execute(sql, parameters);
@@ -22,9 +22,6 @@ const timeCode = () => sqlDateTime().slice(11).replaceAll(":", "");
 
 export async function createBooking(data, user, isPublic, req) {
   requireFields(data, ["passenger", "phone", "cnic", "gender", "tripId", "date", "seats"]);
-  if (!isPublic && (!user || !(await fetchCurrentShift(user.id)))) {
-    fail("Open a counter shift before selling or reserving a ticket.", 409, "shift_not_open");
-  }
   const seats = [...new Set(Array.isArray(data.seats) ? data.seats.map(Number).filter(Number.isInteger) : [])];
   if (!seats.length) fail("Select at least one seat.", 422, "validation_error");
   if (isPublic && seats.length > 4) fail("Online bookings are limited to four seats.", 422, "validation_error");
@@ -117,7 +114,6 @@ export async function cancelBooking(id, user, req) {
 }
 
 export async function confirmReservation(id, data, user, req) {
-  if (!(await fetchCurrentShift(user.id))) fail("Open a counter shift before collecting reservation payment.", 409, "shift_not_open");
   return transaction(async (connection) => {
     const records = await query(
       connection,
@@ -250,6 +246,55 @@ export async function saveCrew(key, data, user, req) {
   return after;
 }
 
+export async function deleteRoute(id, user, req) {
+  const before = (await fetchRoutes()).find((item) => item.id === id);
+  if (!before) fail("Route not found.", 404, "not_found");
+  const references = await query(pool, "SELECT COUNT(*) count FROM trips WHERE route_id = ?", [id]);
+  if (Number(references[0].count) > 0) {
+    fail("This route is used by a trip. Delete or reassign that trip first, or pause the route.", 409, "record_in_use");
+  }
+  await query(pool, "DELETE FROM routes WHERE id = ?", [id]);
+  await audit("route.deleted", "route", id, before, null, user.id, req);
+}
+
+export async function deleteBus(id, user, req) {
+  const before = (await fetchBuses()).find((item) => item.id === id);
+  if (!before) fail("Bus not found.", 404, "not_found");
+  const references = await query(pool, "SELECT COUNT(*) count FROM trips WHERE bus_id = ?", [id]);
+  if (Number(references[0].count) > 0) {
+    fail("This bus is assigned to a trip. Delete or reassign that trip first, or mark the bus as retired.", 409, "record_in_use");
+  }
+  await query(pool, "DELETE FROM buses WHERE id = ?", [id]);
+  await audit("bus.deleted", "bus", id, before, null, user.id, req);
+}
+
+export async function deleteTrip(id, user, req) {
+  const before = (await fetchTrips()).find((item) => item.id === id);
+  if (!before) fail("Trip not found.", 404, "not_found");
+  const references = await query(pool, "SELECT COUNT(*) count FROM bookings WHERE trip_id = ?", [id]);
+  if (Number(references[0].count) > 0) {
+    fail("This trip has ticket history and cannot be deleted. Pause the schedule instead.", 409, "record_in_use");
+  }
+  await query(pool, "DELETE FROM trips WHERE id = ?", [id]);
+  await audit("trip.deleted", "trip", id, before, null, user.id, req);
+}
+
+export async function deleteCrew(id, user, req) {
+  const records = await query(pool, "SELECT * FROM crew WHERE id = ? LIMIT 1", [id]);
+  const before = records[0];
+  if (!before) fail("Staff member not found.", 404, "not_found");
+  const activeAssignments = await query(
+    pool,
+    "SELECT COUNT(*) count FROM trips WHERE active = 1 AND (driver = ? OR attendant = ?)",
+    [before.name, before.name],
+  );
+  if (Number(activeAssignments[0].count) > 0) {
+    fail("This staff member is assigned to an active trip. Reassign or pause that trip first.", 409, "record_in_use");
+  }
+  await query(pool, "DELETE FROM crew WHERE id = ?", [id]);
+  await audit("crew.deleted", "crew", id, before, null, user.id, req);
+}
+
 export async function transitionTrip(id, data, user, req) {
   requireFields(data, ["action"]);
   const action = allowed(data.action, ["boarding", "depart", "next"], "action");
@@ -268,24 +313,6 @@ export async function transitionTrip(id, data, user, req) {
   });
 }
 
-export async function openShift(data, user, req) {
-  requireFields(data, ["counterName", "openingCash"]);
-  const openingCash = decimal(data.openingCash, "openingCash");
-  const counterName = String(data.counterName).trim();
-  if (counterName.length > 80) fail("Counter name is too long.", 422, "validation_error");
-  return transaction(async (connection) => {
-    const existing = await query(connection, "SELECT id FROM counter_shifts WHERE opened_by = ? AND status = 'Open' FOR UPDATE", [user.id]);
-    if (existing.length) fail("You already have an open shift.", 409, "shift_already_open");
-    const baseline = await query(connection, "SELECT COALESCE(MAX(id), 0) id FROM financial_transactions WHERE created_by = ?", [user.id]);
-    const result = await query(connection,
-      "INSERT INTO counter_shifts (business_date, counter_name, opening_cash, opening_transaction_id, status, opened_by) VALUES (CURDATE(), ?, ?, ?, 'Open', ?)",
-      [counterName, openingCash, Number(baseline[0].id), user.id]);
-    const shift = await fetchCurrentShift(user.id, connection);
-    await audit("shift.opened", "shift", result.insertId, null, shift, user.id, req, connection);
-    return shift;
-  });
-}
-
 export async function createExpense(data, user, req) {
   requireFields(data, ["date", "category", "description", "amount", "paymentMethod"]);
   const amount = decimal(data.amount, "amount", 0.01);
@@ -297,10 +324,9 @@ export async function createExpense(data, user, req) {
   const reference = String(data.reference || "").trim();
   if (method !== "Cash" && !reference) fail("A payment reference is required for non-cash expenses.", 422, "validation_error");
   return transaction(async (connection) => {
-    const shift = await fetchCurrentShift(user.id, connection);
     const result = await query(connection,
       "INSERT INTO expenses (expense_date, category, description, amount, payment_method, reference, notes, shift_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [data.date, category, description, amount, method, reference, String(data.notes || "").trim(), shift?.id || null, user.id]);
+      [data.date, category, description, amount, method, reference, String(data.notes || "").trim(), null, user.id]);
     const ledgerReference = reference || `EXPENSE-${result.insertId}`;
     await query(connection,
       "INSERT INTO financial_transactions (transaction_type, amount, payment_method, reference, description, created_by) VALUES ('expense', ?, ?, ?, ?, ?)",
@@ -308,52 +334,6 @@ export async function createExpense(data, user, req) {
     const expense = (await fetchExpenses(connection)).find((item) => item.id === Number(result.insertId));
     await audit("expense.created", "expense", result.insertId, null, expense, user.id, req, connection);
     return expense;
-  });
-}
-
-export async function closeShift(data, user, req) {
-  requireFields(data, ["cashCounted", "terminalExpense", "driverAdvance", "refreshment"]);
-  const cashCounted = decimal(data.cashCounted, "cashCounted");
-  const terminalExpense = decimal(data.terminalExpense, "terminalExpense");
-  const driverAdvance = decimal(data.driverAdvance, "driverAdvance");
-  const refreshment = decimal(data.refreshment, "refreshment");
-  return transaction(async (connection) => {
-    const shifts = await query(connection, "SELECT * FROM counter_shifts WHERE opened_by = ? AND status = 'Open' ORDER BY opened_at DESC LIMIT 1 FOR UPDATE", [user.id]);
-    const shift = shifts[0];
-    if (!shift) fail("Open a shift before closing it.", 409, "shift_not_open");
-    const totals = await query(connection,
-      `SELECT COALESCE(SUM(CASE WHEN payment_method = 'Cash' THEN amount ELSE 0 END), 0) cash_total,
-              COALESCE(SUM(CASE WHEN payment_method <> 'Cash' THEN amount ELSE 0 END), 0) digital_total
-       FROM financial_transactions WHERE created_by = ? AND id > ? AND transaction_type IN ('sale','refund','expense')`,
-      [user.id, shift.opening_transaction_id]);
-    const closingExpenses = terminalExpense + driverAdvance + refreshment;
-    const expectedCash = Number(shift.opening_cash) + Number(totals[0].cash_total) - closingExpenses;
-    const digital = Number(totals[0].digital_total);
-    const variance = cashCounted - expectedCash;
-    const handover = Math.max(0, cashCounted - Number(shift.opening_cash));
-    const closure = await query(connection,
-      `INSERT INTO shift_closures (shift_id, business_date, counter_name, opening_cash, cash_counted, expected_cash,
-       digital_collections, terminal_expense, driver_advance, refreshment, remarks, handover, variance, closed_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [shift.id, shift.business_date, shift.counter_name, shift.opening_cash, cashCounted, expectedCash, digital,
-        terminalExpense, driverAdvance, refreshment, String(data.remarks || "").trim(), handover, variance, user.id]);
-    for (const [category, label, amount] of [["Terminal", "Terminal expense", terminalExpense], ["Driver advance", "Driver advance", driverAdvance], ["Refreshment", "Refreshment", refreshment]]) {
-      if (amount <= 0) continue;
-      const reference = `SHIFT-${shift.id}-${label.toUpperCase().replaceAll(" ", "-")}`;
-      await query(connection,
-        "INSERT INTO expenses (expense_date, category, description, amount, payment_method, reference, notes, shift_id, created_by) VALUES (CURDATE(), ?, ?, ?, 'Cash', ?, ?, ?, ?)",
-        [category, label, amount, reference, "Recorded during shift close", shift.id, user.id]);
-      await query(connection,
-        "INSERT INTO financial_transactions (transaction_type, amount, payment_method, reference, description, created_by) VALUES ('expense', ?, 'Cash', ?, ?, ?)",
-        [-amount, reference, label, user.id]);
-    }
-    await query(connection, "UPDATE counter_shifts SET status = 'Closed', closed_by = ?, closed_at = NOW() WHERE id = ?", [user.id, shift.id]);
-    await query(connection,
-      "INSERT INTO financial_transactions (transaction_type, amount, payment_method, reference, description, created_by) VALUES ('shift_close', 0, 'Cash', ?, 'Counter shift closed', ?)",
-      [`SHIFT-${shift.id}`, user.id]);
-    const result = { id: Number(closure.insertId), shiftId: Number(shift.id), expectedCash, digital, handover, variance, closedAt: isoDateTime(sqlDateTime()) };
-    await audit("shift.closed", "shift", shift.id, shift, result, user.id, req, connection);
-    return result;
   });
 }
 

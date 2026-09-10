@@ -206,8 +206,12 @@ try {
     const input = document.querySelector('.passenger-card input');
     return {
       bellAbsent: !document.querySelector('[aria-label="Notifications"]'),
-      shiftControl: document.querySelector('.admin-shift')?.innerText ?? '',
+      shiftControlAbsent: !document.querySelector('.admin-shift') && !document.body.innerText.includes('Open shift'),
       saleNavFound: Boolean(navButton),
+      sidebarScrollable: (() => {
+        const nav = document.querySelector('.admin-sidebar nav');
+        return nav && ['auto', 'scroll'].includes(getComputedStyle(nav).overflowY);
+      })(),
       expensesNav: Array.from(document.querySelectorAll('.admin-sidebar nav button'))
         .some((button) => button.textContent?.includes('Expenses')),
       passengerHeading: document.querySelector('.passenger-card h2')?.innerText ?? '',
@@ -219,7 +223,8 @@ try {
   })()`);
   expect(posState.saleNavFound, "new sale opens directly from navigation");
   expect(posState.bellAbsent, "notification bell is removed");
-  expect(posState.shiftControl.includes("shift"), "opening and closing shift control is available");
+  expect(posState.shiftControlAbsent, "POS starts immediately without opening or closing shifts");
+  expect(posState.sidebarScrollable, "sidebar navigation has its own vertical scroller");
   expect(posState.expensesNav, "administrator has an expense page");
   expect(posState.passengerHeading === "Passenger" && !posState.repeatedPassengerLabel, "POS passenger wording is concise");
   expect(posState.toggleBelowTrip, "paid ticket and reservation toggle sits below trip selection");
@@ -236,6 +241,28 @@ try {
     };
   })()`);
   expect(dashboardState.hasOperations && !dashboardState.hasFinance, "staff dashboard shows operations without financial totals");
+
+  const tripsState = await evaluate(`(async () => {
+    Array.from(document.querySelectorAll('.admin-sidebar nav button'))
+      .find((button) => button.textContent?.includes('Trips & schedules'))?.click();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const firstRow = document.querySelector('.trip-cards article');
+    const actions = document.querySelector('.trip-actions');
+    const heading = document.querySelector('.view-heading h1');
+    const instruction = document.querySelector('.view-heading > div > p:last-child');
+    return {
+      datePicker: Boolean(document.querySelector('.date-switcher input[type="date"]')),
+      tableHeader: document.querySelector('.trip-table-head')?.innerText ?? '',
+      deleteAction: Boolean(document.querySelector('.trip-actions [aria-label^="Delete"]')),
+      actionsFit: !firstRow || !actions || actions.scrollWidth <= actions.clientWidth + 1,
+      headingSize: Number.parseFloat(getComputedStyle(heading).fontSize),
+      instructionSize: Number.parseFloat(getComputedStyle(instruction).fontSize)
+    };
+  })()`);
+  expect(tripsState.datePicker, "trip schedules use a direct date picker");
+  expect(tripsState.tableHeader.includes("Time") && tripsState.tableHeader.includes("Actions"), "trip schedule has a clear table structure");
+  expect(tripsState.deleteAction && tripsState.actionsFit, "trip actions include delete without overlap");
+  expect(tripsState.headingSize <= 28 && tripsState.instructionSize >= 14, "page headings and instructions use balanced readable type");
 
   const financeState = await evaluate(`(async () => {
     Array.from(document.querySelectorAll('button'))

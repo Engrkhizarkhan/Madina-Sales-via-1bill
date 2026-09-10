@@ -7,12 +7,14 @@ const baseUrl = process.env.TEST_API_URL || `http://${config.host}:${config.port
 let cookie = "";
 let passed = 0;
 const createdBookings = [];
-let createdClosureId = null;
-let createdShiftId = null;
 let createdExpenseId = null;
 let createdExpenseReference = null;
 let createdUserId = null;
 let testAdminId = null;
+let createdRouteId = null;
+let createdBusId = null;
+let createdTripId = null;
+let createdCrewId = null;
 
 const [auditRows] = await pool.query("SELECT COALESCE(MAX(id), 0) id FROM audit_logs");
 const initialAuditId = Number(auditRows[0].id);
@@ -74,16 +76,8 @@ try {
   const seat = Array.from({ length: bus.seats }, (_, index) => bus.seats - index).find((number) => !occupied.includes(number));
   if (!seat) throw new Error("No free seat is available for the integration test.");
   const bookingRequest = { passenger: "Automated Node QA Passenger", phone: "03001234567", cnic: "17301-1234567-1", gender: "Male", tripId: trip.id, date, seats: [seat] };
-  const withoutShift = await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Cash", discount: 0 }, csrf);
-  check(withoutShift.status === 409 && withoutShift.body.error.code === "shift_not_open", "counter sales require an open shift");
-
-  const opened = await request("POST", "/shifts/open", { counterName: "Node QA Counter", openingCash: 500 }, csrf);
-  check(opened.status === 201 && opened.body.shift.status === "Open", "counter shift opens through Node.js");
-  createdShiftId = Number(opened.body.shift.id);
-  check((await request("POST", "/shifts/open", { counterName: "Node QA Counter", openingCash: 0 }, csrf)).status === 409, "duplicate open shift is rejected");
-
   const created = await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Cash", discount: 0 }, csrf);
-  check(created.status === 201 && created.body.booking.paymentStatus === "Paid", "counter POS creates a paid MySQL booking");
+  check(created.status === 201 && created.body.booking.paymentStatus === "Paid", "counter POS starts selling immediately without a shift");
   const booking = created.body.booking;
   createdBookings.push(booking.id);
   check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Cash", discount: 0 }, csrf)).status === 409, "database prevents duplicate trip seats");
@@ -118,11 +112,32 @@ try {
   check(true, "Node.js records audited expenses");
   createdExpenseId = Number(expense.body.expense.id);
   check((await request("GET", "/expenses")).status === 200, "unlocked expense history loads");
-  const current = await request("GET", "/shifts/current");
-  check(current.status === 200 && Number(current.body.shift.expectedCash) > 400, "shift cash follows sales, refunds, and expenses");
-  const closure = await request("POST", "/shifts/close", { cashCounted: Number(current.body.shift.expectedCash), terminalExpense: 0, driverAdvance: 0, refreshment: 0, remarks: "Node QA close" }, csrf);
-  check(closure.status === 201 && "variance" in closure.body.shift, "shift close is reconciled and persisted");
-  createdClosureId = Number(closure.body.shift.id);
+  check((await request("POST", "/shifts/open", { counterName: "Old flow", openingCash: 0 }, csrf)).status === 404, "shift endpoints are removed");
+
+  createdRouteId = `qa-route-${Date.now()}`;
+  const routeResult = await request("POST", "/routes/new", { id: createdRouteId, from: "QA City", to: "Test City", distance: "10 km", duration: "20m", fare: 500, boarding: "QA Terminal", status: "Active" }, csrf);
+  createdRouteId = routeResult.body.route.id;
+  check(routeResult.status === 200, "route can be added");
+  createdBusId = `qa-bus-${Date.now()}`;
+  const busResult = await request("POST", "/buses/new", { id: createdBusId, registration: `QA-${String(Date.now()).slice(-6)}`, service: "Executive", seats: 35, model: "QA Model", year: 2026, status: "Ready", nextService: "Not scheduled" }, csrf);
+  createdBusId = busResult.body.bus.id;
+  check(busResult.status === 200, "bus can be added");
+  const tripResult = await request("POST", "/trips/new", { routeId: createdRouteId, busId: createdBusId, departure: "23:50", arrival: "00:20", driver: "QA Driver", attendant: "QA Attendant", platform: "QA-1", status: "Scheduled", days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true, runNumber: 1 }, csrf);
+  createdTripId = tripResult.body.trip.id;
+  check(tripResult.status === 200, "trip can be added");
+  check((await request("DELETE", `/routes/${createdRouteId}`, undefined, csrf)).status === 409, "route deletion protects assigned trips");
+  check((await request("DELETE", `/buses/${createdBusId}`, undefined, csrf)).status === 409, "bus deletion protects assigned trips");
+  check((await request("DELETE", `/trips/${createdTripId}`, undefined, csrf)).status === 200, "unused trip can be deleted");
+  createdTripId = null;
+  check((await request("DELETE", `/buses/${createdBusId}`, undefined, csrf)).status === 200, "unused bus can be deleted");
+  createdBusId = null;
+  check((await request("DELETE", `/routes/${createdRouteId}`, undefined, csrf)).status === 200, "unused route can be deleted");
+  createdRouteId = null;
+  const crewResult = await request("POST", "/crew/new", { name: "Automated Spare Crew", role: "Driver", phone: "03009999999", cnic: `${String(Date.now()).slice(-5)}-1234567-1`, license: "QA-HTV", duty: "Available", status: "Available", initials: "AC" }, csrf);
+  createdCrewId = Number(crewResult.body.person.id);
+  check(crewResult.status === 200, "crew member can be added");
+  check((await request("DELETE", `/crew/${createdCrewId}`, undefined, csrf)).status === 200, "unassigned crew member can be deleted");
+  createdCrewId = null;
   check((await request("GET", "/audit")).body.events.length >= 5, "audit trail records sensitive operations");
 
   const qaUsername = `node-counter-${Date.now()}`;
@@ -153,12 +168,10 @@ try {
       if (createdExpenseReference) await pool.execute("DELETE FROM financial_transactions WHERE transaction_type = 'expense' AND reference = ?", [createdExpenseReference]);
       await pool.execute("DELETE FROM expenses WHERE id = ?", [createdExpenseId]);
     }
-    if (createdClosureId) await pool.execute("DELETE FROM shift_closures WHERE id = ?", [createdClosureId]);
-    if (createdShiftId) {
-      await pool.execute("DELETE FROM audit_logs WHERE entity_type = 'shift' AND entity_id = ?", [String(createdShiftId)]);
-      await pool.execute("DELETE FROM financial_transactions WHERE reference = ? OR reference LIKE ?", [`SHIFT-${createdShiftId}`, `SHIFT-${createdShiftId}-%`]);
-      await pool.execute("DELETE FROM counter_shifts WHERE id = ?", [createdShiftId]);
-    }
+    if (createdCrewId) await pool.execute("DELETE FROM crew WHERE id = ?", [createdCrewId]);
+    if (createdTripId) await pool.execute("DELETE FROM trips WHERE id = ?", [createdTripId]);
+    if (createdBusId) await pool.execute("DELETE FROM buses WHERE id = ?", [createdBusId]);
+    if (createdRouteId) await pool.execute("DELETE FROM routes WHERE id = ?", [createdRouteId]);
     if (createdBookings.length) {
       await pool.query("DELETE FROM audit_logs WHERE entity_type = 'booking' AND entity_id IN (?)", [createdBookings]);
       await pool.query("DELETE FROM financial_transactions WHERE booking_id IN (?)", [createdBookings]);

@@ -4,12 +4,12 @@ import { config } from "./config.js";
 import { pool, transaction } from "./db.js";
 import { ApiError, fail, isoDateTime, randomToken, requireFields, tokenHash } from "./helpers.js";
 import {
-  expireReservations, fetchBookings, fetchBuses, fetchCrew, fetchCurrentShift,
+  expireReservations, fetchBookings, fetchBuses, fetchCrew,
   fetchExpenses, fetchRoutes, fetchTrips, fetchUsers, publicOccupancy,
 } from "./repository.js";
 import {
-  audit, cancelBooking, closeShift, confirmReservation, createBooking, createExpense,
-  createStaffUser, openShift, refundBooking, saveBus, saveCrew, saveRoute, saveTrip,
+  audit, cancelBooking, confirmReservation, createBooking, createExpense,
+  createStaffUser, deleteBus, deleteCrew, deleteRoute, deleteTrip, refundBooking, saveBus, saveCrew, saveRoute, saveTrip,
   transitionTrip, updateBooking,
 } from "./operations.js";
 
@@ -193,7 +193,7 @@ app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
   res.json({
     bookings: await fetchBookings(), fleet: await fetchBuses(), trips: await fetchTrips(), routes: await fetchRoutes(),
     crew: await fetchCrew(), users: req.user.role === "admin" ? await fetchUsers() : [],
-    shift: await fetchCurrentShift(Number(req.user.id)), user: publicUser(req.user), paymentMode: config.paymentMode,
+    user: publicUser(req.user), paymentMode: config.paymentMode,
   });
 }));
 
@@ -239,17 +239,17 @@ app.post("/bookings/:id/refunds", asyncRoute(async (req, res) => {
 
 app.post("/routes/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager"]); res.json({ route: await saveRoute(req.params.id, req.body, req.user, req) }); }));
 app.put("/routes/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager"]); res.json({ route: await saveRoute(req.params.id, req.body, req.user, req) }); }));
+app.delete("/routes/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager"]); await deleteRoute(req.params.id, req.user, req); res.json({ ok: true }); }));
 app.post("/buses/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ bus: await saveBus(req.params.id, req.body, req.user, req) }); }));
 app.put("/buses/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ bus: await saveBus(req.params.id, req.body, req.user, req) }); }));
+app.delete("/buses/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); await deleteBus(req.params.id, req.user, req); res.json({ ok: true }); }));
 app.post("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await saveTrip(req.params.id, req.body, req.user, req) }); }));
 app.put("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await saveTrip(req.params.id, req.body, req.user, req) }); }));
+app.delete("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); await deleteTrip(req.params.id, req.user, req); res.json({ ok: true }); }));
 app.post("/trips/:id/transition", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await transitionTrip(req.params.id, req.body, req.user, req) }); }));
-app.post("/crew/:key", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager"]); res.json({ person: await saveCrew(req.params.key, req.body, req.user, req) }); }));
-app.put("/crew/:key", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager"]); res.json({ person: await saveCrew(req.params.key, req.body, req.user, req) }); }));
-
-app.get("/shifts/current", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "counter"]); res.json({ shift: await fetchCurrentShift(Number(req.user.id)) }); }));
-app.post("/shifts/open", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "counter"]); res.status(201).json({ shift: await openShift(req.body, req.user, req) }); }));
-app.post("/shifts/close", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "counter"]); res.status(201).json({ shift: await closeShift(req.body, req.user, req) }); }));
+app.post("/crew/:key", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ person: await saveCrew(req.params.key, req.body, req.user, req) }); }));
+app.put("/crew/:key", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ person: await saveCrew(req.params.key, req.body, req.user, req) }); }));
+app.delete("/crew/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); await deleteCrew(req.params.id, req.user, req); res.json({ ok: true }); }));
 
 app.get("/expenses", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);

@@ -95,26 +95,6 @@ export async function fetchBookings(executor = pool) {
   return Promise.all(result.map((row) => mapBooking(row, executor)));
 }
 
-export async function fetchCurrentShift(userId, executor = pool) {
-  const result = await rows(
-    `SELECT s.id, s.business_date, s.counter_name, s.opening_cash, s.status, s.opened_at,
-            COALESCE(SUM(CASE WHEN ft.payment_method = 'Cash' THEN ft.amount ELSE 0 END), 0) cash_activity,
-            COALESCE(SUM(CASE WHEN ft.payment_method <> 'Cash' THEN ft.amount ELSE 0 END), 0) digital_activity
-     FROM counter_shifts s
-     LEFT JOIN financial_transactions ft ON ft.created_by = s.opened_by AND ft.id > s.opening_transaction_id
-     WHERE s.opened_by = ? AND s.status = 'Open'
-     GROUP BY s.id ORDER BY s.opened_at DESC LIMIT 1`,
-    [userId], executor,
-  );
-  const row = result[0];
-  if (!row) return null;
-  return {
-    id: Number(row.id), businessDate: row.business_date, counterName: row.counter_name,
-    openingCash: Number(row.opening_cash), expectedCash: Number(row.opening_cash) + Number(row.cash_activity),
-    digitalCollections: Number(row.digital_activity), status: row.status, openedAt: isoDateTime(row.opened_at),
-  };
-}
-
 export async function fetchExpenses(executor = pool) {
   const result = await rows(
     `SELECT e.id, e.expense_date, e.category, e.description, e.amount, e.payment_method,

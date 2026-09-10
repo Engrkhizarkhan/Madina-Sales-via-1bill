@@ -112,15 +112,27 @@ export const api = {
       method: isNew ? "POST" : "PUT",
       body: JSON.stringify(route),
     }),
+  deleteRoute: (id: string) =>
+    request<{ ok: boolean }>(`/routes/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   saveBus: <T>(id: string, bus: unknown, isNew: boolean) =>
     request<{ bus: T }>(`/buses/${encodeURIComponent(isNew ? "new" : id)}`, {
       method: isNew ? "POST" : "PUT",
       body: JSON.stringify(bus),
     }),
+  deleteBus: (id: string) =>
+    request<{ ok: boolean }>(`/buses/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   saveTrip: <T>(id: string, trip: unknown, isNew: boolean) =>
     request<{ trip: T }>(`/trips/${encodeURIComponent(isNew ? "new" : id)}`, {
       method: isNew ? "POST" : "PUT",
       body: JSON.stringify(trip),
+    }),
+  deleteTrip: (id: string) =>
+    request<{ ok: boolean }>(`/trips/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     }),
   transitionTrip: <T>(id: string, action: "boarding" | "depart" | "next") =>
     request<{ trip: T }>(`/trips/${encodeURIComponent(id)}/transition`, {
@@ -135,17 +147,10 @@ export const api = {
         body: JSON.stringify(person),
       },
     ),
-  closeShift: <T>(summary: unknown) =>
-    request<{ shift: T }>("/shifts/close", {
-      method: "POST",
-      body: JSON.stringify(summary),
+  deleteCrew: (id: number) =>
+    request<{ ok: boolean }>(`/crew/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     }),
-  openShift: <T>(details: unknown) =>
-    request<{ shift: T }>("/shifts/open", {
-      method: "POST",
-      body: JSON.stringify(details),
-    }),
-  currentShift: <T>() => request<{ shift: T | null }>("/shifts/current"),
   listExpenses: <T>() => request<{ expenses: T[] }>("/expenses"),
   createExpense: <T>(expense: unknown) =>
     request<{ expense: T }>("/expenses", {

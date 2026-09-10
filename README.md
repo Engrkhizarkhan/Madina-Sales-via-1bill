@@ -1,6 +1,6 @@
 # Madina Express Operations Suite
 
-A React/TypeScript transport operations interface backed by Node.js, Express and MySQL/MariaDB. The counter POS is the current entry point, with workflows for paid tickets, reservations, refunds, shifts, expenses, trips, dispatch, fleet, routes, protected finance, reports, crew, and role-based staff access. The client website is intentionally hidden until 1Bill is configured.
+A React/TypeScript transport operations interface backed by Node.js, Express and MySQL/MariaDB. The counter POS is the current entry point, with workflows for paid tickets, reservations, refunds, expenses, trips, dispatch, fleet, routes, protected finance, reports, crew, and role-based staff access. Staff can start selling immediately after sign-in; there is no shift-opening or shift-closing step. The client website is intentionally hidden until 1Bill is configured.
 
 ## Local XAMPP installation
 
@@ -38,7 +38,7 @@ node scripts\browser-smoke.mjs
 npm run db:backup
 ```
 
-The integration suite checks MySQL health, anonymous access denial, the disabled public site, paid counter booking creation, unique seat protection, staff login, CSRF, refunds, seat release, reservations, finance locking/unlocking, expenses, shift opening/closing, audit events, staff-account creation, logout, and role permissions.
+The integration suite checks MySQL health, anonymous access denial, the disabled public site, immediate paid counter booking creation, unique seat protection, staff login, CSRF, refunds, seat release, reservations, finance locking/unlocking, expenses, safe route/bus/trip/crew deletion, audit events, staff-account creation, logout, and role permissions.
 
 ## Production controls already implemented
 
@@ -48,7 +48,7 @@ The integration suite checks MySQL health, anonymous access denial, the disabled
 - Admin, manager, counter, dispatcher, and finance authorization rules
 - Admin-only finance and expense pages protected by a 15-minute administrator password re-check
 - Full and partial refunds with balance limits, references, immutable ledger rows, audit events, and full-refund seat release
-- Opening/closing shift reconciliation, cash-aware expenses, server-side reservation expiry, public passenger-data isolation, security headers, and a tested backup script
+- Immediate POS selling, standalone audited expenses, dependency-safe record deletion, server-side reservation expiry, public passenger-data isolation, security headers, and a tested backup script
 
 ## Important release boundary
 

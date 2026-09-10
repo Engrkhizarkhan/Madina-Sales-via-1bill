@@ -39,6 +39,7 @@ import {
   ShieldCheck,
   Star,
   Ticket,
+  Trash2,
   UserRound,
   UserRoundCog,
   UsersRound,
@@ -179,16 +180,6 @@ type StaffUser = {
   lastLoginAt?: string;
   createdAt?: string;
 };
-type ShiftRecord = {
-  id: number;
-  businessDate: string;
-  counterName: string;
-  openingCash: number;
-  expectedCash: number;
-  digitalCollections: number;
-  status: "Open" | "Closed";
-  openedAt: string;
-};
 type ExpenseRecord = {
   id: number;
   date: string;
@@ -222,7 +213,6 @@ type AdminBootstrap = {
   routes: RouteRecord[];
   crew: CrewRecord[];
   users: StaffUser[];
-  shift: ShiftRecord | null;
   user: StaffUser;
   paymentMode: string;
 };
@@ -1590,7 +1580,7 @@ const viewMeta: Record<AdminView, { title: string; description: string }> = {
   },
   crew: {
     title: "Staff & crew",
-    description: "Manage drivers, female attendants and shift assignments",
+    description: "Manage drivers, female attendants and duty assignments",
   },
   settings: {
     title: "System settings",
@@ -1624,9 +1614,6 @@ function ManagementApp({
     [routes, setRoutes] = useState<RouteRecord[]>([]),
     [crew, setCrew] = useState<CrewRecord[]>([]),
     [staffUsers, setStaffUsers] = useState<StaffUser[]>([]),
-    [currentShift, setCurrentShift] = useState<ShiftRecord | null>(null),
-    [openingShift, setOpeningShift] = useState(false),
-    [closingShift, setClosingShift] = useState(false),
     [financeUnlocked, setFinanceUnlocked] = useState(false),
     [receipt, setReceipt] = useState<Booking | null>(null),
     [report, setReport] = useState<{
@@ -1649,7 +1636,6 @@ function ManagementApp({
         setRoutes(result.routes);
         setCrew(result.crew);
         setStaffUsers(result.users);
-        setCurrentShift(result.shift);
         setPaymentMode(result.paymentMode);
         onUserChange(result.user);
       })
@@ -1664,19 +1650,6 @@ function ManagementApp({
   };
   const failure = (error: unknown) =>
     showToast(error instanceof Error ? error.message : "The request failed.");
-  const beginShiftClose = async () => {
-    try {
-      const result = await api.currentShift<ShiftRecord>();
-      if (!result.shift) {
-        setCurrentShift(null);
-        return showToast("No open shift was found.");
-      }
-      setCurrentShift(result.shift);
-      setClosingShift(true);
-    } catch (error) {
-      failure(error);
-    }
-  };
   const saveBooking = async (booking: Booking) => {
     try {
       const result = await api.createBooking<Booking>(booking);
@@ -1744,6 +1717,17 @@ function ManagementApp({
       failure(error);
     }
   };
+  const deleteBus = async (id: string) => {
+    try {
+      const bus = fleet.find((item) => item.id === id);
+      await api.deleteBus(id);
+      setFleet((current) => current.filter((item) => item.id !== id));
+      showToast(`${bus?.registration ?? "Bus"} deleted.`);
+    } catch (error) {
+      failure(error);
+      throw error;
+    }
+  };
   const returnBusToTerminal = async (id: string) => {
     const bus = fleet.find((item) => item.id === id);
     if (!bus) return;
@@ -1765,6 +1749,16 @@ function ManagementApp({
       failure(error);
     }
   };
+  const deleteTrip = async (id: string) => {
+    try {
+      await api.deleteTrip(id);
+      setTrips((current) => current.filter((item) => item.id !== id));
+      showToast("Trip deleted.");
+    } catch (error) {
+      failure(error);
+      throw error;
+    }
+  };
   const saveRoute = async (route: RouteRecord) => {
     try {
       const isNew = !routes.some((item) => item.id === route.id);
@@ -1775,6 +1769,17 @@ function ManagementApp({
       failure(error);
     }
   };
+  const deleteRoute = async (id: string) => {
+    try {
+      const route = routes.find((item) => item.id === id);
+      await api.deleteRoute(id);
+      setRoutes((current) => current.filter((item) => item.id !== id));
+      showToast(`${route ? routeLabel(route) : "Route"} deleted.`);
+    } catch (error) {
+      failure(error);
+      throw error;
+    }
+  };
   const saveCrewMember = async (person: CrewRecord, previousName?: string) => {
     try {
       const result = await api.saveCrew<CrewRecord>(previousName, person);
@@ -1782,6 +1787,17 @@ function ManagementApp({
       showToast(`${result.person.name} saved.`);
     } catch (error) {
       failure(error);
+    }
+  };
+  const deleteCrewMember = async (id: number) => {
+    try {
+      const person = crew.find((item) => item.id === id);
+      await api.deleteCrew(id);
+      setCrew((current) => current.filter((item) => item.id !== id));
+      showToast(`${person?.name ?? "Staff member"} deleted.`);
+    } catch (error) {
+      failure(error);
+      throw error;
     }
   };
   const transitionTrip = async (
@@ -1940,16 +1956,6 @@ function ManagementApp({
             </div>
           </div>
           <div className="admin-topbar-right">
-            {["admin", "manager", "counter"].includes(user.role) && (
-              <button
-                className={`admin-shift ${currentShift ? "is-open" : ""}`}
-                type="button"
-                onClick={() => currentShift ? void beginShiftClose() : setOpeningShift(true)}
-              >
-                <i /> {currentShift ? `Close shift · ${currentShift.counterName}` : "Open shift"}
-              </button>
-            )}
-            <span className="admin-divider" />
             <div className="admin-user">
               <span className="avatar">{initials}</span>
               <div>
@@ -1986,8 +1992,6 @@ function ManagementApp({
               fleet={fleet}
               routes={routes}
               crew={crew}
-              shiftOpen={currentShift !== null}
-              onRequestOpenShift={() => setOpeningShift(true)}
               onSave={saveBooking}
               showToast={showToast}
             />
@@ -2018,6 +2022,7 @@ function ManagementApp({
               routes={routes}
               crew={crew}
               onSave={saveTrip}
+              onDelete={deleteTrip}
               onTransition={transitionTrip}
               onReport={openReport}
             />
@@ -2027,10 +2032,11 @@ function ManagementApp({
               fleet={fleet}
               onSave={saveBus}
               onReturn={returnBusToTerminal}
+              onDelete={deleteBus}
             />
           )}
           {activeView === "routes" && (
-            <RoutesView routes={routes} onSave={saveRoute} />
+            <RoutesView routes={routes} onSave={saveRoute} onDelete={deleteRoute} />
           )}
           {activeView === "finance" && (
             <FinanceProtected
@@ -2058,7 +2064,7 @@ function ManagementApp({
             />
           )}
           {activeView === "crew" && (
-            <CrewView crew={crew} onSave={saveCrewMember} />
+            <CrewView crew={crew} onSave={saveCrewMember} onDelete={deleteCrewMember} />
           )}
           {activeView === "settings" && (
             <SettingsView
@@ -2085,37 +2091,6 @@ function ManagementApp({
           fleet={fleet}
           routes={routes}
           onClose={() => setReport(null)}
-        />
-      )}
-      {openingShift && (
-        <ShiftOpenModal
-          onClose={() => setOpeningShift(false)}
-          onSave={async (details) => {
-            try {
-              const result = await api.openShift<ShiftRecord>(details);
-              setCurrentShift(result.shift);
-              setOpeningShift(false);
-              showToast(`Shift opened at ${result.shift.counterName}.`);
-            } catch (error) {
-              failure(error);
-            }
-          }}
-        />
-      )}
-      {closingShift && currentShift && (
-        <FinanceCloseModal
-          shift={currentShift}
-          onClose={() => setClosingShift(false)}
-          onSave={async (summary) => {
-            try {
-              await api.closeShift(summary);
-              setCurrentShift(null);
-              setClosingShift(false);
-              showToast("Shift closed and reconciliation saved.");
-            } catch (error) {
-              failure(error);
-            }
-          }}
         />
       )}
       {toast && (
@@ -2469,8 +2444,6 @@ function BookingWorkspace({
   fleet,
   routes,
   crew,
-  shiftOpen,
-  onRequestOpenShift,
   onSave,
   showToast,
 }: {
@@ -2479,8 +2452,6 @@ function BookingWorkspace({
   fleet: BusRecord[];
   routes: RouteRecord[];
   crew: CrewRecord[];
-  shiftOpen: boolean;
-  onRequestOpenShift: () => void;
   onSave: (booking: Booking) => void;
   showToast: (message: string) => void;
 }) {
@@ -2564,10 +2535,6 @@ function BookingWorkspace({
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!shiftOpen) {
-      showToast("Open a shift before selling or reserving a ticket.");
-      return;
-    }
     if (
       !passenger.passenger.trim() ||
       !passenger.phone.trim() ||
@@ -2628,12 +2595,6 @@ function BookingWorkspace({
   return (
     <div className="admin-view sale-view">
       <div className="booking-surface">
-        {!shiftOpen && (
-          <div className="shift-required-banner" role="status">
-            <span><LockKeyhole size={18} /><strong>Open a shift to use the POS</strong></span>
-            <button className="primary-button" type="button" onClick={onRequestOpenShift}>Open shift</button>
-          </div>
-        )}
         <section className="trip-panel admin-trip-panel">
           <div className="panel-heading">
             <h2>Trip and crew</h2>
@@ -3313,7 +3274,7 @@ function RefundModal({
               rows={3}
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
-              placeholder="Optional details for the shift manager"
+              placeholder="Optional details for the manager"
             />
           </label>
         </div>
@@ -3590,6 +3551,7 @@ function TripsView({
   routes,
   crew,
   onSave,
+  onDelete,
   onTransition,
   onReport,
 }: {
@@ -3599,6 +3561,7 @@ function TripsView({
   routes: RouteRecord[];
   crew: CrewRecord[];
   onSave: (trip: TripRecord) => void;
+  onDelete: (id: string) => Promise<void>;
   onTransition: (id: string, action: "boarding" | "depart" | "next") => void;
   onReport: (
     kind: ReportKind,
@@ -3609,6 +3572,7 @@ function TripsView({
 }) {
   const [editing, setEditing] = useState<TripRecord | "new" | null>(null);
   const [openTrip, setOpenTrip] = useState<TripRecord | null>(null);
+  const [deleting, setDeleting] = useState<TripRecord | null>(null);
   const [serviceDate, setServiceDate] = useState(today);
   const [filter, setFilter] = useState<"All trips" | "Upcoming" | "Departed">(
     "All trips",
@@ -3616,11 +3580,6 @@ function TripsView({
   const serviceDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
     new Date(`${serviceDate}T00:00:00`).getDay()
   ] as Weekday;
-  const changeDate = (offset: number) => {
-    const next = new Date(`${serviceDate}T00:00:00`);
-    next.setDate(next.getDate() + offset);
-    setServiceDate(next.toISOString().slice(0, 10));
-  };
   const visibleTrips = trips.filter(
     (trip) =>
       trip.days.includes(serviceDay) &&
@@ -3648,21 +3607,20 @@ function TripsView({
       <section className="surface data-surface">
         <div className="data-toolbar">
           <div className="date-switcher">
-            <button type="button" onClick={() => changeDate(-1)}>
-              <ArrowLeft size={15} />
-            </button>
-            <span>
-              <CalendarDays size={15} />{" "}
-              {new Date(`${serviceDate}T00:00:00`).toLocaleDateString("en-PK", {
-                weekday: "long",
-                day: "2-digit",
-                month: "long",
-                year: "numeric",
-              })}
-            </span>
-            <button type="button" onClick={() => changeDate(1)}>
-              <ArrowRight size={15} />
-            </button>
+            <label>
+              <CalendarDays size={17} />
+              <span>Service date</span>
+              <input
+                type="date"
+                value={serviceDate}
+                onChange={(event) => setServiceDate(event.target.value)}
+              />
+            </label>
+            {serviceDate !== today && (
+              <button type="button" onClick={() => setServiceDate(today)}>
+                Today
+              </button>
+            )}
           </div>
           <div className="filter-tabs">
             {(["All trips", "Upcoming", "Departed"] as const).map((item) => (
@@ -3677,7 +3635,16 @@ function TripsView({
             ))}
           </div>
         </div>
-        <div className="trip-cards">
+        <div className="trip-cards" role="table" aria-label="Trips for selected service date">
+          <div className="trip-table-head" role="row">
+            <span>Time</span>
+            <span>Route</span>
+            <span>Bus</span>
+            <span>Crew</span>
+            <span>Seats</span>
+            <span>Status</span>
+            <span>Actions</span>
+          </div>
           {visibleTrips.map((t) => {
             const r = routes.find((x) => x.id === t.routeId) ?? routes[0],
               bus =
@@ -3692,12 +3659,12 @@ function TripsView({
                 serviceDate,
               ).flatMap((booking) => booking.seats).length;
             return (
-              <article key={t.id}>
-                <div className="trip-card-time">
+              <article key={t.id} role="row">
+                <div className="trip-card-time" role="cell">
                   <strong>{t.departure}</strong>
                   <small>{t.arrival} arrival</small>
                 </div>
-                <div className="trip-card-route">
+                <div className="trip-card-route" role="cell">
                   <span>
                     <MapPin size={15} />
                   </span>
@@ -3708,17 +3675,17 @@ function TripsView({
                     </small>
                   </div>
                 </div>
-                <div>
+                <div role="cell">
                   <small>Bus</small>
                   <strong>{bus.registration}</strong>
                   <p>{bus.service}</p>
                 </div>
-                <div>
+                <div role="cell">
                   <small>Crew</small>
                   <strong>{t.driver}</strong>
                   <p>{t.attendant}</p>
                 </div>
-                <div className="trip-capacity">
+                <div className="trip-capacity" role="cell">
                   <span>
                     <i
                       style={{
@@ -3731,10 +3698,10 @@ function TripsView({
                   </strong>
                   <small>paid seats</small>
                 </div>
-                <b className={`plain-status ${t.status.toLowerCase()}`}>
+                <b role="cell" className={`plain-status ${t.status.toLowerCase()}`}>
                   {t.status}
                 </b>
-                <div className="trip-actions">
+                <div className="trip-actions" role="cell">
                   <button
                     className={`lifecycle-action ${t.status.toLowerCase()}`}
                     type="button"
@@ -3761,6 +3728,15 @@ function TripsView({
                     onClick={() => setEditing(t)}
                   >
                     Edit
+                  </button>
+                  <button
+                    className="icon-action danger"
+                    type="button"
+                    title="Delete trip"
+                    aria-label={`Delete ${routeLabel(r)} trip`}
+                    onClick={() => setDeleting(t)}
+                  >
+                    <Trash2 size={16} />
                   </button>
                   <button
                     className="icon-action"
@@ -3808,6 +3784,18 @@ function TripsView({
           onReport={onReport}
         />
       )}
+      {deleting && (
+        <ConfirmDeleteModal
+          title="Delete trip?"
+          text="This removes the recurring schedule. Trips with ticket history must be paused instead."
+          item={routes.find((route) => route.id === deleting.routeId) ? routeLabel(routes.find((route) => route.id === deleting.routeId)!) : deleting.id}
+          onClose={() => setDeleting(null)}
+          onConfirm={async () => {
+            await onDelete(deleting.id);
+            setDeleting(null);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -3816,12 +3804,15 @@ function FleetView({
   fleet,
   onSave,
   onReturn,
+  onDelete,
 }: {
   fleet: BusRecord[];
   onSave: (bus: BusRecord) => void;
   onReturn: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<BusRecord | "new" | null>(null);
+  const [deleting, setDeleting] = useState<BusRecord | null>(null);
   return (
     <div className="admin-view">
       <ViewHeading
@@ -3902,6 +3893,9 @@ function FleetView({
               <button type="button" onClick={() => setEditing(b)}>
                 Edit bus <ChevronRight size={15} />
               </button>
+              <button className="danger-text-button" type="button" onClick={() => setDeleting(b)}>
+                <Trash2 size={15} /> Delete
+              </button>
             </div>
           </article>
         ))}
@@ -3913,6 +3907,18 @@ function FleetView({
           onSave={(bus) => {
             onSave(bus);
             setEditing(null);
+          }}
+        />
+      )}
+      {deleting && (
+        <ConfirmDeleteModal
+          title="Delete bus?"
+          item={deleting.registration}
+          text="A bus assigned to a trip cannot be deleted until the trip is reassigned or removed."
+          onClose={() => setDeleting(null)}
+          onConfirm={async () => {
+            await onDelete(deleting.id);
+            setDeleting(null);
           }}
         />
       )}
@@ -5115,11 +5121,14 @@ function RouteFormModal({
 function RoutesView({
   routes,
   onSave,
+  onDelete,
 }: {
   routes: RouteRecord[];
   onSave: (route: RouteRecord) => void;
+  onDelete: (id: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<RouteRecord | "new" | null>(null);
+  const [deleting, setDeleting] = useState<RouteRecord | null>(null);
   const [filter, setFilter] = useState<"Active routes" | "Paused">(
     "Active routes",
   );
@@ -5196,13 +5205,22 @@ function RoutesView({
                       {r.status}
                     </b>
                   </td>
-                  <td>
+                  <td className="record-actions">
                     <button
                       className="text-action"
                       type="button"
                       onClick={() => setEditing(r)}
                     >
                       Edit
+                    </button>
+                    <button
+                      className="icon-action danger"
+                      type="button"
+                      title="Delete route"
+                      aria-label={`Delete ${routeLabel(r)}`}
+                      onClick={() => setDeleting(r)}
+                    >
+                      <Trash2 size={15} />
                     </button>
                   </td>
                 </tr>
@@ -5218,6 +5236,18 @@ function RoutesView({
           onSave={(route) => {
             onSave(route);
             setEditing(null);
+          }}
+        />
+      )}
+      {deleting && (
+        <ConfirmDeleteModal
+          title="Delete route?"
+          item={routeLabel(deleting)}
+          text="A route used by a trip cannot be deleted until that trip is reassigned or removed."
+          onClose={() => setDeleting(null)}
+          onConfirm={async () => {
+            await onDelete(deleting.id);
+            setDeleting(null);
           }}
         />
       )}
@@ -5292,37 +5322,50 @@ function FinanceProtected({
   );
 }
 
-function ShiftOpenModal({
+function ConfirmDeleteModal({
+  title,
+  text,
+  item,
   onClose,
-  onSave,
+  onConfirm,
 }: {
+  title: string;
+  text: string;
+  item: string;
   onClose: () => void;
-  onSave: (details: { counterName: string; openingCash: number }) => void | Promise<void>;
+  onConfirm: () => Promise<void>;
 }) {
-  const [counterName, setCounterName] = useState("Counter 01");
-  const [openingCash, setOpeningCash] = useState(0);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+  const confirm = async () => {
+    setDeleting(true);
+    setError("");
+    try {
+      await onConfirm();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "This record could not be deleted.");
+      setDeleting(false);
+    }
+  };
   return (
-    <div className="form-modal-overlay" role="dialog" aria-modal="true" aria-label="Open shift">
-      <form
-        className="form-modal compact-modal shift-open-modal"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void onSave({ counterName: counterName.trim(), openingCash });
-        }}
-      >
+    <div className="form-modal-overlay" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="form-modal compact-modal delete-modal">
         <header>
-          <div><h2>Open shift</h2><p>Record the counter and starting cash before selling tickets.</p></div>
+          <div><h2>{title}</h2><p>{item}</p></div>
           <button type="button" aria-label="Close" onClick={onClose}><X size={19} /></button>
         </header>
-        <div className="modal-form-grid">
-          <label><span>Counter name</span><input value={counterName} onChange={(event) => setCounterName(event.target.value)} required /></label>
-          <label><span>Opening cash</span><input type="number" min="0" step="1" value={openingCash} onChange={(event) => setOpeningCash(Number(event.target.value))} required /></label>
+        <div className="delete-modal-body">
+          <span><Trash2 size={21} /></span>
+          <div><strong>This action cannot be undone.</strong><p>{text}</p></div>
         </div>
+        {error && <p className="form-error delete-error">{error}</p>}
         <footer>
-          <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
-          <button className="primary-button" type="submit"><CheckCircle2 size={16} /> Open shift</button>
+          <button className="secondary-button" type="button" onClick={onClose} disabled={deleting}>Cancel</button>
+          <button className="danger-button" type="button" onClick={() => void confirm()} disabled={deleting}>
+            <Trash2 size={16} /> {deleting ? "Deleting…" : "Delete"}
+          </button>
         </footer>
-      </form>
+      </div>
     </div>
   );
 }
@@ -5351,7 +5394,7 @@ function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
     <div className="admin-view expenses-view">
       <ViewHeading eyebrow="ADMIN ONLY" title="Expenses" text="Record day-to-day operating costs with a clear audit trail." />
       <section className="surface expense-entry">
-        <SurfaceHeader title="Add expense" text="Cash expenses are linked to the open counter shift." />
+        <SurfaceHeader title="Add expense" text="Record operating costs with the correct payment method and reference." />
         <form
           className="expense-form"
           onSubmit={async (event) => {
@@ -5384,156 +5427,6 @@ function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
           </tbody></table></div>
         )}
       </section>
-    </div>
-  );
-}
-
-function FinanceCloseModal({
-  shift,
-  onClose,
-  onSave,
-}: {
-  shift: ShiftRecord;
-  onClose: () => void;
-  onSave: (summary: {
-    cashCounted: number;
-    terminalExpense: number;
-    driverAdvance: number;
-    refreshment: number;
-    remarks: string;
-    display: string;
-  }) => void;
-}) {
-  const expectedCashBeforeDeductions = shift.expectedCash;
-  const digital = shift.digitalCollections;
-  const [cashCounted, setCashCounted] = useState(expectedCashBeforeDeductions);
-  const [terminalExpense, setTerminalExpense] = useState(0);
-  const [driverAdvance, setDriverAdvance] = useState(0);
-  const [refreshment, setRefreshment] = useState(0);
-  const [remarks, setRemarks] = useState("");
-  const deductions = terminalExpense + driverAdvance + refreshment;
-  const expectedCash = Math.max(0, expectedCashBeforeDeductions - deductions);
-  const handover = Math.max(0, cashCounted - shift.openingCash);
-  const variance = cashCounted - expectedCash;
-  return (
-    <div
-      className="form-modal-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Close counter shift"
-    >
-      <form
-        className="form-modal finance-close-modal"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSave({
-            cashCounted,
-            terminalExpense,
-            driverAdvance,
-            refreshment,
-            remarks,
-            display: `${money(handover)} handed over · variance ${money(Math.abs(variance))}${variance < 0 ? " short" : variance > 0 ? " over" : " balanced"}`,
-          });
-        }}
-      >
-        <header>
-          <div>
-            <h2>Close counter shift</h2>
-            <p>Reconcile cash, digital collections and terminal deductions.</p>
-          </div>
-          <button type="button" aria-label="Close" onClick={onClose}>
-            <X size={19} />
-          </button>
-        </header>
-        <div className="close-shift-summary">
-          <span>
-            <small>Opening cash</small>
-            <strong>{money(shift.openingCash)}</strong>
-          </span>
-          <span>
-            <small>Expected cash</small>
-            <strong>{money(expectedCash)}</strong>
-          </span>
-          <span>
-            <small>Digital / 1Bill</small>
-            <strong>{money(digital)}</strong>
-          </span>
-        </div>
-        <div className="modal-form-grid">
-          <label>
-            <span>Cash counted</span>
-            <input
-              type="number"
-              min="0"
-              value={cashCounted}
-              onChange={(event) => setCashCounted(Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Terminal expense</span>
-            <input
-              type="number"
-              min="0"
-              value={terminalExpense}
-              onChange={(event) =>
-                setTerminalExpense(Number(event.target.value))
-              }
-            />
-          </label>
-          <label>
-            <span>Paid to driver</span>
-            <input
-              type="number"
-              min="0"
-              value={driverAdvance}
-              onChange={(event) => setDriverAdvance(Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Refreshment charges</span>
-            <input
-              type="number"
-              min="0"
-              value={refreshment}
-              onChange={(event) => setRefreshment(Number(event.target.value))}
-            />
-          </label>
-          <label className="span-2">
-            <span>Remarks</span>
-            <textarea
-              rows={3}
-              value={remarks}
-              onChange={(event) => setRemarks(event.target.value)}
-              placeholder="Optional handover notes"
-            />
-          </label>
-        </div>
-        <div className="shift-balance">
-          <span>
-            <small>Deductions</small>
-            <strong>{money(deductions)}</strong>
-          </span>
-          <span>
-            <small>Cash variance</small>
-            <strong className={variance ? "variance" : "balanced"}>
-              {variance < 0 ? "− " : variance > 0 ? "+ " : ""}
-              {money(Math.abs(variance))}
-            </strong>
-          </span>
-          <span>
-            <small>Cash to hand over</small>
-            <strong>{money(handover)}</strong>
-          </span>
-        </div>
-        <footer>
-          <button className="secondary-button" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="primary-button" type="submit">
-            <CheckCircle2 size={16} /> Confirm shift close
-          </button>
-        </footer>
-      </form>
     </div>
   );
 }
@@ -6004,11 +5897,14 @@ function CrewFormModal({
 function CrewView({
   crew,
   onSave,
+  onDelete,
 }: {
   crew: CrewRecord[];
   onSave: (person: CrewRecord, previousName?: string) => void;
+  onDelete: (id: number) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<CrewRecord | "new" | null>(null);
+  const [deleting, setDeleting] = useState<CrewRecord | null>(null);
   const [filter, setFilter] = useState("All staff");
   const [search, setSearch] = useState("");
   const visibleCrew = crew.filter(
@@ -6024,7 +5920,7 @@ function CrewView({
   return (
     <div className="admin-view">
       <ViewHeading
-        eyebrow="PEOPLE & SHIFTS"
+        eyebrow="PEOPLE"
         title="Staff & crew"
         text="Drivers, female attendants and current duty assignments."
         action={
@@ -6065,13 +5961,26 @@ function CrewView({
               >
                 {m.status}
               </b>
-              <button
-                className="icon-action"
-                type="button"
-                onClick={() => setEditing(m)}
-              >
-                <ChevronRight size={16} />
-              </button>
+              <div className="record-actions">
+                <button
+                  className="icon-action"
+                  type="button"
+                  title="Edit staff member"
+                  aria-label={`Edit ${m.name}`}
+                  onClick={() => setEditing(m)}
+                >
+                  <ChevronRight size={16} />
+                </button>
+                <button
+                  className="icon-action danger"
+                  type="button"
+                  title="Delete staff member"
+                  aria-label={`Delete ${m.name}`}
+                  onClick={() => setDeleting(m)}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
             </article>
           ))}
         </div>
@@ -6083,6 +5992,18 @@ function CrewView({
           onSave={(person, previousName) => {
             onSave(person, previousName);
             setEditing(null);
+          }}
+        />
+      )}
+      {deleting && deleting.id && (
+        <ConfirmDeleteModal
+          title="Delete staff member?"
+          item={deleting.name}
+          text="Staff assigned to an active trip must be reassigned before deletion."
+          onClose={() => setDeleting(null)}
+          onConfirm={async () => {
+            await onDelete(deleting.id!);
+            setDeleting(null);
           }}
         />
       )}
