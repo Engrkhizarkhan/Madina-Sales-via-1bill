@@ -29,5 +29,15 @@ chown -R root:root /var/www/madina-express
 systemctl restart madina-express
 nginx -t
 systemctl reload nginx
-curl --fail --silent --show-error http://127.0.0.1:3101/health >/dev/null
+
+attempt=0
+until curl --fail --silent http://127.0.0.1:3101/health >/dev/null; do
+  attempt=$((attempt + 1))
+  if [[ $attempt -ge 30 ]]; then
+    systemctl status madina-express --no-pager --full || true
+    echo "The updated Node.js API did not become healthy in time." >&2
+    exit 1
+  fi
+  sleep 1
+done
 echo "Madina Express was updated successfully."
