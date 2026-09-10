@@ -4,7 +4,7 @@ This deployment uses Git, Node.js 22, Nginx and a native MySQL server. Docker is
 
 ## Recommended VM
 
-- Ubuntu 24.04 LTS
+- Ubuntu 22.04 LTS or 24.04 LTS
 - Static public IPv4 address
 - 2 CPU cores, 4 GB RAM and at least 30 GB SSD
 - In the provider firewall, allow TCP 22, 80 and 443; do not allow TCP 3306

@@ -122,7 +122,16 @@ systemctl enable --now mysql nginx madina-express
 systemctl enable --now madina-express-backup.timer
 systemctl restart nginx madina-express
 
-curl --fail --silent --show-error http://127.0.0.1:3101/health >/dev/null
+attempt=0
+until curl --fail --silent http://127.0.0.1:3101/health >/dev/null; do
+  attempt=$((attempt + 1))
+  if [[ $attempt -ge 30 ]]; then
+    systemctl status madina-express --no-pager --full || true
+    echo "The Node.js API did not become healthy in time." >&2
+    exit 1
+  fi
+  sleep 1
+done
 curl --fail --silent --show-error http://127.0.0.1/api/health >/dev/null
 
 echo "Madina Express is healthy at http://$SERVER_IP"
