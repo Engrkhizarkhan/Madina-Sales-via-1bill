@@ -3893,7 +3893,12 @@ function FleetView({
               <button type="button" onClick={() => setEditing(b)}>
                 Edit bus <ChevronRight size={15} />
               </button>
-              <button className="danger-text-button" type="button" onClick={() => setDeleting(b)}>
+              <button
+                className="danger-text-button"
+                type="button"
+                aria-label={`Delete ${b.registration}`}
+                onClick={() => setDeleting(b)}
+              >
                 <Trash2 size={15} /> Delete
               </button>
             </div>

@@ -264,6 +264,21 @@ try {
   expect(tripsState.deleteAction && tripsState.actionsFit, "trip actions include delete without overlap");
   expect(tripsState.headingSize <= 28 && tripsState.instructionSize >= 14, "page headings and instructions use balanced readable type");
 
+  const deleteControls = await evaluate(`(async () => {
+    const open = async (label) => {
+      Array.from(document.querySelectorAll('.admin-sidebar nav button'))
+        .find((button) => button.textContent?.trim() === label)?.click();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return Boolean(document.querySelector('[aria-label^="Delete"]'));
+    };
+    return {
+      buses: await open('Buses'),
+      routes: await open('Routes'),
+      crew: await open('Staff & crew')
+    };
+  })()`);
+  expect(deleteControls.buses && deleteControls.routes && deleteControls.crew, "buses, routes and crew expose delete controls");
+
   const financeState = await evaluate(`(async () => {
     Array.from(document.querySelectorAll('button'))
       .find((button) => button.textContent?.trim() === 'Finance')?.click();

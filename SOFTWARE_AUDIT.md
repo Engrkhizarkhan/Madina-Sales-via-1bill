@@ -51,7 +51,7 @@ The release is deployed for controlled operational acceptance testing on the pro
 - npm production dependency audit: 0 known vulnerabilities
 - MySQL backup generation: passed
 - Apache staff login, management fallback, assets, and authenticated API endpoints: HTTP 200 as expected; disabled public booking API: intentional HTTP 404
-- Headless Chrome interaction suite: 25 checks passed across the Node runtime, hidden client site, guarded management routes, login, immediate POS access, sidebar scrolling, typography, schedule date picking/table actions, expense navigation, protected finance, staff access, and logout
+- Headless Chrome interaction suite: 26 checks passed across the Node runtime, hidden client site, guarded management routes, login, immediate POS access, sidebar scrolling, typography, schedule date picking/table actions, master-record delete controls, expense navigation, protected finance, staff access, and logout
 
 ## Before an internet-facing launch
 
