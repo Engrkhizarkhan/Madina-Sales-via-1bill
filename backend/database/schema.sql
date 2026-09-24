@@ -125,6 +125,28 @@ CREATE TABLE IF NOT EXISTS bookings (
   INDEX idx_bookings_cnic (cnic)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS trip_runs (
+  id VARCHAR(190) PRIMARY KEY,
+  trip_id VARCHAR(64) NOT NULL,
+  service_date DATE NOT NULL,
+  run_number INT UNSIGNED NOT NULL DEFAULT 1,
+  bus_id VARCHAR(64) NOT NULL,
+  driver VARCHAR(120) NOT NULL,
+  attendant VARCHAR(120) NOT NULL,
+  platform VARCHAR(30) NOT NULL,
+  status ENUM('Scheduled','Boarding','Departed','Cancelled') NOT NULL DEFAULT 'Scheduled',
+  notes TEXT NOT NULL,
+  boarding_started_at DATETIME NULL,
+  departed_at DATETIME NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_trip_runs_trip FOREIGN KEY (trip_id) REFERENCES trips(id),
+  CONSTRAINT fk_trip_runs_bus FOREIGN KEY (bus_id) REFERENCES buses(id),
+  UNIQUE KEY uq_trip_service_run (trip_id, service_date, run_number),
+  INDEX idx_trip_runs_service_status (service_date, status),
+  INDEX idx_trip_runs_bus_date (bus_id, service_date)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS booking_seats (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   booking_id VARCHAR(64) NOT NULL,

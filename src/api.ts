@@ -53,6 +53,8 @@ function rememberCsrf<T extends { csrfToken?: string }>(payload: T): T {
 export const api = {
   health: () => request<{ status: string; database: string }>("/health"),
   publicBootstrap: <T>() => request<T>("/public/bootstrap"),
+  publicTripRuns: <T>(date: string) =>
+    request<{ runs: T[] }>(`/public/trip-runs?date=${encodeURIComponent(date)}`),
   adminBootstrap: <T>() => request<T>("/admin/bootstrap"),
   me: <T>() =>
     request<T & { csrfToken?: string }>("/auth/me").then(rememberCsrf),
@@ -97,10 +99,10 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
-  confirmReservation: <T>(id: string) =>
+  confirmReservation: <T>(id: string, paymentMethod: string, paymentReference: string) =>
     request<{ booking: T }>(`/bookings/${encodeURIComponent(id)}/confirm`, {
       method: "POST",
-      body: JSON.stringify({ paymentMethod: "Cash" }),
+      body: JSON.stringify({ paymentMethod, paymentReference }),
     }),
   refundBooking: <T>(id: string, refund: unknown) =>
     request<{ booking: T }>(`/bookings/${encodeURIComponent(id)}/refunds`, {
@@ -134,11 +136,13 @@ export const api = {
     request<{ ok: boolean }>(`/trips/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
-  transitionTrip: <T>(id: string, action: "boarding" | "depart" | "next") =>
+  transitionTrip: <T>(id: string, action: "boarding" | "depart" | "next", date: string) =>
     request<{ trip: T }>(`/trips/${encodeURIComponent(id)}/transition`, {
       method: "POST",
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, date }),
     }),
+  listTripRuns: <T>(date: string) =>
+    request<{ runs: T[] }>(`/trip-runs?date=${encodeURIComponent(date)}`),
   saveCrew: <T>(previousName: string | undefined, person: unknown) =>
     request<{ person: T }>(
       `/crew/${encodeURIComponent(previousName ?? "new")}`,

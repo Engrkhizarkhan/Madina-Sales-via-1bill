@@ -2,10 +2,10 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import { config } from "./config.js";
 import { pool, transaction } from "./db.js";
-import { ApiError, fail, isoDateTime, randomToken, requireFields, tokenHash } from "./helpers.js";
+import { ApiError, fail, isoDateTime, pakistanDate, randomToken, requireFields, tokenHash } from "./helpers.js";
 import {
   expireReservations, fetchBookings, fetchBuses, fetchCrew,
-  fetchExpenses, fetchRoutes, fetchTrips, fetchUsers, publicOccupancy,
+  fetchExpenses, fetchRoutes, fetchTripRuns, fetchTrips, fetchUsers, publicOccupancy,
 } from "./repository.js";
 import {
   audit, cancelBooking, confirmReservation, createBooking, createExpense,
@@ -56,6 +56,15 @@ const cookieOptions = {
   httpOnly: true, secure: config.secureCookies, sameSite: "lax", path: "/",
 };
 const passwordMatches = (password, hash) => bcrypt.compare(password, String(hash).replace(/^\$2y\$/, "$2b$"));
+const publicReservationAttempts = new Map();
+const allowPublicReservation = (req) => {
+  const key = String(req.ip || "unknown");
+  const now = Date.now();
+  const recent = (publicReservationAttempts.get(key) || []).filter((stamp) => now - stamp < 10 * 60 * 1000);
+  if (recent.length >= 6) fail("Too many reservation attempts. Please wait a few minutes.", 429, "rate_limited");
+  recent.push(now);
+  publicReservationAttempts.set(key, recent);
+};
 
 async function loadSession(req) {
   const token = cookies(req).madina_session;
@@ -145,10 +154,17 @@ app.get("/public/bootstrap", asyncRoute(async (_req, res) => {
   res.json({ fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), occupancy: await publicOccupancy(), paymentMode: config.paymentMode });
 }));
 
+app.get("/public/trip-runs", asyncRoute(async (req, res) => {
+  if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
+  const date = String(req.query.date || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("Choose a valid travel date.", 422, "validation_error");
+  res.json({ runs: await fetchTripRuns(date) });
+}));
+
 app.post("/public/bookings", asyncRoute(async (req, res) => {
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  if (config.paymentMode !== "demo") fail("Online payments are not configured. Please book at the counter.", 503, "payment_unavailable");
-  res.status(201).json({ booking: await createBooking(req.body, null, true, req) });
+  allowPublicReservation(req);
+  res.status(201).json({ booking: await createBooking({ ...req.body, bookingStatus: "Reserved" }, null, true, req) });
 }));
 
 app.use(asyncRoute(async (req, _res, next) => {
@@ -190,8 +206,14 @@ app.post("/auth/change-password", asyncRoute(async (req, res) => {
 
 app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
   await expireReservations();
+  const trips = await fetchTrips();
+  const runs = await fetchTripRuns(pakistanDate());
+  const todayTrips = trips.map((trip) => {
+    const run = runs.find((item) => item.tripId === trip.id);
+    return run ? { ...trip, status: run.status === "Cancelled" ? "Departed" : run.status, runNumber: run.runNumber } : { ...trip, status: "Scheduled", runNumber: 1 };
+  });
   res.json({
-    bookings: await fetchBookings(), fleet: await fetchBuses(), trips: await fetchTrips(), routes: await fetchRoutes(),
+    bookings: await fetchBookings(), fleet: await fetchBuses(), trips: todayTrips, routes: await fetchRoutes(),
     crew: await fetchCrew(), users: req.user.role === "admin" ? await fetchUsers() : [],
     user: publicUser(req.user), paymentMode: config.paymentMode,
   });
@@ -247,6 +269,12 @@ app.post("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["
 app.put("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await saveTrip(req.params.id, req.body, req.user, req) }); }));
 app.delete("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); await deleteTrip(req.params.id, req.user, req); res.json({ ok: true }); }));
 app.post("/trips/:id/transition", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await transitionTrip(req.params.id, req.body, req.user, req) }); }));
+app.get("/trip-runs", asyncRoute(async (req, res) => {
+  requireRole(req.user, ["admin", "manager", "counter", "dispatcher"]);
+  const date = String(req.query.date || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("Choose a valid service date.", 422, "validation_error");
+  res.json({ runs: await fetchTripRuns(date) });
+}));
 app.post("/crew/:key", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ person: await saveCrew(req.params.key, req.body, req.user, req) }); }));
 app.put("/crew/:key", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ person: await saveCrew(req.params.key, req.body, req.user, req) }); }));
 app.delete("/crew/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); await deleteCrew(req.params.id, req.user, req); res.json({ ok: true }); }));

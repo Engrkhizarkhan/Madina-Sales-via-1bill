@@ -59,7 +59,23 @@ try {
   check(health.status === 200 && health.body.database === "connected" && health.body.runtime === "node", "Node.js health endpoint and MySQL connection");
   check((await request("GET", "/admin/bootstrap")).status === 401, "admin data rejects anonymous access");
   const publicResult = await request("GET", "/public/bootstrap");
-  check(publicResult.status === 404 && publicResult.body.error.code === "public_site_disabled", "public website remains disabled until 1Bill is configured");
+  check(publicResult.status === 200 && publicResult.body.trips.length > 0, "public timetable is available without exposing staff data");
+  const publicTrip = publicResult.body.trips[0];
+  const publicBus = publicResult.body.fleet.find((item) => item.id === publicTrip.busId);
+  const publicDate = nextServiceDate(publicTrip.days);
+  const publicOccupied = publicResult.body.occupancy
+    .filter((item) => item.tripRunId === `${publicTrip.id}-${publicDate}-run-1`)
+    .flatMap((item) => item.seats);
+  const publicSeat = Array.from({ length: publicBus.seats }, (_, index) => publicBus.seats - index)
+    .find((number) => !publicOccupied.includes(number));
+  if (!publicSeat) throw new Error("No public reservation test seat is available.");
+  const publicReservation = await request("POST", "/public/bookings", {
+    passenger: "Public Reservation QA", phone: "03001112222", cnic: "17301-7654321-9", gender: "Male",
+    tripId: publicTrip.id, date: publicDate, seats: [publicSeat],
+  });
+  check(publicReservation.status === 201 && publicReservation.body.booking.bookingStatus === "Reserved" && publicReservation.body.booking.paid === 0,
+    "public website creates an unpaid two-hour reservation without simulating 1Bill");
+  createdBookings.push(publicReservation.body.booking.id);
   check((await request("POST", "/auth/login", { identity: "not-a-user", password: "wrong" })).status === 401, "invalid staff login is rejected");
 
   const login = await request("POST", "/auth/login", { identity: testAdminUsername, password: testAdminPassword });
@@ -80,6 +96,8 @@ try {
   check(created.status === 201 && created.body.booking.paymentStatus === "Paid", "counter POS starts selling immediately without a shift");
   const booking = created.body.booking;
   createdBookings.push(booking.id);
+  check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "1Bill", paymentReference: "UNVERIFIED", discount: 0 }, csrf)).status === 409,
+    "backend blocks 1Bill sales until the gateway is activated");
   check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Cash", discount: 0 }, csrf)).status === 409, "database prevents duplicate trip seats");
   const csrfFailure = await request("POST", `/bookings/${booking.id}/refunds`, { amount: 1, method: "Cash", reason: "Other" });
   check(csrfFailure.status === 403 && csrfFailure.body.error.code === "csrf_failed", "authenticated state changes require CSRF");
@@ -96,7 +114,10 @@ try {
   check(reservation.status === 201 && reservation.body.booking.bookingStatus === "Reserved", "refunded seat can be reserved again");
   createdBookings.push(reservation.body.booking.id);
   const confirmed = await request("POST", `/bookings/${reservation.body.booking.id}/confirm`, { paymentMethod: "Cash" }, csrf);
-  check(confirmed.status === 200 && confirmed.body.booking.bookingStatus === "Confirmed", "reservation payment creates a confirmed ticket");
+  if (confirmed.status !== 200 || confirmed.body.booking?.bookingStatus !== "Confirmed") {
+    throw new Error(`reservation payment creates a confirmed ticket (${confirmed.status}: ${confirmed.body.error?.code || "unexpected response"})`);
+  }
+  check(true, "reservation payment creates a confirmed ticket");
 
   const locked = await request("GET", "/expenses");
   check(locked.status === 403 && locked.body.error.code === "finance_locked", "finance remains locked by default");
@@ -125,6 +146,11 @@ try {
   const tripResult = await request("POST", "/trips/new", { routeId: createdRouteId, busId: createdBusId, departure: "23:50", arrival: "00:20", driver: "QA Driver", attendant: "QA Attendant", platform: "QA-1", status: "Scheduled", days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true, runNumber: 1 }, csrf);
   createdTripId = tripResult.body.trip.id;
   check(tripResult.status === 200, "trip can be added");
+  const runDate = nextServiceDate(tripResult.body.trip.days);
+  const boarding = await request("POST", `/trips/${createdTripId}/transition`, { action: "boarding", date: runDate }, csrf);
+  check(boarding.status === 200 && boarding.body.trip.status === "Boarding", "dated trip run can open boarding without changing future roster dates");
+  const runList = await request("GET", `/trip-runs?date=${runDate}`);
+  check(runList.status === 200 && runList.body.runs.some((run) => run.tripId === createdTripId && run.status === "Boarding"), "dated run state is persisted and queryable");
   check((await request("DELETE", `/routes/${createdRouteId}`, undefined, csrf)).status === 409, "route deletion protects assigned trips");
   check((await request("DELETE", `/buses/${createdBusId}`, undefined, csrf)).status === 409, "bus deletion protects assigned trips");
   check((await request("DELETE", `/trips/${createdTripId}`, undefined, csrf)).status === 200, "unused trip can be deleted");
@@ -169,7 +195,10 @@ try {
       await pool.execute("DELETE FROM expenses WHERE id = ?", [createdExpenseId]);
     }
     if (createdCrewId) await pool.execute("DELETE FROM crew WHERE id = ?", [createdCrewId]);
-    if (createdTripId) await pool.execute("DELETE FROM trips WHERE id = ?", [createdTripId]);
+    if (createdTripId) {
+      await pool.execute("DELETE FROM trip_runs WHERE trip_id = ?", [createdTripId]);
+      await pool.execute("DELETE FROM trips WHERE id = ?", [createdTripId]);
+    }
     if (createdBusId) await pool.execute("DELETE FROM buses WHERE id = ?", [createdBusId]);
     if (createdRouteId) await pool.execute("DELETE FROM routes WHERE id = ?", [createdRouteId]);
     if (createdBookings.length) {

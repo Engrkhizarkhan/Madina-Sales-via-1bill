@@ -59,6 +59,31 @@ export async function fetchTrips(activeOnly = false, executor = pool) {
   }));
 }
 
+export async function fetchTripRuns(serviceDate, executor = pool) {
+  const result = await rows(
+    `SELECT tr.id, tr.trip_id, tr.service_date, tr.run_number, tr.bus_id, tr.driver,
+            tr.attendant, tr.platform, tr.status, tr.notes, tr.boarding_started_at, tr.departed_at
+     FROM trip_runs tr
+     WHERE tr.service_date = ?
+     ORDER BY tr.id`,
+    [serviceDate], executor,
+  );
+  return result.map((row) => ({
+    id: row.id,
+    tripId: row.trip_id,
+    date: row.service_date,
+    runNumber: Number(row.run_number),
+    busId: row.bus_id,
+    driver: row.driver,
+    attendant: row.attendant,
+    platform: row.platform,
+    status: row.status,
+    notes: row.notes,
+    boardingStartedAt: isoDateTime(row.boarding_started_at),
+    departedAt: isoDateTime(row.departed_at),
+  }));
+}
+
 async function mapBooking(row, executor = pool) {
   const seats = await rows("SELECT seat_number FROM booking_seats WHERE booking_id = ? ORDER BY seat_number", [row.id], executor);
   const refunds = await rows(

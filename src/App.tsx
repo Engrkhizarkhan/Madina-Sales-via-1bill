@@ -133,6 +133,20 @@ type TripRecord = {
   runNumber: number;
   lastDepartedAt?: string;
 };
+type TripRun = {
+  id: string;
+  tripId: string;
+  date: string;
+  runNumber: number;
+  busId: string;
+  driver: string;
+  attendant: string;
+  platform: string;
+  status: "Scheduled" | "Boarding" | "Departed" | "Cancelled";
+  notes: string;
+  boardingStartedAt?: string;
+  departedAt?: string;
+};
 type Booking = {
   id: string;
   ticketNo: string;
@@ -662,7 +676,7 @@ function App() {
   if (path.startsWith("/manage")) {
     return <ManagementGate onNavigate={navigate} />;
   }
-  if (publicSiteEnabled && path.startsWith("/booking")) {
+  if (publicSiteEnabled && path !== "/login") {
     return <PublicHome onNavigate={navigate} />;
   }
   return <LoginPage onNavigate={navigate} />;
@@ -717,6 +731,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     [publicFleet, setPublicFleet] = useState<BusRecord[]>([]),
     [publicRoutes, setPublicRoutes] = useState<RouteRecord[]>([]),
     [occupancy, setOccupancy] = useState<PublicOccupancy[]>([]),
+    [tripRuns, setTripRuns] = useState<TripRun[]>([]),
     [paymentMode, setPaymentMode] = useState("disabled"),
     [loadError, setLoadError] = useState("");
   useEffect(() => {
@@ -747,6 +762,11 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
         setLoadError(error instanceof Error ? error.message : "Timetable could not be loaded."),
       );
   }, []);
+  useEffect(() => {
+    api.publicTripRuns<TripRun>(date)
+      .then((result) => setTripRuns(result.runs))
+      .catch(() => setTripRuns([]));
+  }, [date]);
   const [checkoutTrip, setCheckoutTrip] = useState<{
     route: RouteRecord;
     bus: BusRecord;
@@ -782,7 +802,9 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
           (schedule) =>
             schedule.routeId === matchingRoute.id &&
             schedule.active &&
-            schedule.status !== "Departed" &&
+            !["Departed", "Cancelled"].includes(
+              tripRuns.find((run) => run.tripId === schedule.id)?.status ?? "Scheduled",
+            ) &&
             schedule.days.includes(travelDay) &&
             (date !== today ||
               schedule.departure >
@@ -858,15 +880,15 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <em>Travel with confidence.</em>
             </h1>
             <p>
-              Choose your journey, select a seat and pay securely through 1Bill.
-              Your confirmed e-ticket is issued immediately after payment.
+              Find a departure, choose your seats and reserve them online.
+              Pay at the counter; online payment will be added after 1Bill setup.
             </p>
             <div className="hero-trust">
               <span>
-                <BadgeCheck size={17} /> Confirmed e-tickets
+                <BadgeCheck size={17} /> Live seat availability
               </span>
               <span>
-                <ShieldCheck size={17} /> Secure 1Bill payment
+                <ShieldCheck size={17} /> Two-hour seat hold
               </span>
               <span>
                 <Headphones size={17} /> Passenger support
@@ -892,11 +914,11 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <Route size={18} />
             </span>
             <div>
-              <h2>Find and buy your ticket</h2>
-              <p>All online tickets are confirmed after full payment.</p>
+              <h2>Find your bus</h2>
+              <p>Reserve online, then pay at the counter.</p>
             </div>
             <div className="payment-assurance">
-              <ShieldCheck size={15} /> Powered by 1Bill
+              <ShieldCheck size={15} /> 1Bill payment coming soon
             </div>
           </div>
           {loadError && <p className="form-error">{loadError}</p>}
@@ -1013,7 +1035,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                   </div>
                   <button
                     type="button"
-                    disabled={paymentMode === "disabled" || trip.seats === 0}
+                    disabled={trip.seats === 0}
                     onClick={() =>
                       setCheckoutTrip({
                         route: matchingRoute,
@@ -1025,7 +1047,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                       })
                     }
                   >
-                    Select & pay <ArrowRight size={14} />
+                    Choose seats <ArrowRight size={14} />
                   </button>
                 </article>
               ))
@@ -1141,8 +1163,7 @@ function PublicCheckout({
       gender: "Male" as "Male" | "Female",
     }),
     [processing, setProcessing] = useState(false),
-    [error, setError] = useState(""),
-    [invoice] = useState(() => `1B${Date.now().toString().slice(-10)}`);
+    [error, setError] = useState("");
   const total = selectedSeats.length * trip.fare;
   const occupied = useMemo(
     () => new Set(trip.occupiedSeats),
@@ -1158,7 +1179,7 @@ function PublicCheckout({
           : current,
     );
   };
-  const completePayment = async () => {
+  const reserveSeats = async () => {
     if (
       !selectedSeats.length ||
       !passenger.name.trim() ||
@@ -1166,12 +1187,8 @@ function PublicCheckout({
       !passenger.cnic.trim()
     ) {
       setError(
-        "Select a seat and complete all passenger details before payment.",
+        "Select a seat and enter the passenger name, mobile number and ID.",
       );
-      return;
-    }
-    if (paymentMode === "disabled") {
-      setError("Online payment is not configured. Please book at the counter.");
       return;
     }
     setError("");
@@ -1192,7 +1209,7 @@ function PublicCheckout({
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "Payment could not be completed.",
+          : "The reservation could not be completed.",
       );
     } finally {
       setProcessing(false);
@@ -1211,7 +1228,7 @@ function PublicCheckout({
             <button type="button" onClick={onClose}>
               <ArrowLeft size={16} /> Back
             </button>
-            <h2>Complete your booking</h2>
+            <h2>Reserve your seats</h2>
             <p>
               {routeLabel(trip.route)} · {date} at {trip.time}
             </p>
@@ -1246,7 +1263,7 @@ function PublicCheckout({
               <SectionTitle
                 number="2"
                 title="Passenger details"
-                text="Used for your confirmed e-ticket."
+                text="Bring the same ID when paying at the counter."
               />
               <div className="checkout-form">
                 <label>
@@ -1314,22 +1331,10 @@ function PublicCheckout({
             <section className="checkout-card payment-card">
               <SectionTitle
                 number="3"
-                title="Pay securely with 1Bill"
-                text="Your ticket is issued only after full payment."
+                title="Confirm reservation"
+                text="Seats are held for two hours."
                 icon
               />
-              <div className="invoice-box">
-                <span>
-                  <small>1BILL INVOICE</small>
-                  <strong>{invoice}</strong>
-                </span>
-                <button
-                  type="button"
-                  onClick={() => navigator.clipboard?.writeText(invoice)}
-                >
-                  Copy
-                </button>
-              </div>
               <div className="payment-total">
                 <span>
                   <small>Seats</small>
@@ -1340,7 +1345,7 @@ function PublicCheckout({
                   </strong>
                 </span>
                 <span>
-                  <small>Total payable</small>
+                  <small>Pay at counter</small>
                   <strong>{money(total)}</strong>
                 </span>
               </div>
@@ -1348,22 +1353,22 @@ function PublicCheckout({
               <button
                 className="pay-button"
                 type="button"
-                disabled={processing || paymentMode === "disabled"}
-                onClick={completePayment}
+                disabled={processing}
+                onClick={reserveSeats}
               >
                 {processing ? (
                   <>
-                    <RefreshCw className="spin" size={17} /> Verifying payment…
+                    <RefreshCw className="spin" size={17} /> Reserving…
                   </>
                 ) : (
                   <>
-                    <LockKeyhole size={17} /> Pay {money(total)} & issue ticket
+                    <CalendarCheck size={17} /> Reserve seats
                   </>
                 )}
               </button>
               <small className="gateway-note">
-                <ShieldCheck size={13} /> Encrypted payment · No unpaid online
-                reservations
+                <ShieldCheck size={13} /> No online charge. Pay before the hold expires.
+                {paymentMode === "disabled" && " 1Bill payment is coming soon."}
               </small>
             </section>
           </div>
@@ -1437,8 +1442,8 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
             <p>SECURE STAFF ACCESS</p>
             <h1>Your transport operation, in one place.</h1>
             <span>
-              Manage paid tickets, counter reservations, trips, fleet, finance
-              and crew from one professional workspace.
+              Sell tickets, manage departures and print passenger records from
+              one workspace.
             </span>
           </div>
           <small>Authorized personnel only</small>
@@ -1499,11 +1504,11 @@ const navGroups = [
   {
     label: "OPERATIONS",
     items: [
-      { id: "dashboard" as AdminView, label: "Dashboard", icon: Gauge },
-      { id: "sale" as AdminView, label: "New sale", icon: Ticket },
+      { id: "dashboard" as AdminView, label: "Today", icon: Gauge },
+      { id: "sale" as AdminView, label: "Sell ticket", icon: Ticket },
       {
         id: "bookings" as AdminView,
-        label: "Bookings & refunds",
+        label: "Bookings",
         icon: BookOpenCheck,
       },
       {
@@ -1518,15 +1523,15 @@ const navGroups = [
     items: [
       {
         id: "trips" as AdminView,
-        label: "Trips & schedules",
+        label: "Roster",
         icon: CalendarDays,
       },
       { id: "fleet" as AdminView, label: "Buses", icon: Bus },
       { id: "routes" as AdminView, label: "Routes", icon: MapPinned },
       { id: "finance" as AdminView, label: "Finance", icon: Banknote },
       { id: "expenses" as AdminView, label: "Expenses", icon: ReceiptText },
-      { id: "reports" as AdminView, label: "Reports & print", icon: FileText },
-      { id: "crew" as AdminView, label: "Staff & crew", icon: UserRoundCog },
+      { id: "reports" as AdminView, label: "Print", icon: FileText },
+      { id: "crew" as AdminView, label: "Crew", icon: UserRoundCog },
     ],
   },
 ];
@@ -1590,7 +1595,7 @@ const viewMeta: Record<AdminView, { title: string; description: string }> = {
 
 const defaultAdminView = (user: StaffUser): AdminView => {
   if (user.forcePasswordChange) return "settings";
-  if (["admin", "manager", "counter"].includes(user.role)) return "sale";
+  if (["admin", "manager", "counter"].includes(user.role)) return "dashboard";
   return roleViews[user.role][0];
 };
 
@@ -1644,6 +1649,17 @@ function ManagementApp({
       )
       .finally(() => setLoading(false));
   }, [onUserChange]);
+  useEffect(() => {
+    const refresh = window.setInterval(() => {
+      api.adminBootstrap<AdminBootstrap>()
+        .then((result) => {
+          setBookings(result.bookings);
+          setTrips(result.trips);
+        })
+        .catch(() => undefined);
+    }, 30000);
+    return () => window.clearInterval(refresh);
+  }, []);
   const showToast = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
@@ -1691,9 +1707,9 @@ function ManagementApp({
       failure(error);
     }
   };
-  const confirmReservation = async (id: string) => {
+  const confirmReservation = async (id: string, method: PaymentMethod, reference: string) => {
     try {
-      const result = await api.confirmReservation<Booking>(id);
+      const result = await api.confirmReservation<Booking>(id, method, reference);
       setBookings((current) => current.map((item) => item.id === id ? result.booking : item));
       setReceipt(result.booking);
       showToast("Payment collected. Confirmed ticket issued.");
@@ -1803,9 +1819,10 @@ function ManagementApp({
   const transitionTrip = async (
     id: string,
     action: "boarding" | "depart" | "next",
+    date: string,
   ) => {
     try {
-      const result = await api.transitionTrip<TripRecord>(id, action);
+      const result = await api.transitionTrip<TripRecord>(id, action, date);
       setTrips((current) => current.map((trip) => trip.id === id ? result.trip : trip));
       if (action === "depart") {
         setFleet((current) => current.map((bus) => result.trip.busId === bus.id ? { ...bus, status: "On route" } : bus));
@@ -1994,6 +2011,7 @@ function ManagementApp({
               crew={crew}
               onSave={saveBooking}
               showToast={showToast}
+              paymentMode={paymentMode}
             />
           )}
           {activeView === "bookings" && (
@@ -2012,6 +2030,7 @@ function ManagementApp({
               onConfirm={confirmReservation}
               onCancel={cancelBooking}
               onNew={() => changeView("sale")}
+              paymentMode={paymentMode}
             />
           )}
           {activeView === "trips" && (
@@ -2151,7 +2170,8 @@ function DashboardView({
     .reduce((sum, booking) => sum + booking.seats.length, 0);
   const reservations = bookings.filter(
     (booking) => booking.bookingStatus === "Reserved",
-  ).length;
+  );
+  const todayDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${today}T00:00:00`).getDay()] as Weekday;
   const pakistanHour = Number(
     new Intl.DateTimeFormat("en-GB", {
       hour: "2-digit",
@@ -2179,8 +2199,8 @@ function DashboardView({
     },
     {
       label: "Active reservations",
-      value: String(reservations),
-      note: "Counter holds awaiting payment",
+      value: String(reservations.length),
+      note: "Waiting for payment",
       icon: CalendarCheck,
       tone: "blue",
     },
@@ -2246,7 +2266,7 @@ function DashboardView({
           />
           <div className="schedule-list">
             {trips
-              .filter((trip) => trip.active && trip.status !== "Departed")
+              .filter((trip) => trip.active && trip.days.includes(todayDay) && trip.status !== "Departed")
               .map((t) => {
                 const r = routes.find((x) => x.id === t.routeId) ?? routes[0],
                   bus = fleet.find((x) => x.id === t.busId) ?? fleet[0],
@@ -2342,6 +2362,22 @@ function DashboardView({
           />
         </section>}
       </div>
+      <section className="surface recent-panel">
+        <SurfaceHeader
+          title="Reservations to collect"
+          text={`${reservations.length} unpaid hold${reservations.length === 1 ? "" : "s"}`}
+          action={
+            <button type="button" onClick={() => onNavigate("reservations")}>
+              Open reservations <ChevronRight size={15} />
+            </button>
+          }
+        />
+        {reservations.length ? (
+          <BookingTable bookings={reservations.slice(0, 5)} onPrint={() => undefined} compact />
+        ) : (
+          <EmptyState title="No payment waiting" text="New online and counter reservations will appear here automatically." />
+        )}
+      </section>
       {showDashboardFinance && <section className="surface recent-panel">
         <SurfaceHeader
           title="Recent sales activity"
@@ -2446,6 +2482,7 @@ function BookingWorkspace({
   crew,
   onSave,
   showToast,
+  paymentMode,
 }: {
   bookings: Booking[];
   trips: TripRecord[];
@@ -2454,6 +2491,7 @@ function BookingWorkspace({
   crew: CrewRecord[];
   onSave: (booking: Booking) => void;
   showToast: (message: string) => void;
+  paymentMode: string;
 }) {
   const defaultTrip =
     trips.find((trip) => trip.status === "Boarding" && trip.active) ??
@@ -2873,6 +2911,8 @@ function BookingWorkspace({
                       <button
                         type="button"
                         key={method}
+                        disabled={method === "1Bill" && paymentMode === "disabled"}
+                        title={method === "1Bill" && paymentMode === "disabled" ? "Available after 1Bill activation" : undefined}
                         className={
                           passenger.paymentMethod === method
                             ? "payment-method active"
@@ -2885,7 +2925,7 @@ function BookingWorkspace({
                         ) : (
                           <CreditCard size={15} />
                         )}
-                        {method}
+                        {method}{method === "1Bill" && paymentMode === "disabled" ? " · soon" : ""}
                       </button>
                     ))}
                   </div>
@@ -3426,19 +3466,22 @@ function ReservationsView({
   onConfirm,
   onCancel,
   onNew,
+  paymentMode,
 }: {
   bookings: Booking[];
-  onConfirm: (id: string) => void;
+  onConfirm: (id: string, method: PaymentMethod, reference: string) => void;
   onCancel: (id: string) => void;
   onNew: () => void;
+  paymentMode: string;
 }) {
+  const [collecting, setCollecting] = useState<Booking | null>(null);
   const reservations = bookings.filter((b) => b.bookingStatus === "Reserved");
   return (
     <div className="admin-view">
       <ViewHeading
-        eyebrow="COUNTER HOLDS ONLY"
+        eyebrow="UNPAID HOLDS"
         title="Reservations"
-        text="Online customers cannot reserve without payment. Only staff can create temporary counter holds."
+        text="Online and counter reservations waiting for payment."
         action={
           <button className="primary-button" type="button" onClick={onNew}>
             <Plus size={16} /> New reservation
@@ -3475,7 +3518,7 @@ function ReservationsView({
                   <tr key={b.id}>
                     <td>
                       <strong>{b.ticketNo}</strong>
-                      <small>Counter reservation</small>
+                      <small>{b.source}</small>
                     </td>
                     <td>
                       <strong>{b.passenger}</strong>
@@ -3510,7 +3553,7 @@ function ReservationsView({
                         <button
                           className="confirm-action"
                           type="button"
-                          onClick={() => onConfirm(b.id)}
+                          onClick={() => setCollecting(b)}
                         >
                           <Check size={14} /> Collect & issue
                         </button>
@@ -3540,6 +3583,75 @@ function ReservationsView({
           </table>
         </div>
       </section>
+      {collecting && (
+        <CollectPaymentModal
+          booking={collecting}
+          paymentMode={paymentMode}
+          onClose={() => setCollecting(null)}
+          onConfirm={(method, reference) => {
+            onConfirm(collecting.id, method, reference);
+            setCollecting(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function CollectPaymentModal({
+  booking,
+  paymentMode,
+  onClose,
+  onConfirm,
+}: {
+  booking: Booking;
+  paymentMode: string;
+  onClose: () => void;
+  onConfirm: (method: PaymentMethod, reference: string) => void;
+}) {
+  const [method, setMethod] = useState<PaymentMethod>("Cash");
+  const [reference, setReference] = useState("");
+  const [error, setError] = useState("");
+  return (
+    <div className="form-modal-overlay" role="dialog" aria-modal="true" aria-label="Collect reservation payment">
+      <form className="form-modal compact-modal" onSubmit={(event) => {
+        event.preventDefault();
+        if (method !== "Cash" && !reference.trim()) {
+          setError("Enter the verified payment reference.");
+          return;
+        }
+        onConfirm(method, reference.trim());
+      }}>
+        <header>
+          <div>
+            <h2>Collect {money(booking.balance)}</h2>
+            <p>{booking.ticketNo} · {booking.passenger} · Seats {booking.seats.join(", ")}</p>
+          </div>
+          <button type="button" aria-label="Close" onClick={onClose}><X size={19} /></button>
+        </header>
+        <div className="modal-form-grid">
+          <label className="span-2">
+            <span>Payment method</span>
+            <select value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>
+              <option>Cash</option>
+              <option>Card</option>
+              <option>Bank transfer</option>
+              <option disabled={paymentMode === "disabled"}>1Bill{paymentMode === "disabled" ? " (coming soon)" : ""}</option>
+            </select>
+          </label>
+          {method !== "Cash" && (
+            <label className="span-2">
+              <span>Verified reference</span>
+              <input required value={reference} onChange={(event) => setReference(event.target.value)} placeholder="Transaction reference" />
+            </label>
+          )}
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        <footer>
+          <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
+          <button className="primary-button" type="submit"><ReceiptText size={16} /> Issue paid ticket</button>
+        </footer>
+      </form>
     </div>
   );
 }
@@ -3562,7 +3674,7 @@ function TripsView({
   crew: CrewRecord[];
   onSave: (trip: TripRecord) => void;
   onDelete: (id: string) => Promise<void>;
-  onTransition: (id: string, action: "boarding" | "depart" | "next") => void;
+  onTransition: (id: string, action: "boarding" | "depart" | "next", date: string) => void;
   onReport: (
     kind: ReportKind,
     tripId: string,
@@ -3574,26 +3686,47 @@ function TripsView({
   const [openTrip, setOpenTrip] = useState<TripRecord | null>(null);
   const [deleting, setDeleting] = useState<TripRecord | null>(null);
   const [serviceDate, setServiceDate] = useState(today);
+  const [tripRuns, setTripRuns] = useState<TripRun[]>([]);
   const [filter, setFilter] = useState<"All trips" | "Upcoming" | "Departed">(
     "All trips",
   );
   const serviceDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
     new Date(`${serviceDate}T00:00:00`).getDay()
   ] as Weekday;
+  useEffect(() => {
+    api.listTripRuns<TripRun>(serviceDate)
+      .then((result) => setTripRuns(result.runs))
+      .catch(() => setTripRuns([]));
+  }, [serviceDate]);
+  const datedTrip = (trip: TripRecord): TripRecord => {
+    const run = tripRuns.find((item) => item.tripId === trip.id);
+    return run
+      ? { ...trip, status: run.status === "Cancelled" ? "Departed" : run.status, runNumber: run.runNumber, busId: run.busId, driver: run.driver, attendant: run.attendant, platform: run.platform }
+      : { ...trip, status: "Scheduled", runNumber: 1 };
+  };
+  const updateRunStatus = (trip: TripRecord, action: "boarding" | "depart" | "next") => {
+    const status = action === "boarding" ? "Boarding" : action === "depart" ? "Departed" : "Scheduled";
+    const id = `${trip.id}-${serviceDate}-run-1`;
+    setTripRuns((current) => [
+      ...current.filter((run) => run.tripId !== trip.id),
+      { id, tripId: trip.id, date: serviceDate, runNumber: 1, busId: trip.busId, driver: trip.driver, attendant: trip.attendant, platform: trip.platform, status, notes: "" },
+    ]);
+    onTransition(trip.id, action, serviceDate);
+  };
   const visibleTrips = trips.filter(
     (trip) =>
       trip.days.includes(serviceDay) &&
       (filter === "All trips" ||
         (filter === "Departed"
-          ? trip.status === "Departed"
-          : trip.status !== "Departed")),
+          ? datedTrip(trip).status === "Departed"
+          : datedTrip(trip).status !== "Departed")),
   );
   return (
     <div className="admin-view">
       <ViewHeading
         eyebrow="DAILY OPERATIONS"
-        title="Trips & schedules"
-        text="Departure times, vehicle assignments and crew coverage."
+        title="Roster"
+        text="Departures, buses and crew for the selected date."
         action={
           <button
             className="primary-button"
@@ -3645,7 +3778,8 @@ function TripsView({
             <span>Status</span>
             <span>Actions</span>
           </div>
-          {visibleTrips.map((t) => {
+          {visibleTrips.map((baseTrip) => {
+            const t = datedTrip(baseTrip);
             const r = routes.find((x) => x.id === t.routeId) ?? routes[0],
               bus =
                 fleet.find((x) => x.id === t.busId) ??
@@ -3706,8 +3840,8 @@ function TripsView({
                     className={`lifecycle-action ${t.status.toLowerCase()}`}
                     type="button"
                     onClick={() =>
-                      onTransition(
-                        t.id,
+                      updateRunStatus(
+                        t,
                         t.status === "Scheduled"
                           ? "boarding"
                           : t.status === "Boarding"
@@ -3774,13 +3908,13 @@ function TripsView({
       )}
       {openTrip && (
         <TripRunModal
-          trip={trips.find((trip) => trip.id === openTrip.id) ?? openTrip}
+          trip={datedTrip(trips.find((trip) => trip.id === openTrip.id) ?? openTrip)}
           fleet={fleet}
           bookings={bookings}
           routes={routes}
           serviceDate={serviceDate}
           onClose={() => setOpenTrip(null)}
-          onTransition={(action) => onTransition(openTrip.id, action)}
+          onTransition={(action) => updateRunStatus(openTrip, action)}
           onReport={onReport}
         />
       )}
@@ -6452,7 +6586,7 @@ function BookingTable({
                   <strong>{money(b.paid || b.total)}</strong>
                   <small>
                     {refundedTotal(b)
-                      ? `${money(refundedTotal(b))} refunded · ${money(netCollected(b))} net`
+                      ? `${money(refundedTotal(b))} refunded · ${(b.refunds ?? []).at(-1)?.reason}${(b.refunds ?? []).at(-1)?.notes ? ` · ${(b.refunds ?? []).at(-1)?.notes}` : ""}`
                       : b.paymentStatus}
                   </small>
                 </td>
@@ -6783,6 +6917,7 @@ function ReceiptModal({
                   <strong>
                     {money(refund.amount)} · {refund.method} · {refund.reference}
                   </strong>
+                  {refund.notes && <small>{refund.notes}</small>}
                 </div>
               ))}
             </>

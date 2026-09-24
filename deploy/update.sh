@@ -21,9 +21,14 @@ if ! cmp -s "$PROJECT_DIR/deploy/mysql.cnf" /etc/mysql/mysql.conf.d/madina-expre
   systemctl restart mysql
 fi
 npm ci
-VITE_PUBLIC_BASE=/ VITE_API_BASE=/api VITE_ENABLE_PUBLIC_SITE=false npm run build
+VITE_PUBLIC_BASE=/ VITE_API_BASE=/api VITE_ENABLE_PUBLIC_SITE=true npm run build
 npm run server:check
 npm run db:install
+if grep -q '^PUBLIC_SITE_ENABLED=' "$PROJECT_DIR/backend/.env"; then
+  sed -i 's/^PUBLIC_SITE_ENABLED=.*/PUBLIC_SITE_ENABLED=true/' "$PROJECT_DIR/backend/.env"
+else
+  printf '\nPUBLIC_SITE_ENABLED=true\n' >> "$PROJECT_DIR/backend/.env"
+fi
 rsync -a --delete "$PROJECT_DIR/dist/" /var/www/madina-express/
 chown -R root:root /var/www/madina-express
 sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/deploy/madina-express.service" > /etc/systemd/system/madina-express.service

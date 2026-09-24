@@ -76,7 +76,7 @@ DB_USER=madina_app
 DB_PASSWORD=$DB_PASSWORD
 SESSION_SECURE=false
 PAYMENT_MODE=disabled
-PUBLIC_SITE_ENABLED=false
+PUBLIC_SITE_ENABLED=true
 NODE_API_HOST=127.0.0.1
 NODE_API_PORT=3101
 TRUST_PROXY=1
@@ -97,7 +97,7 @@ chmod 0640 "$PROJECT_DIR/backend/.env"
 
 cd "$PROJECT_DIR"
 npm ci
-VITE_PUBLIC_BASE=/ VITE_API_BASE=/api VITE_ENABLE_PUBLIC_SITE=false npm run build
+VITE_PUBLIC_BASE=/ VITE_API_BASE=/api VITE_ENABLE_PUBLIC_SITE=true npm run build
 npm run server:check
 npm run db:install
 

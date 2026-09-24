@@ -123,12 +123,14 @@ try {
     title: document.title,
     loginVisible: Boolean(document.querySelector('.login-form')),
     publicSearchVisible: Boolean(document.querySelector('.public-search')),
-    publicBookingCopy: document.body.innerText.includes('Book your journey')
+    publicBookingCopy: document.body.innerText.includes('Find your bus'),
+    oneBillDeferred: document.body.innerText.includes('1Bill payment coming soon')
   })`);
   expect(publicState.title.includes("Madina Express"), "application page title renders");
-  expect(publicState.loginVisible, "public URL shows staff sign-in while client website is disabled");
-  expect(!publicState.publicSearchVisible && !publicState.publicBookingCopy, "client booking website is hidden");
+  expect(!publicState.loginVisible && publicState.publicSearchVisible && publicState.publicBookingCopy, "public URL shows the passenger timetable and reservation search");
+  expect(publicState.oneBillDeferred, "public website clearly defers 1Bill without simulating payment");
   const apiProbe = await evaluate(`fetch(${JSON.stringify(apiHealthUrl)}, { credentials: 'include' }).then(async (response) => ({ status: response.status, text: await response.text() })).catch((error) => ({ error: error.message }))`);
+  if (apiProbe.status !== 200) console.log(`API probe failed: ${JSON.stringify(apiProbe)}`);
   expect(apiProbe.status === 200 && apiProbe.text.includes('"runtime":"node"'), "browser connects to the Node.js API");
 
   await navigate(`${appUrl}/manage`);
@@ -199,7 +201,7 @@ try {
 
   const posState = await evaluate(`(async () => {
     const navButton = Array.from(document.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('New sale'));
+      .find((button) => button.textContent?.includes('Sell ticket'));
     navButton?.click();
     await new Promise((resolve) => setTimeout(resolve, 100));
     const toolbar = document.querySelector('.sale-toolbar');
@@ -221,7 +223,7 @@ try {
       inputFontSize: Number.parseFloat(getComputedStyle(input).fontSize)
     };
   })()`);
-  expect(posState.saleNavFound, "new sale opens directly from navigation");
+  expect(posState.saleNavFound, "ticket sale opens directly from navigation");
   expect(posState.bellAbsent, "notification bell is removed");
   expect(posState.shiftControlAbsent, "POS starts immediately without opening or closing shifts");
   expect(posState.sidebarScrollable, "sidebar navigation has its own vertical scroller");
@@ -232,7 +234,7 @@ try {
 
   const dashboardState = await evaluate(`(async () => {
     Array.from(document.querySelectorAll('button'))
-      .find((button) => button.textContent?.includes('Dashboard'))?.click();
+      .find((button) => button.textContent?.trim() === 'Today')?.click();
     await new Promise((resolve) => setTimeout(resolve, 100));
     const text = document.querySelector('.admin-main').innerText;
     return {
@@ -244,7 +246,7 @@ try {
 
   const tripsState = await evaluate(`(async () => {
     Array.from(document.querySelectorAll('.admin-sidebar nav button'))
-      .find((button) => button.textContent?.includes('Trips & schedules'))?.click();
+      .find((button) => button.textContent?.trim() === 'Roster')?.click();
     await new Promise((resolve) => setTimeout(resolve, 100));
     const firstRow = document.querySelector('.trip-cards article');
     const actions = document.querySelector('.trip-actions');
@@ -274,7 +276,7 @@ try {
     return {
       buses: await open('Buses'),
       routes: await open('Routes'),
-      crew: await open('Staff & crew')
+      crew: await open('Crew')
     };
   })()`);
   expect(deleteControls.buses && deleteControls.routes && deleteControls.crew, "buses, routes and crew expose delete controls");

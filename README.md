@@ -1,13 +1,13 @@
-# Madina Express Operations Suite
+# Madina Express Version 2
 
-A React/TypeScript transport operations interface backed by Node.js, Express and MySQL/MariaDB. The counter POS is the current entry point, with workflows for paid tickets, reservations, refunds, expenses, trips, dispatch, fleet, routes, protected finance, reports, crew, and role-based staff access. Staff can start selling immediately after sign-in; there is no shift-opening or shift-closing step. The client website is intentionally hidden until 1Bill is configured.
+A React/TypeScript passenger website and one unified staff workspace backed by Node.js, Express and MySQL/MariaDB. The public website shows the live roster and creates unpaid two-hour seat reservations. Staff can sell tickets immediately, collect an online or counter reservation by cash or card, run dated departures, print tickets and manifests, record refunds and expenses, and manage the roster, buses, routes and crew. There is no shift-opening or shift-closing step.
 
 ## Local XAMPP installation
 
 The current machine uses XAMPP at `C:\xamppp`.
 
 1. Copy `backend/.env.example` to `backend/.env` and replace every placeholder value.
-2. Keep `PAYMENT_MODE=disabled` for real environments until authorized 1Bill credentials and callback specifications are installed. Use `demo` only for local testing.
+2. Keep `PAYMENT_MODE=disabled` until authorized 1Bill credentials and callback specifications are installed. Public reservations and counter cash/card sales continue to work while 1Bill is disabled.
 3. Install or update the database:
 
 ```powershell
@@ -38,7 +38,7 @@ node scripts\browser-smoke.mjs
 npm run db:backup
 ```
 
-The integration suite checks MySQL health, anonymous access denial, the disabled public site, immediate paid counter booking creation, unique seat protection, staff login, CSRF, refunds, seat release, reservations, finance locking/unlocking, expenses, safe route/bus/trip/crew deletion, audit events, staff-account creation, logout, and role permissions.
+The integration suite checks MySQL health, public reservations, dated departure state, immediate counter sales, unique seat protection, staff login, CSRF, refunds, seat release, reservation collection, finance locking, expenses, safe deletion, audit events, staff accounts, logout and role permissions.
 
 ## Production controls already implemented
 
@@ -48,11 +48,12 @@ The integration suite checks MySQL health, anonymous access denial, the disabled
 - Admin, manager, counter, dispatcher, and finance authorization rules
 - Admin-only finance and expense pages protected by a 15-minute administrator password re-check
 - Full and partial refunds with balance limits, references, immutable ledger rows, audit events, and full-refund seat release
-- Immediate POS selling, standalone audited expenses, dependency-safe record deletion, server-side reservation expiry, public passenger-data isolation, security headers, and a tested backup script
+- Dated trip runs keep boarding/departure state separate from the weekly roster, so today’s departure never hides a future trip
+- Immediate POS selling, standalone audited expenses, dependency-safe record deletion, server-side reservation expiry, rate-limited public reservations, public passenger-data isolation, security headers, and a tested backup script
 
 ## Important release boundary
 
-The application is operational locally, but real online payments remain intentionally disabled by default. Production 1Bill activation requires Madina Express merchant credentials, the provider's private request/signature fields, signed callback validation, reconciliation, and void/refund endpoint approval. The code does not invent or simulate those credentials in production.
+Real online payments remain intentionally disabled. The public site reserves seats and tells passengers to pay at the counter; it does not simulate a successful 1Bill charge. Production activation requires Madina Express merchant credentials, signed callback validation, reconciliation, status/void calls, and provider-approved refunds.
 
 See [SOFTWARE_AUDIT.md](./SOFTWARE_AUDIT.md) for the detailed audit and remaining operational enhancements.
 

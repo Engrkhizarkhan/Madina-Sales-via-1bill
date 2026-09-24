@@ -1,7 +1,8 @@
 import bcrypt from "bcryptjs";
+import { config } from "./config.js";
 import { pool, transaction } from "./db.js";
 import { allowed, decimal, fail, isoDateTime, pakistanDate, parseJson, requireFields, sqlDateTime, trimTime, uuid } from "./helpers.js";
-import { fetchBooking, fetchBuses, fetchCrew, fetchExpenses, fetchRoutes, fetchTrips, fetchUsers } from "./repository.js";
+import { fetchBooking, fetchBuses, fetchCrew, fetchExpenses, fetchRoutes, fetchTripRuns, fetchTrips, fetchUsers } from "./repository.js";
 
 const query = async (executor, sql, parameters = []) => {
   const [result] = await executor.execute(sql, parameters);
@@ -43,11 +44,26 @@ export async function createBooking(data, user, isPublic, req) {
     const departure = trimTime(trip.departure);
     if (new Date(`${travelDate}T${departure}:00+05:00`) <= new Date()) fail("This departure time has already passed.", 409, "departure_unavailable");
     if (!parseJson(trip.service_days).includes(weekday(travelDate))) fail("This trip does not run on the selected date.", 409, "departure_unavailable");
-    if (seats.some((seat) => seat < 1 || seat > Number(trip.capacity))) fail("One or more selected seats are invalid.", 422, "validation_error");
-    const reserved = !isPublic && data.bookingStatus === "Reserved";
-    const paymentMethod = isPublic ? "1Bill" : String(data.paymentMethod || "Cash");
+    const tripRunId = `${trip.id}-${travelDate}-run-1`;
+    await query(connection,
+      `INSERT IGNORE INTO trip_runs
+       (id, trip_id, service_date, run_number, bus_id, driver, attendant, platform, status, notes)
+       VALUES (?, ?, ?, 1, ?, ?, ?, ?, 'Scheduled', '')`,
+      [tripRunId, trip.id, travelDate, trip.bus_id, trip.driver, trip.attendant, trip.platform]);
+    const runs = await query(connection,
+      `SELECT tr.*, b.registration, b.service, b.seats capacity, b.status bus_status
+       FROM trip_runs tr JOIN buses b ON b.id = tr.bus_id
+       WHERE tr.id = ? FOR UPDATE`, [tripRunId]);
+    const run = runs[0];
+    if (!run || ["Departed", "Cancelled"].includes(run.status) || ["Maintenance", "Retired"].includes(run.bus_status)) {
+      fail("This dated departure is not available for booking.", 409, "departure_unavailable");
+    }
+    if (seats.some((seat) => seat < 1 || seat > Number(run.capacity))) fail("One or more selected seats are invalid.", 422, "validation_error");
+    const reserved = isPublic || data.bookingStatus === "Reserved";
+    const paymentMethod = isPublic ? "Cash" : String(data.paymentMethod || "Cash");
     allowed(paymentMethod, ["Cash", "Card", "Bank transfer", "1Bill"], "paymentMethod");
-    let paymentReference = isPublic ? `DEMO-${uuid().slice(0, 10).toUpperCase()}` : String(data.paymentReference || "").trim();
+    if (paymentMethod === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or card.", 409, "payment_unavailable");
+    let paymentReference = isPublic ? "" : String(data.paymentReference || "").trim();
     if (!reserved && paymentMethod !== "Cash" && !paymentReference) fail("A verified payment reference is required.", 422, "validation_error");
     paymentReference ||= `CASH-${timeCode()}`;
     const fare = Number(trip.route_fare);
@@ -56,8 +72,7 @@ export async function createBooking(data, user, isPublic, req) {
     const paid = reserved ? 0 : total;
     const id = uuid("booking-");
     const stamp = sqlDateTime().replace(/[-: ]/g, "").slice(2);
-    const ticketNo = `${reserved ? "RS" : "ME"}-${stamp}-${Math.floor(10 + Math.random() * 90)}`;
-    const tripRunId = `${trip.id}-${travelDate}-run-${Number(trip.run_number)}`;
+    const ticketNo = `${reserved ? "RS" : "ME"}-${stamp}-${uuid().slice(-6).toUpperCase()}`;
     const expiresAt = reserved ? sqlDateTime(new Date(Date.now() + 7_200_000)) : null;
     await query(connection,
       `INSERT INTO bookings
@@ -69,9 +84,9 @@ export async function createBooking(data, user, isPublic, req) {
       [id, ticketNo, isPublic ? "Public web" : "Counter", String(data.passenger).trim(), String(data.phone).trim(),
         String(data.cnic).trim(), ["Male", "Female"].includes(data.gender) ? data.gender : "Male",
         `${trip.origin} → ${trip.destination}`, trip.destination, String(data.boardingPoint || trip.boarding_point).trim(),
-        trip.registration, trip.service, fare, discount, total, paid, reserved ? total : 0, paymentMethod, paymentReference,
-        reserved ? "Unpaid" : "Paid", reserved ? "Reserved" : "Confirmed", travelDate, trip.departure, trip.driver,
-        trip.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Public website",
+        run.registration, run.service, fare, discount, total, paid, reserved ? total : 0, paymentMethod, paymentReference,
+        reserved ? "Unpaid" : "Paid", reserved ? "Reserved" : "Confirmed", travelDate, trip.departure, run.driver,
+        run.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Public website",
         "Madina Terminal, Peshawar", user?.id || null]);
     for (const seat of seats) {
       await query(connection, "INSERT INTO booking_seats (booking_id, trip_run_id, seat_number, active) VALUES (?, ?, ?, 1)", [id, tripRunId, seat]);
@@ -124,6 +139,7 @@ export async function confirmReservation(id, data, user, req) {
     if (!row || row.booking_status !== "Reserved") fail("Active reservation not found.", 404, "not_found");
     if (row.is_expired) fail("This reservation has expired.", 409, "reservation_expired");
     const method = allowed(String(data.paymentMethod || "Cash"), ["Cash", "Card", "Bank transfer", "1Bill"], "paymentMethod");
+    if (method === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or card.", 409, "payment_unavailable");
     let reference = String(data.paymentReference || "").trim();
     if (method !== "Cash" && !reference) fail("A verified payment reference is required.", 422, "validation_error");
     reference ||= `CASH-${timeCode()}`;
@@ -208,6 +224,15 @@ export async function saveTrip(id, data, user, req) {
   const recordId = id === "new" ? uuid("trip-") : id;
   const days = Array.isArray(data.days) ? data.days.filter((day) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].includes(day)) : [];
   if (!days.length) fail("Select at least one service day.", 422, "validation_error");
+  const conflicts = (await fetchTrips()).filter((trip) =>
+    trip.id !== recordId && trip.active && data.active &&
+    trip.departure === String(data.departure).slice(0, 5) &&
+    trip.days.some((day) => days.includes(day)) &&
+    (trip.busId === data.busId || trip.driver === String(data.driver).trim() || trip.attendant === String(data.attendant).trim()),
+  );
+  if (conflicts.length) {
+    fail("This bus or crew member already has a trip at the same time on one of the selected days.", 409, "roster_conflict");
+  }
   const before = (await fetchTrips()).find((item) => item.id === recordId) || null;
   const lastDepartedAt = data.lastDepartedAt ? sqlDateTime(new Date(data.lastDepartedAt)) : null;
   await query(pool,
@@ -275,6 +300,7 @@ export async function deleteTrip(id, user, req) {
   if (Number(references[0].count) > 0) {
     fail("This trip has ticket history and cannot be deleted. Pause the schedule instead.", 409, "record_in_use");
   }
+  await query(pool, "DELETE FROM trip_runs WHERE trip_id = ?", [id]);
   await query(pool, "DELETE FROM trips WHERE id = ?", [id]);
   await audit("trip.deleted", "trip", id, before, null, user.id, req);
 }
@@ -296,19 +322,29 @@ export async function deleteCrew(id, user, req) {
 }
 
 export async function transitionTrip(id, data, user, req) {
-  requireFields(data, ["action"]);
+  requireFields(data, ["action", "date"]);
   const action = allowed(data.action, ["boarding", "depart", "next"], "action");
+  const serviceDate = String(data.date);
+  if (!validDate(serviceDate)) fail("Choose a valid service date.", 422, "validation_error");
   return transaction(async (connection) => {
     const before = (await fetchTrips(false, connection)).find((item) => item.id === id);
     if (!before) fail("Trip not found.", 404, "not_found");
-    if (action === "boarding") await query(connection, "UPDATE trips SET status = 'Boarding' WHERE id = ?", [id]);
+    const runId = `${id}-${serviceDate}-run-1`;
+    await query(connection,
+      `INSERT IGNORE INTO trip_runs
+       (id, trip_id, service_date, run_number, bus_id, driver, attendant, platform, status, notes)
+       VALUES (?, ?, ?, 1, ?, ?, ?, ?, 'Scheduled', '')`,
+      [runId, id, serviceDate, before.busId, before.driver, before.attendant, before.platform]);
+    if (action === "boarding") await query(connection, "UPDATE trip_runs SET status = 'Boarding', boarding_started_at = NOW() WHERE id = ?", [runId]);
     if (action === "depart") {
-      await query(connection, "UPDATE trips SET status = 'Departed', last_departed_at = NOW() WHERE id = ?", [id]);
+      await query(connection, "UPDATE trip_runs SET status = 'Departed', departed_at = NOW() WHERE id = ?", [runId]);
+      await query(connection, "UPDATE trips SET last_departed_at = NOW() WHERE id = ?", [id]);
       await query(connection, "UPDATE buses SET status = 'On route' WHERE id = ?", [before.busId]);
     }
-    if (action === "next") await query(connection, "UPDATE trips SET status = 'Scheduled', run_number = run_number + 1 WHERE id = ?", [id]);
-    const after = (await fetchTrips(false, connection)).find((item) => item.id === id);
-    await audit(`trip.${action}`, "trip", id, before, after, user.id, req, connection);
+    if (action === "next") await query(connection, "UPDATE trip_runs SET status = 'Scheduled', boarding_started_at = NULL, departed_at = NULL WHERE id = ?", [runId]);
+    const run = (await fetchTripRuns(serviceDate, connection)).find((item) => item.tripId === id);
+    const after = { ...before, status: run.status, runNumber: run.runNumber, runDate: serviceDate };
+    await audit(`trip.${action}`, "trip_run", runId, before, after, user.id, req, connection);
     return after;
   });
 }
