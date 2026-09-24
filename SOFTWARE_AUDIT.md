@@ -53,7 +53,7 @@ The public website is enabled for live timetable search and unpaid two-hour rese
 - npm production dependency audit: 0 known vulnerabilities
 - MySQL backup generation: passed
 - Apache staff login, management fallback, assets, and authenticated API endpoints: HTTP 200 as expected; disabled public booking API: intentional HTTP 404
-- Headless Chrome checks cover the public site, guarded management route, login, immediate POS access, sidebar scrolling, typography, roster date picking/table actions, master-record deletion, protected finance, staff access and logout
+- Live headless Chrome interaction suite: 26 checks passed across the public site, guarded management route, login, immediate POS access, sidebar scrolling, typography, roster date picking/table actions, master-record deletion, protected finance, staff access and logout
 
 ## Before an internet-facing launch
 

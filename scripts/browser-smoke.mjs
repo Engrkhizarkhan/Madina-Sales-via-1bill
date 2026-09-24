@@ -190,6 +190,7 @@ try {
     }
     return { path: location.pathname, text: document.body.innerText };
   })()`);
+  if (!loginResult.path.endsWith("/manage")) console.log(`Login result: ${JSON.stringify(loginResult).slice(0, 1600)}`);
   expect(loginResult.path.endsWith("/manage"), "valid staff login opens management");
   if (!loginResult.text.includes("System settings")) {
     console.log(loginResult.text.slice(0, 1200) || "[empty document body]");

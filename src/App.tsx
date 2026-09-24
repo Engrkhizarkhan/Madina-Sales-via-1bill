@@ -1542,57 +1542,6 @@ const roleViews: Record<StaffUser["role"], AdminView[]> = {
   dispatcher: ["trips", "fleet", "reports", "crew", "settings"],
   finance: ["bookings", "reports", "settings"],
 };
-const viewMeta: Record<AdminView, { title: string; description: string }> = {
-  dashboard: {
-    title: "Operations dashboard",
-    description: "Live overview of sales, departures and terminal activity",
-  },
-  sale: {
-    title: "New sale",
-    description: "Issue a paid ticket or create a counter reservation",
-  },
-  bookings: {
-    title: "Bookings & refunds",
-    description: "Search, print, update and refund passenger tickets",
-  },
-  reservations: {
-    title: "Reservations",
-    description: "Manage temporary counter holds before they expire",
-  },
-  trips: {
-    title: "Trips & schedules",
-    description: "Plan departures, assign buses and manage crews",
-  },
-  fleet: {
-    title: "Fleet management",
-    description: "Monitor vehicle availability, capacity and maintenance",
-  },
-  routes: {
-    title: "Routes & fares",
-    description: "Manage destinations, travel times and pricing",
-  },
-  finance: {
-    title: "Finance",
-    description: "Track collections, payment channels and settlements",
-  },
-  expenses: {
-    title: "Expenses",
-    description: "Record and review operating expenses",
-  },
-  reports: {
-    title: "Reports & print",
-    description: "Passenger lists, CNIC sheets and terminal vouchers",
-  },
-  crew: {
-    title: "Staff & crew",
-    description: "Manage drivers, female attendants and duty assignments",
-  },
-  settings: {
-    title: "System settings",
-    description: "Configure payments, tickets, policies and data connections",
-  },
-};
-
 const defaultAdminView = (user: StaffUser): AdminView => {
   if (user.forcePasswordChange) return "settings";
   if (["admin", "manager", "counter"].includes(user.role)) return "dashboard";
@@ -1969,7 +1918,7 @@ function ManagementApp({
               <Menu size={19} />
             </button>
             <div className="admin-page-title">
-              <strong>{viewMeta[activeView].title}</strong>
+              <strong>Madina Express</strong>
             </div>
           </div>
           <div className="admin-topbar-right">
