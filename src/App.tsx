@@ -532,6 +532,7 @@ function bookingsForTripRun(
 const formatPrintTime = (value?: string) =>
   value
     ? new Date(value).toLocaleString("en-PK", {
+        timeZone: "Asia/Karachi",
         day: "2-digit",
         month: "short",
         hour: "2-digit",
