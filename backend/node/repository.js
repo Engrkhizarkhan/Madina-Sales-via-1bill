@@ -1,4 +1,4 @@
-import { pool, transaction } from "./db.js";
+import { pool } from "./db.js";
 import { isoDateTime, parseJson, trimTime } from "./helpers.js";
 
 const rows = async (sql, parameters = [], executor = pool) => {
@@ -59,14 +59,14 @@ export async function fetchTrips(activeOnly = false, executor = pool) {
   }));
 }
 
-export async function fetchTripRuns(serviceDate, executor = pool) {
+export async function fetchTripRuns(serviceDate = null, executor = pool) {
   const result = await rows(
     `SELECT tr.id, tr.trip_id, tr.service_date, tr.run_number, tr.bus_id, tr.driver,
-            tr.attendant, tr.platform, tr.status, tr.notes, tr.boarding_started_at, tr.departed_at
+            tr.attendant, tr.platform, tr.status, tr.notes, tr.boarding_started_at, tr.departed_at, tr.returned_at, tr.snapshot
      FROM trip_runs tr
-     WHERE tr.service_date = ?
-     ORDER BY tr.id`,
-    [serviceDate], executor,
+     ${serviceDate ? 'WHERE tr.service_date = ?' : ''}
+     ORDER BY tr.service_date DESC, tr.id`,
+    serviceDate ? [serviceDate] : [], executor,
   );
   return result.map((row) => ({
     id: row.id,
@@ -81,6 +81,8 @@ export async function fetchTripRuns(serviceDate, executor = pool) {
     notes: row.notes,
     boardingStartedAt: isoDateTime(row.boarding_started_at),
     departedAt: isoDateTime(row.departed_at),
+    returnedAt: isoDateTime(row.returned_at),
+    snapshot: parseJson(row.snapshot, null),
   }));
 }
 
@@ -133,26 +135,6 @@ export async function fetchExpenses(executor = pool) {
     notes: row.notes, shiftId: row.shift_id == null ? null : Number(row.shift_id),
     createdBy: row.created_by_name, createdAt: isoDateTime(row.created_at),
   }));
-}
-
-export async function expireReservations() {
-  return transaction(async (connection) => {
-    const expired = await rows(
-      "SELECT id FROM bookings WHERE booking_status = 'Reserved' AND expires_at IS NOT NULL AND expires_at <= NOW() FOR UPDATE",
-      [], connection,
-    );
-    if (!expired.length) return 0;
-    const ids = expired.map((item) => item.id);
-    await connection.query("UPDATE bookings SET booking_status = 'Cancelled' WHERE id IN (?)", [ids]);
-    await connection.query("UPDATE booking_seats SET active = 0 WHERE booking_id IN (?)", [ids]);
-    for (const id of ids) {
-      await connection.execute(
-        "INSERT INTO audit_logs (user_id, action, entity_type, entity_id, before_json, after_json, ip_address) VALUES (NULL, 'reservation.expired', 'booking', ?, NULL, ?, 'system')",
-        [id, JSON.stringify({ bookingStatus: "Cancelled" })],
-      );
-    }
-    return ids.length;
-  });
 }
 
 export async function publicOccupancy(executor = pool) {

@@ -49,6 +49,8 @@ try {
     );
   }
 
+  // Demo records are opt-in and must never reappear during a production update.
+  if (env("SEED_DEMO_DATA") === "true") {
   const routes = [
     ["psh-khi", "Peshawar", "Karachi", "1,380 km", "14h 00m", 7000, "Madina Terminal, Peshawar"],
     ["psh-lhr", "Peshawar", "Lahore", "520 km", "5h 45m", 4200, "Madina Terminal, Peshawar"],
@@ -86,6 +88,7 @@ try {
   for (const trip of trips) {
     const values = [...trip.slice(0, 9), JSON.stringify(trip[9])];
     await admin.execute("INSERT IGNORE INTO trips (id, route_id, bus_id, departure, arrival, driver, attendant, platform, status, service_days, active, run_number) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)", values);
+  }
   }
   console.log("Madina Express MySQL database installed for the Node.js backend.");
 } finally {

@@ -4,7 +4,7 @@ import { config } from "./config.js";
 import { pool, transaction } from "./db.js";
 import { ApiError, fail, isoDateTime, pakistanDate, randomToken, requireFields, tokenHash } from "./helpers.js";
 import {
-  expireReservations, fetchBookings, fetchBuses, fetchCrew,
+  fetchBookings, fetchBuses, fetchCrew,
   fetchExpenses, fetchRoutes, fetchTripRuns, fetchTrips, fetchUsers, publicOccupancy,
 } from "./repository.js";
 import {
@@ -26,7 +26,7 @@ app.use((req, res, next) => {
   }
   res.set({
     "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token",
-    "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
@@ -150,7 +150,6 @@ app.post("/auth/login", asyncRoute(async (req, res) => {
 
 app.get("/public/bootstrap", asyncRoute(async (_req, res) => {
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  await expireReservations();
   res.json({ fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), occupancy: await publicOccupancy(), paymentMode: config.paymentMode });
 }));
 
@@ -158,7 +157,9 @@ app.get("/public/trip-runs", asyncRoute(async (req, res) => {
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
   const date = String(req.query.date || "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("Choose a valid travel date.", 422, "validation_error");
-  res.json({ runs: await fetchTripRuns(date) });
+  const runs = await fetchTripRuns(date);
+  res.json({ runs: runs.map((run) => ({ id: run.id, tripId: run.tripId, date: run.date, runNumber: run.runNumber,
+    busId: run.busId, status: run.status, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true) });
 }));
 
 app.post("/public/bookings", asyncRoute(async (req, res) => {
@@ -205,15 +206,14 @@ app.post("/auth/change-password", asyncRoute(async (req, res) => {
 }));
 
 app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
-  await expireReservations();
   const trips = await fetchTrips();
-  const runs = await fetchTripRuns(pakistanDate());
+  const runs = await fetchTripRuns();
   const todayTrips = trips.map((trip) => {
-    const run = runs.find((item) => item.tripId === trip.id);
-    return run ? { ...trip, status: run.status === "Cancelled" ? "Departed" : run.status, runNumber: run.runNumber } : { ...trip, status: "Scheduled", runNumber: 1 };
+    const run = runs.find((item) => item.tripId === trip.id && item.date === pakistanDate());
+    return run ? { ...trip, status: run.status, runNumber: run.runNumber } : { ...trip, status: "Scheduled", runNumber: 1 };
   });
   res.json({
-    bookings: await fetchBookings(), fleet: await fetchBuses(), trips: todayTrips, routes: await fetchRoutes(),
+    bookings: await fetchBookings(), fleet: await fetchBuses(), trips: todayTrips, runs, routes: await fetchRoutes(),
     crew: await fetchCrew(), users: req.user.role === "admin" ? await fetchUsers() : [],
     user: publicUser(req.user), paymentMode: config.paymentMode,
   });

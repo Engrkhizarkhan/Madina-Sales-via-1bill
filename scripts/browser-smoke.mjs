@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import bcrypt from "bcryptjs";
 import mysql from "mysql2/promise";
@@ -11,6 +11,7 @@ const appUrl = (process.env.BROWSER_APP_URL || "http://localhost/madina-express"
 const apiHealthUrl = process.env.BROWSER_API_URL || "http://localhost:3101/health";
 let qaAdminId = null;
 let qaConnection = null;
+let qaFixture = null;
 mkdirSync(resolve(".qa-browser"), { recursive: true });
 rmSync(profilePath, { recursive: true, force: true });
 
@@ -117,6 +118,7 @@ try {
 
   await send("Page.enable");
   await send("Runtime.enable");
+  await send("Emulation.setDeviceMetricsOverride", {width:1440,height:1000,deviceScaleFactor:1,mobile:false});
   await navigate(`${appUrl}/`);
   await delay(1200);
   const publicState = await evaluate(`({
@@ -129,6 +131,8 @@ try {
   expect(publicState.title.includes("Madina Express"), "application page title renders");
   expect(!publicState.loginVisible && publicState.publicSearchVisible && publicState.publicBookingCopy, "public URL shows the passenger timetable and reservation search");
   expect(publicState.oneBillDeferred, "public website clearly defers 1Bill without simulating payment");
+  expect(await evaluate("!document.querySelector('.hero-visual') && !document.querySelector('.staff-login-button')"), "public home has no hero image or staff login link");
+  writeFileSync(resolve('.qa-browser/public.png'), Buffer.from((await send('Page.captureScreenshot')).data,'base64'));
   const apiProbe = await evaluate(`fetch(${JSON.stringify(apiHealthUrl)}, { credentials: 'include' }).then(async (response) => ({ status: response.status, text: await response.text() })).catch((error) => ({ error: error.message }))`);
   if (apiProbe.status !== 200) console.log(`API probe failed: ${JSON.stringify(apiProbe)}`);
   expect(apiProbe.status === 200 && apiProbe.text.includes('"runtime":"node"'), "browser connects to the Node.js API");
@@ -136,6 +140,8 @@ try {
   await navigate(`${appUrl}/manage`);
   const guardedPath = await evaluate("location.pathname");
   expect(guardedPath.endsWith("/login"), "management URL redirects anonymous users to sign in");
+  expect(await evaluate("document.querySelector('.login-form').innerText.includes('Welcome back') && !document.querySelector('.login-brand-panel')"), "login has a simple welcome without generic branding");
+  writeFileSync(resolve('.qa-browser/login.png'), Buffer.from((await send('Page.captureScreenshot')).data,'base64'));
 
   const invalidLogin = await evaluate(`(async () => {
     const setValue = (element, value) => {
@@ -164,7 +170,7 @@ try {
     qaPassword = "BrowserAdmin!2026Test";
     qaConnection = await mysql.createConnection({
       host: environment.DB_HOST,
-      port: Number(environment.DB_PORT || 3306),
+      port: Number(process.env.BROWSER_DB_PORT || environment.DB_PORT || 3306),
       user: environment.DB_USER,
       password: environment.DB_PASSWORD,
       database: environment.DB_NAME,
@@ -200,6 +206,22 @@ try {
   expect(loginResult.text.includes("MySQL operational database connected"), "management system reports the central database");
   expect(loginResult.text.includes("Staff access"), "administrator staff-account management is available");
 
+  if (qaConnection) {
+    await qaConnection.execute('UPDATE users SET force_password_change = 0 WHERE id = ?', [qaAdminId]);
+    qaFixture = {bookings:[]};
+    const post = (path,body) => evaluate(`fetch(${JSON.stringify(new URL(path,apiHealthUrl.replace(/\/health$/, '/')).href)}, {method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':sessionStorage.getItem('madina-express-csrf')},body:${JSON.stringify(JSON.stringify(body))}}).then(async r => {const b=await r.json();if(!r.ok)throw new Error(b.error?.message);return b;})`);
+    qaFixture.route = (await post('routes/new',{from:'QA Print Origin',to:'QA Print Destination',distance:'20 km',duration:'1h',fare:500,boarding:'QA Terminal',status:'Active'})).route;
+    qaFixture.bus = (await post('buses/new',{registration:`QA-${Date.now()}`,service:'Executive',seats:49,model:'QA',year:2026,status:'Ready',nextService:'Not scheduled'})).bus;
+    qaFixture.trip = (await post('trips/new',{routeId:qaFixture.route.id,busId:qaFixture.bus.id,departure:'23:59',arrival:'01:00',driver:'QA Print Driver',attendant:'QA Print Attendant',platform:'QA',status:'Scheduled',days:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],active:true})).trip;
+    const date = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Karachi',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    const booking = {passenger:'QA Passenger',phone:'03001112222',cnic:'17301-1234567-1',gender:'Male',tripId:qaFixture.trip.id,date,paymentMethod:'Cash'};
+    qaFixture.bookings.push((await post('bookings',{...booking,seats:Array.from({length:40},(_,i)=>i+1),bookingStatus:'Confirmed'})).booking.id);
+    qaFixture.bookings.push((await post('bookings',{...booking,passenger:'QA Reservation',seats:[41,42],bookingStatus:'Reserved'})).booking.id);
+    await post(`bookings/${qaFixture.bookings[0]}/refunds`,{amount:100,method:'Cash',reason:'Passenger request',notes:'QA printed refund'});
+    await navigate(`${appUrl}/manage`);
+    await delay(300);
+  }
+
   const posState = await evaluate(`(async () => {
     const navButton = Array.from(document.querySelectorAll('button'))
       .find((button) => button.textContent?.includes('Sell ticket'));
@@ -232,6 +254,7 @@ try {
   expect(posState.passengerHeading === "Passenger" && !posState.repeatedPassengerLabel, "POS passenger wording is concise");
   expect(posState.toggleBelowTrip, "paid ticket and reservation toggle sits below trip selection");
   expect(posState.inputFontSize >= 15, "POS fields use readable text sizing");
+  expect(await evaluate("!document.querySelector('.admin-sidebar .brand-mark')"), "staff sidebar has no ME logo");
 
   const dashboardState = await evaluate(`(async () => {
     Array.from(document.querySelectorAll('button'))
@@ -266,6 +289,7 @@ try {
   expect(tripsState.tableHeader.includes("Time") && tripsState.tableHeader.includes("Actions"), "trip schedule has a clear table structure");
   expect(tripsState.deleteAction && tripsState.actionsFit, "trip actions include delete without overlap");
   expect(tripsState.headingSize <= 28 && tripsState.instructionSize >= 14, "page headings and instructions use balanced readable type");
+  writeFileSync(resolve('.qa-browser/roster.png'), Buffer.from((await send('Page.captureScreenshot')).data,'base64'));
 
   const deleteControls = await evaluate(`(async () => {
     const open = async (label) => {
@@ -281,6 +305,28 @@ try {
     };
   })()`);
   expect(deleteControls.buses && deleteControls.routes && deleteControls.crew, "buses, routes and crew expose delete controls");
+
+  await evaluate(`Array.from(document.querySelectorAll('.admin-sidebar nav button')).find(b => b.textContent.trim() === 'Print')?.click()`);
+  await delay(250);
+  if (qaFixture) {
+    await evaluate(`(()=>{const select=document.querySelectorAll('.report-selector select')[0];Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(select,${JSON.stringify(qaFixture.trip.id)});select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+    await delay(100);
+  }
+  expect(await evaluate("document.querySelectorAll('.report-card').length === 4 && !!document.querySelector('.report-selector input[type=date]')"), "print workspace offers a dated bus selector and four formats");
+  writeFileSync(resolve('.qa-browser/print-workspace.png'), Buffer.from((await send('Page.captureScreenshot')).data,'base64'));
+  for (let index=0;index<4;index++) {
+    await evaluate(`document.querySelectorAll('.report-card button')[${index}].click()`);
+    await delay(200);
+    const state = await evaluate(`({text:document.querySelector('.print-document').innerText,width:document.querySelector('.print-document').scrollWidth})`);
+    expect(state.text.includes('MADINA EXPRESS') && (index < 2 || state.text.includes('Net collected')), `print format ${index+1} contains its expected document and totals`);
+    if (qaFixture) expect(state.text.includes('QA Passenger') && (index !== 1 || !state.text.includes('QA Reservation')), `print format ${index+1} uses real ticket records and appropriate passenger status`);
+    await evaluate(`document.body.classList.add('${index === 3 ? 'printing-thermal' : 'printing-a4'}')`);
+    const pdf = await send('Page.printToPDF', {printBackground:true, preferCSSPageSize:true, landscape:index!==3, paperWidth:index===3?80/25.4:297/25.4,paperHeight:210/25.4,marginTop:0,marginBottom:0,marginLeft:0,marginRight:0});
+    writeFileSync(resolve('.qa-browser', ['bus-detail','cnic','terminal-a4','terminal-thermal'][index]+'.pdf'),Buffer.from(pdf.data,'base64'));
+    await evaluate(`document.body.classList.remove('printing-thermal','printing-a4');Array.from(document.querySelectorAll('.report-toolbar button')).find(b => b.textContent.trim() === 'Close').click()`);
+    await delay(100);
+  }
+  expect(runtimeErrors.length === 0, "all visited views and print previews have no JavaScript exceptions");
 
   const financeState = await evaluate(`(async () => {
     Array.from(document.querySelectorAll('button'))
@@ -306,6 +352,20 @@ try {
 } finally {
   chrome.kill();
   if (qaConnection && qaAdminId) {
+    if (qaFixture) {
+      for (const id of qaFixture.bookings) {
+        await qaConnection.execute('DELETE FROM financial_transactions WHERE booking_id = ?', [id]);
+        await qaConnection.execute('DELETE FROM refunds WHERE booking_id = ?', [id]);
+        await qaConnection.execute('DELETE FROM booking_seats WHERE booking_id = ?', [id]);
+        await qaConnection.execute('DELETE FROM bookings WHERE id = ?', [id]);
+      }
+      if (qaFixture.trip) {
+        await qaConnection.execute('DELETE FROM trip_runs WHERE trip_id = ?', [qaFixture.trip.id]);
+        await qaConnection.execute('DELETE FROM trips WHERE id = ?', [qaFixture.trip.id]);
+      }
+      if (qaFixture.bus) await qaConnection.execute('DELETE FROM buses WHERE id = ?', [qaFixture.bus.id]);
+      if (qaFixture.route) await qaConnection.execute('DELETE FROM routes WHERE id = ?', [qaFixture.route.id]);
+    }
     await qaConnection.execute("DELETE FROM api_sessions WHERE user_id = ?", [qaAdminId]);
     await qaConnection.execute("DELETE FROM audit_logs WHERE user_id = ?", [qaAdminId]);
     await qaConnection.execute("DELETE FROM users WHERE id = ?", [qaAdminId]);

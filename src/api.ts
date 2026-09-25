@@ -54,7 +54,7 @@ export const api = {
   health: () => request<{ status: string; database: string }>("/health"),
   publicBootstrap: <T>() => request<T>("/public/bootstrap"),
   publicTripRuns: <T>(date: string) =>
-    request<{ runs: T[] }>(`/public/trip-runs?date=${encodeURIComponent(date)}`),
+    request<{ runs: T[]; occupancy: unknown[]; fleet: unknown[]; trips: unknown[]; routes: unknown[] }>(`/public/trip-runs?date=${encodeURIComponent(date)}`),
   adminBootstrap: <T>() => request<T>("/admin/bootstrap"),
   me: <T>() =>
     request<T & { csrfToken?: string }>("/auth/me").then(rememberCsrf),
@@ -136,10 +136,10 @@ export const api = {
     request<{ ok: boolean }>(`/trips/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
-  transitionTrip: <T>(id: string, action: "boarding" | "depart" | "next", date: string) =>
+  transitionTrip: <T>(id: string, action: "boarding" | "depart" | "return", date: string, notes = "") =>
     request<{ trip: T }>(`/trips/${encodeURIComponent(id)}/transition`, {
       method: "POST",
-      body: JSON.stringify({ action, date }),
+      body: JSON.stringify({ action, date, notes }),
     }),
   listTripRuns: <T>(date: string) =>
     request<{ runs: T[] }>(`/trip-runs?date=${encodeURIComponent(date)}`),

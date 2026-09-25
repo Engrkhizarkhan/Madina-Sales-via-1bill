@@ -108,10 +108,10 @@ button {
 }
 .public-hero {
   width: min(1180px, calc(100% - 40px));
-  min-height: 510px;
+  min-height: 280px;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 0.93fr 1.07fr;
+  grid-template-columns: 1fr;
   align-items: center;
   gap: 42px;
 }
@@ -481,10 +481,10 @@ button {
   rotate: 180deg;
 }
 .login-shell {
-  width: min(920px, 100%);
-  min-height: 535px;
+  width: min(460px, 100%);
+  min-height: 420px;
   display: grid;
-  grid-template-columns: 0.96fr 1.04fr;
+  grid-template-columns: 1fr;
   border: 1px solid #d7e1dc;
   border-radius: 20px;
   overflow: hidden;
@@ -4524,7 +4524,7 @@ td small {
   margin: 0;
 }
 @page madina-thermal {
-  size: 80mm auto;
+  size: 80mm 297mm;
   margin: 0;
 }
 .print-document {
@@ -5756,7 +5756,7 @@ td small {
 .trip-actions {
   min-width: 0;
   justify-content: flex-end;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
 }
 .lifecycle-action {
   min-height: 38px;
@@ -5813,6 +5813,51 @@ td small {
 .delete-error {
   margin: 0 20px 12px;
 }
+.login-form .login-business { color: var(--green-700); font-size: 16px; font-weight: 650; }
+.login-form label > span, .login-form input, .login-form button { font-size: 15px; }
+.login-form > small { font-size: 12px; }
+.hero-copy { max-width: 850px; padding: 40px 0; }
+.roster-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.roster-tabs button { padding: 9px 16px; border: 1px solid var(--line); border-radius: 8px; background: white; font-size: 14px; }
+.roster-tabs button.active { background: var(--green-700); color: white; }
+.report-selector { display: flex; flex-wrap: wrap; gap: 16px; padding: 20px; }
+.report-selector label { display: flex; flex: 1 1 240px; flex-direction: column; gap: 8px; min-width: 0; font-size: 14px; }
+.report-selector input, .report-selector select { min-height: 44px; width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 7px; background: white; font-size: 14px; }
+.report-trip-summary { display: flex; flex-wrap: wrap; gap: 24px; width: 100%; padding-top: 16px; border-top: 1px solid var(--line); }
+.report-trip-summary span { display: grid; gap: 5px; }
+.report-trip-summary small { font-size: 13px; color: #64736b; }
+.report-card-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 20px 0; }
+.report-card { display: flex; flex-direction: column; justify-content: space-between; gap: 16px; padding: 20px; }
+.report-card h2 { font-size: 17px; margin: 8px 0; }
+.report-card p { color: #64736b; font-size: 14px; line-height: 1.5; }
+.report-card b { font-size: 13px; color: var(--green-700); }
+.reports-view .search-box { margin: 16px; }
+.refund-release { display: flex; align-items: center; gap: 10px; margin: 16px 20px; font-size: 14px; }
+.refund-release input { width: 18px; height: 18px; }
+.trip-table-head, .trip-cards article { min-width: 1060px; grid-template-columns: 82px minmax(180px, 1.2fr) 105px minmax(135px, 0.9fr) 110px 100px 230px; gap: 10px; }
+@media print {
+  /* Remove hidden screen layout, rather than reserving blank pages for it. */
+  body:has(.print-document) .admin-shell > :not(.report-overlay) { display: none !important; }
+  body:has(.receipt) .admin-shell > :not(.receipt-overlay),
+  body:has(.receipt) .public-site > :not(.receipt-overlay) { display: none !important; }
+  html, body, #root, .admin-shell, .public-site { display: block !important; width: auto !important; height: auto !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; }
+  .report-overlay, .report-preview-shell, .receipt-overlay { display: block !important; position: static !important; width: auto !important; max-height: none !important; height: auto !important; min-height: 0 !important; margin: 0 !important; padding: 0 !important; overflow: visible !important; background: white !important; }
+  .print-document, .receipt { position: static !important; margin: 0 !important; min-height: 0 !important; box-shadow: none !important; }
+  .report-toolbar, .receipt-actions { display: none !important; }
+  .report-a4.report-landscape { width: 297mm !important; min-height: 0 !important; padding: 10mm !important; }
+  .report-thermal { width: 80mm !important; padding: 5mm !important; }
+  .print-document .document-table { table-layout: auto; }
+  .print-document .document-table th, .print-document .document-table td { font-size: 10px !important; padding: 3px 5px !important; line-height: 1.2; }
+  .print-document .document-table td strong, .print-document .document-table td small { font-size: 10px !important; }
+  .document-table thead { display: table-header-group; }
+  .document-table tr, .thermal-passenger, .voucher-summary-grid { break-inside: avoid; }
+  .print-document .document-table td small { margin-top: 1px; }
+  .print-document .voucher-summary-grid { width: 100%; grid-template-columns: repeat(3, 1fr); }
+  .print-document .voucher-summary-grid span { padding: 6px; }
+  .print-document .document-footer { margin-top: 12px; break-before: avoid; }
+}
+@media (max-width: 1100px) { .report-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .report-card-grid { grid-template-columns: 1fr; } }
 .admin-shell .form-modal > header h2,
 .admin-shell .settings-title h2 {
   font-size: 17px;
