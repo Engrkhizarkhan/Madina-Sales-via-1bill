@@ -4522,7 +4522,7 @@ function ReportModal({
           )}
           {!voucher && <p className="document-empty">Passengers: {rows.length} · {trip.departedAt ? `Departed ${formatPrintTime(trip.departedAt)}` : "Before departure"}{trip.returnedAt ? ` · Returned ${formatPrintTime(trip.returnedAt)}` : ""}</p>}
           <footer className="document-footer">
-            <span>Printed {new Date().toLocaleString("en-PK")}</span>
+            <span>Printed {new Date().toLocaleString("en-PK", {timeZone: "Asia/Karachi"})}</span>
             <span>Prepared by {preparedBy}</span>
           </footer>
         </article>

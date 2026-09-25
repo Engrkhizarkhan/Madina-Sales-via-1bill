@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import bcrypt from "bcryptjs";
@@ -46,6 +46,13 @@ async function waitForDebugger() {
 }
 
 function readBackendEnv() {
+  if (process.env.BROWSER_SSH) {
+    // Read only database connection settings into memory, never log credentials.
+    const output = execFileSync('C:\\Windows\\System32\\OpenSSH\\ssh.exe', ['-o','BatchMode=yes',process.env.BROWSER_SSH,
+      `cd /opt/madina-express && sudo node --input-type=module -e 'import {config} from "./backend/node/config.js"; console.log(JSON.stringify(config.db))'`], {encoding:'utf8',windowsHide:true});
+    const db = JSON.parse(output.trim().split(/\r?\n/).at(-1));
+    return {DB_HOST:'127.0.0.1',DB_PORT:process.env.BROWSER_DB_PORT,DB_USER:db.user,DB_PASSWORD:db.password,DB_NAME:db.database};
+  }
   const values = {};
   for (const line of readFileSync(resolve("backend", ".env"), "utf8").split(/\r?\n/)) {
     if (!line || line.startsWith("#") || !line.includes("=")) continue;

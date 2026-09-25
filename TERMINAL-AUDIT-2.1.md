@@ -20,12 +20,15 @@
 
 ## Verification
 
-Build, lint, Node syntax checks, MySQL/API integration and Chrome workflow/print checks are run before release. Browser tests include a 40-seat paid booking, two reserved seats and a partial refund. PDFs are rendered for visual inspection, including multi-page tables. Exact final results and deployment status are recorded in the delivery message.
+Build, lint and Node syntax checks passed. All 62 API checks passed against the deployed HTTPS API and server MySQL, with scoped cleanup completed. All 39 Chrome checks passed against the live URL. Browser tests include a 40-seat paid booking, two reserved seats and a partial refund. All four PDFs were rendered and visually inspected, including multi-page tables. The existing two bookings and three trip runs remained after testing; temporary live QA users and records were removed. Production dependencies reported zero known vulnerabilities in npm audit at release time.
+
+The final local API run passed its 62 assertions but the local XAMPP process stopped during cleanup; that run is not counted as a clean pass. The equivalent server run completed cleanly. Local XAMPP stability is a separate environment follow-up.
 
 ## Remaining operational decisions
 
 - 1Bill remains disabled until actual gateway credentials and verified callbacks are configured. Card entries record a payment received on the terminal; this software does not charge a card itself.
 - Management must confirm its commercial refund fees/cutoffs; the application does not invent them.
 - A physical printer test is still needed for the client's exact A4 and 80mm drivers/cutter settings.
+- Passenger identity is currently recorded per booking. For accurate individual highway CNIC lists, issue separate bookings for different passengers; per-seat passenger entry is a remaining enhancement for group tickets.
 - Backups on the same VM are not disaster recovery: copy them to separate storage and rehearse a restore.
 - This is a targeted code, workflow, integration and UI audit, not a penetration-test or guarantee of zero defects. All-history bootstrap loading should be paginated as the database grows.
