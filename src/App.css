@@ -5832,6 +5832,10 @@ td small {
 .report-card p { color: #64736b; font-size: 14px; line-height: 1.5; }
 .report-card b { font-size: 13px; color: var(--green-700); }
 .reports-view .search-box { margin: 16px; }
+.departure-assignment fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.departure-assignment .trip-grid { margin-top: 14px; }
+.assignment-save { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 14px 0; }
+.assignment-save > span { flex: 1 1 260px; font-size: 14px; color: #50665a; }
 .refund-release { display: flex; align-items: center; gap: 10px; margin: 16px 20px; font-size: 14px; }
 .refund-release input { width: 18px; height: 18px; }
 .trip-table-head, .trip-cards article { min-width: 1060px; grid-template-columns: 82px minmax(180px, 1.2fr) 105px minmax(135px, 0.9fr) 110px 100px 230px; gap: 10px; }

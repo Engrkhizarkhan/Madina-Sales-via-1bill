@@ -198,7 +198,7 @@ try {
     setValue(inputs[0], ${JSON.stringify(qaUsername)});
     setValue(inputs[1], ${JSON.stringify(qaPassword)});
     document.querySelector('.login-form').requestSubmit();
-    for (let attempt = 0; attempt < 50 && !document.querySelector('.admin-shell'); attempt++) {
+    for (let attempt = 0; attempt < 200 && !document.body.innerText.includes('System settings'); attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     return { path: location.pathname, text: document.body.innerText };
@@ -261,6 +261,29 @@ try {
   expect(posState.passengerHeading === "Passenger" && !posState.repeatedPassengerLabel, "POS passenger wording is concise");
   expect(posState.toggleBelowTrip, "paid ticket and reservation toggle sits below trip selection");
   expect(posState.inputFontSize >= 15, "POS fields use readable text sizing");
+  if (qaFixture) {
+    const assignmentState = await evaluate(`(async()=>{
+      const tripSelect=document.querySelector('.admin-trip-panel select');
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(tripSelect,${JSON.stringify(qaFixture.trip.id)});
+      tripSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      await new Promise(r=>setTimeout(r,150));
+      return {driver:document.querySelector('[aria-label="Departure driver"]').value,attendant:document.querySelector('[aria-label="Departure attendant"]').value,bus:document.querySelector('[aria-label="Departure bus"]').value};
+    })()`);
+    expect(assignmentState.driver === qaFixture.trip.driver && assignmentState.attendant === qaFixture.trip.attendant && assignmentState.bus === qaFixture.bus.id, 'POS editable assignment fields default to the scheduled bus and crew');
+    await evaluate(`(()=>{const input=document.querySelector('[aria-label="Departure platform"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,'QA-EDITED');input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+    await delay(100);
+    expect(await evaluate("document.querySelector('.assignment-save').innerText.includes('only')"), 'counter is told the change applies only to the selected departure date');
+    await evaluate("Array.from(document.querySelectorAll('.assignment-save button')).find(b=>b.textContent==='Save trip changes').click()");
+    for(let attempt=0;attempt<80;attempt++) {
+      if(await evaluate("!document.querySelector('.assignment-save')")) break;
+      await delay(100);
+    }
+    expect(await evaluate("!document.querySelector('.assignment-save') && document.querySelector('[aria-label=\"Departure platform\"]').value === 'QA-EDITED'"),'counter saves a one-date assignment through the browser');
+    const [savedRuns]=await qaConnection.execute('SELECT platform FROM trip_runs WHERE trip_id = ?', [qaFixture.trip.id]);
+    const [savedTrips]=await qaConnection.execute('SELECT platform FROM trips WHERE id = ?', [qaFixture.trip.id]);
+    expect(savedRuns[0].platform === 'QA-EDITED' && savedTrips[0].platform === 'QA','dated assignment persists without changing the recurring roster');
+    writeFileSync(resolve('.qa-browser/pos-assignment.png'),Buffer.from((await send('Page.captureScreenshot')).data,'base64'));
+  }
   expect(await evaluate("!document.querySelector('.admin-sidebar .brand-mark')"), "staff sidebar has no ME logo");
 
   const dashboardState = await evaluate(`(async () => {

@@ -16,6 +16,9 @@ let createdRouteId = null;
 let createdBusId = null;
 let createdTripId = null;
 let createdCrewId = null;
+const assignmentCrewIds = [];
+const rosterCrewIds = [];
+let replacementBusId = null;
 
 const testAdminUsername = `node-admin-${Date.now()}`;
 const testAdminPassword = "NodeAdmin!2026Test";
@@ -57,6 +60,10 @@ try {
   const health = await request("GET", "/health");
   check(health.status === 200 && health.body.database === "connected" && health.body.runtime === "node", "Node.js health endpoint and MySQL connection");
   check((await request("GET", "/admin/bootstrap")).status === 401, "admin data rejects anonymous access");
+  for (let attempt = 0; attempt < 7; attempt++) {
+    check((await request('POST','/auth/login',{identity:testAdminUsername,password:'wrong'})).status === 401, `mistyped password ${attempt+1} returns an error without locking the account`);
+  }
+  await pool.execute('UPDATE users SET locked_until = DATE_ADD(NOW(), INTERVAL 1 DAY), failed_login_count = 8 WHERE id = ?', [testAdminId]);
   const login = await request("POST", "/auth/login", { identity: testAdminUsername, password: testAdminPassword });
   check(login.status === 200 && login.body.csrfToken, "Node.js login creates a MySQL-backed session");
   const csrf = login.body.csrfToken;
@@ -71,6 +78,16 @@ try {
   const tripResult = await request("POST", "/trips/new", { routeId: createdRouteId, busId: createdBusId, departure: "23:50", arrival: "00:20", driver: "QA Driver", attendant: "QA Attendant", platform: "QA-1", status: "Scheduled", days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], active: true, runNumber: 1 }, csrf);
   createdTripId = tripResult.body.trip.id;
   check(tripResult.status === 200, "trip can be added");
+  for (const [role,name] of [['Driver',tripResult.body.trip.driver],['Female attendant',tripResult.body.trip.attendant]]) {
+    const person = await request('POST','/crew/new',{name,role,phone:'03001112222',cnic:`${String(Date.now()).slice(-5)}-${role === 'Driver' ? '3333333' : '4444444'}-1`,license:'QA',duty:'Available',status:'Available',initials:'QA'},csrf);
+    rosterCrewIds.push(person.body.person.id);
+  }
+  const replacement = await request('POST','/buses/new',{...busResult.body.bus,registration:`QA-SPARE-${Date.now()}`,seats:40},csrf);
+  replacementBusId = replacement.body.bus.id;
+  for (const role of ['Driver','Female attendant']) {
+    const person = await request('POST','/crew/new',{name:`QA Replacement ${role} ${Date.now()}`,role,phone:'03001112222',cnic:`${String(Date.now()).slice(-5)}-${role === 'Driver' ? '1234567' : '7654321'}-1`,license:'QA',duty:'Available',status:'Available',initials:'QA'},csrf);
+    assignmentCrewIds.push(person.body.person.id);
+  }
   const publicResult = await request("GET", "/public/bootstrap");
   check(publicResult.status === 200 && publicResult.body.trips.length > 0, "public timetable is available without exposing staff data");
   const publicTrip = publicResult.body.trips.find((item) => item.id === createdTripId);
@@ -113,6 +130,27 @@ try {
   check(created.status === 201 && created.body.booking.paymentStatus === "Paid", "counter POS starts selling immediately without a shift");
   const booking = created.body.booking;
   createdBookings.push(booking.id);
+  const assignmentCrew = (await request('GET','/admin/bootstrap')).body.crew.filter(person=>assignmentCrewIds.includes(person.id));
+  const originalAssignment = {busId:createdBusId,driver:trip.driver,attendant:trip.attendant,departure:trip.departure,platform:trip.platform};
+  const changedAssignment = {...originalAssignment,busId:replacementBusId,driver:assignmentCrew.find(person=>person.role==='Driver').name,attendant:assignmentCrew.find(person=>person.role==='Female attendant').name,departure:'23:45',platform:'QA-2'};
+  const assignment = await request('PUT',`/trips/${createdTripId}/assignment`,{date,...changedAssignment,expected:originalAssignment},csrf);
+  check(assignment.status === 200 && assignment.body.trip.busId === replacementBusId && assignment.body.trip.driver === changedAssignment.driver, 'counter departure assignment saves bus, driver, attendant, time and platform for one date');
+  const afterAssignment = await request('GET','/admin/bootstrap');
+  const amendedTicket = afterAssignment.body.bookings.find(item=>item.id===booking.id);
+  check(amendedTicket.bus === replacement.body.bus.registration && amendedTicket.time === '23:45' && amendedTicket.driver === changedAssignment.driver,'existing active tickets follow the dated assignment');
+  check(afterAssignment.body.trips.find(item=>item.id===createdTripId).driver === trip.driver && afterAssignment.body.trips.find(item=>item.id===createdTripId).busId === createdBusId,'recurring roster defaults are not modified by a counter override');
+  check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...originalAssignment,expected:originalAssignment},csrf)).status === 409,'stale counter edits cannot overwrite another operator');
+  await request('POST',`/buses/${createdBusId}`,{...busResult.body.bus,status:'Maintenance'},csrf);
+  const replacementSale = await request('POST','/bookings',{...bookingRequest,seats:[1],bookingStatus:'Reserved',paymentMethod:'Cash'},csrf);
+  check(replacementSale.status === 201,'replacement bus permits sales even when the default bus is in maintenance');
+  createdBookings.push(replacementSale.body.booking.id);
+  await request('POST',`/bookings/${replacementSale.body.booking.id}/cancel`,{},csrf);
+  check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...originalAssignment,expected:changedAssignment},csrf)).status === 409,'maintenance bus cannot be selected as a replacement');
+  const smallerBus = await request('POST',`/buses/${createdBusId}`,{...busResult.body.bus,status:'Ready',seats:30},csrf);
+  check(smallerBus.status === 200, 'test replacement bus capacity adjusted');
+  check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...originalAssignment,expected:changedAssignment},csrf)).status === 409,'replacement bus cannot remove sold seat numbers');
+  await request('POST',`/buses/${createdBusId}`,busResult.body.bus,csrf);
+  check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...originalAssignment,expected:changedAssignment},csrf)).status === 200,'operator can restore original assignment while departure is open');
   check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "1Bill", paymentReference: "UNVERIFIED", discount: 0 }, csrf)).status === 409,
     "backend blocks 1Bill sales until the gateway is activated");
   check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Cash", discount: 0 }, csrf)).status === 409, "database prevents duplicate trip seats");
@@ -178,6 +216,7 @@ try {
   check(paidToday.status === 200 && paidToday.body.booking.paymentMethod === "Card", "counter collects a reservation by verified card reference");
   const departed = await request("POST", `/trips/${createdTripId}/transition`, {action:"depart",date:runDate},csrf);
   check(departed.status === 200 && departed.body.trip.departedAt && departed.body.trip.snapshot.passengers.length === 1, "departure records timestamp and immutable passenger manifest");
+  check((await request('PUT',`/trips/${createdTripId}/assignment`,{date:runDate,...changedAssignment,expected:originalAssignment},csrf)).status === 409,'departed bus assignments cannot be rewritten');
   check((await request("POST", "/bookings", {...bookingRequest,date:runDate,seats:[2],bookingStatus:"Confirmed",paymentMethod:"Cash"},csrf)).status === 409,"departed bus cannot sell more seats");
   check((await request("POST", `/buses/${createdBusId}`, {...busResult.body.bus,status:"Ready"},csrf)).status === 409,"fleet cannot independently reset an on-route bus");
   const refundAfterDeparture = await request("POST", `/bookings/${heldToday.body.booking.id}/refunds`, {amount:500,method:"Cash",reason:"Passenger request",notes:"QA retained history"},csrf);
@@ -213,6 +252,7 @@ try {
   const counterLogin = await request("POST", "/auth/login", { identity: qaUsername, password: qaPassword });
   check(counterLogin.status === 200, "new staff account authenticates through Node.js");
   const counterCsrf = counterLogin.body.csrfToken;
+  check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...changedAssignment,expected:originalAssignment},counterCsrf)).status === 200,'counter staff can adjust a dated assignment without roster-management permission');
   const counterBootstrap = await request("GET", "/admin/bootstrap");
   check(counterBootstrap.status === 200 && counterBootstrap.body.users.length === 0, "staff cannot retrieve user administration records");
   check((await request("GET", "/finance/status")).status === 403, "staff cannot view finance");
@@ -241,6 +281,9 @@ try {
       await pool.execute("DELETE FROM trips WHERE id = ?", [createdTripId]);
     }
     if (createdBusId) await pool.execute("DELETE FROM buses WHERE id = ?", [createdBusId]);
+    if (replacementBusId) await pool.execute('DELETE FROM buses WHERE id = ?', [replacementBusId]);
+    for (const id of assignmentCrewIds) await pool.execute('DELETE FROM crew WHERE id = ?', [id]);
+    for (const id of rosterCrewIds) await pool.execute('DELETE FROM crew WHERE id = ?', [id]);
     if (createdRouteId) await pool.execute("DELETE FROM routes WHERE id = ?", [createdRouteId]);
     await pool.execute("DELETE FROM audit_logs WHERE user_id = ? OR user_id = ?", [testAdminId, createdUserId]);
     if (createdUserId) {

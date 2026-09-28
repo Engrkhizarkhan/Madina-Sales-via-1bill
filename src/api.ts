@@ -143,6 +143,8 @@ export const api = {
     }),
   listTripRuns: <T>(date: string) =>
     request<{ runs: T[] }>(`/trip-runs?date=${encodeURIComponent(date)}`),
+  assignDeparture: <T>(id: string, assignment: unknown) =>
+    request<{ trip: T }>(`/trips/${encodeURIComponent(id)}/assignment`, {method: "PUT", body: JSON.stringify(assignment)}),
   saveCrew: <T>(previousName: string | undefined, person: unknown) =>
     request<{ person: T }>(
       `/crew/${encodeURIComponent(previousName ?? "new")}`,

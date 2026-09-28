@@ -14,7 +14,6 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
-  Clock3,
   CreditCard,
   FileBarChart,
   FileText,
@@ -39,7 +38,6 @@ import {
   ShieldCheck,
   Ticket,
   Trash2,
-  UserRound,
   UserRoundCog,
   UsersRound,
   WalletCards,
@@ -137,6 +135,7 @@ type TripRecord = {
   runNumber: number;
   lastDepartedAt?: string;
 };
+type DepartureAssignment = {busId: string; driver: string; attendant: string; departure: string; platform: string};
 type TripRun = {
   id: string;
   tripId: string;
@@ -1502,6 +1501,12 @@ function ManagementApp({
   };
   const failure = (error: unknown) =>
     showToast(error instanceof Error ? error.message : "The request failed.");
+  const saveAssignment = async (tripId: string, date: string, draft: DepartureAssignment, expected: DepartureAssignment) => {
+    const result = await api.assignDeparture<TripRun>(tripId, {date, ...draft, expected});
+    setRuns(current => [...current.filter(run => run.id !== result.trip.id), result.trip]);
+    setBookings(current => current.map(booking => booking.tripRunId === result.trip.id && ["Confirmed","Reserved"].includes(booking.bookingStatus) ? {...booking, bus: result.trip.snapshot!.bus.registration, service: result.trip.snapshot!.bus.service, time: result.trip.snapshot!.departure, driver: result.trip.driver, attendant: result.trip.attendant} : booking));
+    showToast("Departure updated for this date. Reprint affected tickets if needed.");
+  };
   const saveBooking = async (booking: Booking) => {
     try {
       const result = await api.createBooking<Booking>(booking);
@@ -1824,6 +1829,8 @@ function ManagementApp({
             <BookingWorkspace
               key={saleTarget ? `${saleTarget.tripId}-${saleTarget.date}-${saleTarget.mode}` : "sale"}
               initialSelection={saleTarget}
+              crew={crew}
+              onAssign={saveAssignment}
               runs={runs}
               bookings={bookings}
               trips={trips}
@@ -2300,7 +2307,39 @@ function SettlementNote({ title, text }: { title: string; text: string }) {
   );
 }
 
+function DepartureAssignmentEditor({trip,date,fleet,crew,disabled,onDirty,onSave}: {
+  trip: TripRecord; date: string; fleet: BusRecord[]; crew: CrewRecord[]; disabled: boolean;
+  onDirty: (dirty: boolean) => void;
+  onSave: (draft: DepartureAssignment, expected: DepartureAssignment) => Promise<void>;
+}) {
+  const original: DepartureAssignment = {busId:trip.busId,driver:trip.driver,attendant:trip.attendant,departure:trip.departure,platform:trip.platform};
+  const [draft,setDraft] = useState(original), [busy,setBusy] = useState(false), [error,setError] = useState("");
+  const dirty = Object.keys(original).some(key => draft[key as keyof DepartureAssignment] !== original[key as keyof DepartureAssignment]);
+  const update = (key: keyof DepartureAssignment,value: string) => {
+    const next = {...draft,[key]:value};setDraft(next);setError("");
+    onDirty(Object.keys(original).some(field => next[field as keyof DepartureAssignment] !== original[field as keyof DepartureAssignment]));
+  };
+  const options = (role: CrewRecord["role"], current: string) => [...new Set([current,...crew.filter(person => person.role === role && person.status !== "Off duty").map(person=>person.name)])];
+  return <div className="departure-assignment">
+    <fieldset disabled={disabled || busy}>
+      <div className="trip-grid">
+        <label><span>Bus</span><select aria-label="Departure bus" value={draft.busId} onChange={e=>update("busId",e.target.value)}>{fleet.filter(bus=>bus.status==="Ready" || bus.id===trip.busId).map(bus=><option value={bus.id} key={bus.id}>{bus.registration} · {bus.service} · {bus.seats} seats{bus.status!=="Ready" ? " · "+bus.status : ""}</option>)}</select></label>
+        <label><span>Departure</span><input aria-label="Departure time" type="time" value={draft.departure} onChange={e=>update("departure",e.target.value)}/></label>
+        <label><span>Driver</span><select aria-label="Departure driver" value={draft.driver} onChange={e=>update("driver",e.target.value)}>{options("Driver",trip.driver).map(name=><option key={name}>{name}</option>)}</select></label>
+        <label><span>Attendant</span><select aria-label="Departure attendant" value={draft.attendant} onChange={e=>update("attendant",e.target.value)}>{options("Female attendant",trip.attendant).map(name=><option key={name}>{name}</option>)}</select></label>
+        <label><span>Platform</span><input aria-label="Departure platform" value={draft.platform} maxLength={30} onChange={e=>update("platform",e.target.value)}/></label>
+      </div>
+    </fieldset>
+    {dirty && <div className="assignment-save"><span>For {date} only. Existing active tickets will be updated; reprint them and inform passengers if needed.</span>
+      <button className="secondary-button" type="button" disabled={busy} onClick={()=>{setDraft(original);onDirty(false);setError("");}}>Discard</button>
+      <button className="primary-button" type="button" disabled={busy || disabled} onClick={async()=>{setBusy(true);setError("");try{await onSave(draft,original);}catch(error){setError(error instanceof Error ? error.message : "Could not update departure.");}finally{setBusy(false);}}}>{busy?"Saving…":"Save trip changes"}</button></div>}
+    {error && <p className="form-error">{error}</p>}
+  </div>;
+}
+
 function BookingWorkspace({
+  crew,
+  onAssign,
   bookings,
   trips,
   fleet,
@@ -2311,6 +2350,8 @@ function BookingWorkspace({
   showToast,
   paymentMode,
 }: {
+  crew: CrewRecord[];
+  onAssign: (id: string, date: string, draft: DepartureAssignment, expected: DepartureAssignment) => Promise<void>;
   bookings: Booking[];
   trips: TripRecord[];
   fleet: BusRecord[];
@@ -2327,7 +2368,8 @@ function BookingWorkspace({
     [travelDate, setTravelDate] = useState(initialSelection?.date ?? today),
     [selectedSeats, setSelectedSeats] = useState<number[]>([]),
     [saving, setSaving] = useState(false),
-    [saveError, setSaveError] = useState("");
+    [saveError, setSaveError] = useState(""),
+    [assignmentDirty, setAssignmentDirty] = useState(false);
   const activeTrip = tripOnDate(trips.find((trip) => trip.id === selectedTripId) ?? defaultTrip, travelDate, runs);
   const route = tripRoute(activeTrip, routes), bus = tripBus(activeTrip, fleet);
   const departureTime = activeTrip.departure, driver = activeTrip.driver, attendant = activeTrip.attendant;
@@ -2396,9 +2438,10 @@ function BookingWorkspace({
     setSelectedSeats([]);
   };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
     if (saving) return;
     setSaveError("");
-    event.preventDefault();
+    if (assignmentDirty) return setSaveError("Save or discard the trip changes before issuing a ticket.");
     if (
       !passenger.passenger.trim() ||
       !passenger.phone.trim() ||
@@ -2482,6 +2525,7 @@ function BookingWorkspace({
                     routes.find((item) => item.id === next.routeId) ??
                     routes[0];
                   setSelectedTripId(next.id);
+                  setAssignmentDirty(false);
                   setSelectedSeats([]);
                   setPassenger((p) => ({
                     ...p,
@@ -2507,44 +2551,19 @@ function BookingWorkspace({
             </label>
             <label>
               <span>
-                <BusFront size={13} /> Bus
-              </span>
-              <input value={`${bus.registration} · ${bus.service}`} readOnly />
-            </label>
-            <label>
-              <span>
                 <CalendarDays size={13} /> Travel date
               </span>
               <input
                 type="date"
                 min={today}
                 value={travelDate}
-                onChange={(e) => { setTravelDate(e.target.value); setSelectedSeats([]); }}
+                onChange={(e) => { setTravelDate(e.target.value); setSelectedSeats([]); setAssignmentDirty(false); }}
               />
-            </label>
-            <label>
-              <span>
-                <Clock3 size={13} /> Departure
-              </span>
-              <input
-                type="time"
-                value={departureTime}
-                readOnly
-              />
-            </label>
-            <label>
-              <span>
-                <UserRound size={13} /> Driver
-              </span>
-              <input value={driver} readOnly />
-            </label>
-            <label>
-              <span>
-                <UsersRound size={13} /> Female attendant
-              </span>
-              <input value={attendant} readOnly />
             </label>
           </div>
+          <DepartureAssignmentEditor key={activeTrip.id + travelDate + activeTrip.busId + activeTrip.driver + activeTrip.attendant + activeTrip.departure + activeTrip.platform}
+            trip={activeTrip} date={travelDate} fleet={fleet} crew={crew} disabled={saving || travelDate < today || !activeTrip.active || !activeTrip.days.includes(serviceDayFor(travelDate)) || ["Departed","Returned","Cancelled"].includes(activeTrip.status)}
+            onDirty={setAssignmentDirty} onSave={async (draft, expected) => {await onAssign(activeTrip.id, travelDate, draft, expected);setSelectedSeats([]);setAssignmentDirty(false);}} />
           <div className="trip-summary-bar">
             <span>
               <small>Service</small>
