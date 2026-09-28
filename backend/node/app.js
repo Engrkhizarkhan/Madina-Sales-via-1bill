@@ -122,21 +122,11 @@ app.post("/auth/login", asyncRoute(async (req, res) => {
   requireFields(req.body, ["identity", "password"]);
   const identity = String(req.body.identity).trim().toLowerCase();
   const [records] = await pool.execute(
-    "SELECT *, (locked_until IS NOT NULL AND locked_until > NOW()) account_locked FROM users WHERE email = ? OR username = ? LIMIT 1",
+    "SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1",
     [identity, identity],
   );
   const user = records[0];
-  if (user?.account_locked) {
-    fail("Too many failed attempts. Try again later.", 429, "account_locked");
-  }
   if (!user || !user.active || !(await passwordMatches(String(req.body.password), user.password_hash))) {
-    if (user) {
-      const attempts = Number(user.failed_login_count) + 1;
-      await pool.execute(
-        "UPDATE users SET failed_login_count = ?, locked_until = IF(? >= 5, DATE_ADD(NOW(), INTERVAL 15 MINUTE), NULL) WHERE id = ?",
-        [attempts, attempts, user.id],
-      );
-    }
     await new Promise((resolve) => setTimeout(resolve, 250));
     fail("The username or password is incorrect.", 401, "invalid_credentials");
   }
