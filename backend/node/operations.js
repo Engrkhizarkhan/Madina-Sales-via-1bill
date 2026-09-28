@@ -364,7 +364,7 @@ export async function assignDeparture(id, data, user, req) {
     }
     const conflict = await query(connection, `SELECT id FROM trip_runs WHERE id <> ? AND status IN ('Scheduled','Boarding','Departed')
       AND (bus_id = ? OR driver = ? OR attendant = ?) AND
-      (status IN ('Boarding','Departed') OR (service_date = ? AND JSON_UNQUOTE(JSON_EXTRACT(snapshot,'$.departure')) = ?)) LIMIT 1`,
+      (status IN ('Boarding','Departed') OR (service_date = ? AND JSON_UNQUOTE(JSON_EXTRACT(snapshot,'$.departure')) = ?)) LIMIT 1 FOR UPDATE`,
       [run.id,next.busId,next.driver,next.attendant,date,next.departure]);
     if (conflict.length) fail('The bus or crew is assigned to another departure. Choose another assignment.',409,'assignment_in_use');
     const planned = await fetchTrips(false,connection);
