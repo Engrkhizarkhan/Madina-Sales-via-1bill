@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Always address the service account's PM2 daemon, not a separate root daemon.
+if [[ ${EUID} -ne 0 ]]; then
+  echo "Usage: sudo madina-pm2 status|logs|monit|restart ..." >&2
+  exit 1
+fi
+exec runuser -u madina-express -- env PM2_HOME=/var/lib/madina-express/.pm2 PATH=/opt/node-current/bin:/usr/local/bin:/usr/bin:/bin /opt/node-current/bin/pm2 "$@"

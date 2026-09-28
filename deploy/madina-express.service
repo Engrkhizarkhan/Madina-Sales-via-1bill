@@ -1,18 +1,23 @@
 [Unit]
-Description=Madina Express Node.js API
+Description=Madina Express Node.js API (PM2)
 After=network-online.target mysql.service
 Wants=network-online.target
 Requires=mysql.service
 
 [Service]
-Type=simple
+Type=forking
 User=madina-express
 Group=madina-express
 WorkingDirectory=__PROJECT_DIR__
-ExecStart=/opt/node-current/bin/node backend/node/server.js
+Environment=PM2_HOME=/var/lib/madina-express/.pm2
+Environment=PATH=/opt/node-current/bin:/usr/local/bin:/usr/bin:/bin
+PIDFile=/var/lib/madina-express/.pm2/pm2.pid
+ExecStart=/opt/node-current/bin/pm2 start __PROJECT_DIR__/deploy/ecosystem.config.cjs --only madina-express --update-env
+ExecReload=/opt/node-current/bin/pm2 restart __PROJECT_DIR__/deploy/ecosystem.config.cjs --only madina-express --update-env
+ExecStop=/opt/node-current/bin/pm2 kill
 Restart=on-failure
 RestartSec=5
-TimeoutStopSec=20
+TimeoutStopSec=30
 KillSignal=SIGTERM
 NoNewPrivileges=true
 PrivateTmp=true

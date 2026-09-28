@@ -26,7 +26,7 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y ca-certificates curl git nginx mysql-server openssl rsync xz-utils
+apt-get install -y ca-certificates curl git nginx mysql-server openssl rsync xz-utils logrotate
 timedatectl set-timezone Asia/Karachi
 install -m 0644 "$PROJECT_DIR/deploy/mysql.cnf" /etc/mysql/mysql.conf.d/madina-express.cnf
 systemctl restart mysql
@@ -105,7 +105,6 @@ install -d -m 0755 /var/www/madina-express /var/www/certbot
 rsync -a --delete "$PROJECT_DIR/dist/" /var/www/madina-express/
 chown -R root:root /var/www/madina-express
 
-sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/deploy/madina-express.service" > /etc/systemd/system/madina-express.service
 sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/deploy/madina-express-backup.service" > /etc/systemd/system/madina-express-backup.service
 install -m 0644 "$PROJECT_DIR/deploy/madina-express-backup.timer" /etc/systemd/system/madina-express-backup.timer
 install -m 0644 "$PROJECT_DIR/deploy/nginx-http.conf" /etc/nginx/sites-available/madina-express
@@ -121,9 +120,10 @@ chmod 0600 /root/madina-express-initial-login.txt
 
 systemctl daemon-reload
 nginx -t
-systemctl enable --now mysql nginx madina-express
+systemctl enable --now mysql nginx
 systemctl enable --now madina-express-backup.timer
-systemctl restart nginx madina-express
+systemctl restart nginx
+bash "$PROJECT_DIR/deploy/setup-pm2.sh"
 
 attempt=0
 until curl --fail --silent http://127.0.0.1:3101/health >/dev/null; do
