@@ -18,6 +18,18 @@ export type CoachRow = {
 
 export function coachRows(capacity: number): CoachRow[] {
   if (!Number.isInteger(capacity) || capacity < 1) return [];
+  // The 41-seat reference has four 1+2 rows, then seven 2+2 rows.
+  if (capacity === 41) {
+    return [
+      ...Array.from({ length: 4 }, (_, row) => ({
+        left: [row * 3 + 3, null], center: null, right: [row * 3 + 2, row * 3 + 1],
+      })),
+      ...Array.from({ length: 7 }, (_, row) => ({
+        left: [row * 4 + 16, row * 4 + 15], center: null, right: [row * 4 + 14, row * 4 + 13],
+      })),
+      { left: [41, null], center: null, right: [null, null] },
+    ];
+  }
   // The supplied 49-seat plan has eleven paired rows and a five-seat rear bench.
   const pairedSeats = capacity === 49 ? 44 : capacity;
   const rows: CoachRow[] = [];

@@ -1,4 +1,7 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { flushSync } from "react-dom";
+import { QRCodeSVG } from "qrcode.react";
+import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
 import {
   Activity,
   ArrowLeft,
@@ -45,6 +48,7 @@ import {
   XCircle,
 } from "lucide-react";
 import "./App.css";
+import "./print-documents.css";
 import { api, ApiError } from "./api";
 import { coachRows, isSleeper, seatLabel, seatList, sleeperRows } from "./seat-layout";
 
@@ -1241,7 +1245,7 @@ function PublicCheckout({
                   <small>Seats</small>
                   <strong>
                     {selectedSeats.length
-                      ? seatList(selectedSeats, bus.service)
+                      ? seatList(selectedSeats, trip.bus.service)
                       : "None selected"}
                   </strong>
                 </span>
@@ -4294,6 +4298,8 @@ function ReportModal({
   routes: RouteRecord[];
   onClose: () => void;
 }) {
+  const [printedAt, setPrintedAt] = useState(() => new Date());
+  const [printing, setPrinting] = useState(false);
   const baseTrip = trips.find((item) => item.id === report.tripId);
   if (!baseTrip) return null;
   const trip = tripOnDate(baseTrip, report.date, runs);
@@ -4328,13 +4334,21 @@ function ReportModal({
     "terminal-thermal": "Terminal Voucher",
   }[report.kind];
   const thermal = report.kind === "terminal-thermal";
-  const printReport = () => {
+  const printReport = async () => {
     const printClass = thermal ? "printing-thermal" : "printing-a4";
     const cleanup = () => document.body.classList.remove(printClass);
-    document.body.classList.add(printClass);
-    window.addEventListener("afterprint", cleanup, { once: true });
-    window.print();
-    window.setTimeout(cleanup, 1500);
+    setPrinting(true);
+    try {
+      await document.fonts.load('12px "Noto Nastaliq Urdu"');
+      await document.fonts.ready;
+      flushSync(() => setPrintedAt(new Date()));
+      document.body.classList.add(printClass);
+      window.addEventListener("afterprint", cleanup, { once: true });
+      window.print();
+    } finally {
+      cleanup();
+      setPrinting(false);
+    }
   };
   return (
     <div
@@ -4363,20 +4377,27 @@ function ReportModal({
             <button
               className="primary-button"
               type="button"
-              onClick={printReport}
+              disabled={printing}
+              onClick={() => void printReport()}
             >
-              <Printer size={16} /> Print
+              <Printer size={16} /> {printing ? "Preparing…" : "Print"}
             </button>
           </div>
         </div>
         <article
-          className={`print-document ${thermal ? "report-thermal" : "report-a4 report-landscape"}`}
+          className={`print-document operations-document document-${report.kind} ${thermal ? "report-thermal" : "report-a4 report-landscape"}`}
         >
           <header className="document-header">
             <div>
               <h1>MADINA EXPRESS</h1>
+              <p className="document-brand-urdu" lang="ur" dir="rtl">مدینہ ایکسپریس</p>
+              <p>Madina Terminal, Peshawar</p>
+              <p>0311-777-2299 / 0315-777-2299</p>
+            </div>
+            <div className="document-title-block">
               <h2>{title}</h2>
-              <p>Madina Terminal, Peshawar · 0311-777-2299</p>
+              <p>{ticketDate(report.date)} · Run {report.runNumber}</p>
+              <strong>{bus.registration}</strong>
             </div>
           </header>
           <div className="document-meta">
@@ -4387,7 +4408,7 @@ function ReportModal({
             <span>
               <small>Departure</small>
               <strong>
-                {report.date} · {trip.departure}
+                {ticketDate(report.date)} · {trip.departure}
               </strong>
             </span>
             <span>
@@ -4407,13 +4428,13 @@ function ReportModal({
               <strong>{trip.driver}</strong>
             </span>
             <span>
-              <small>Female attendant</small>
+              <small>Attendant</small>
               <strong>{trip.attendant}</strong>
             </span>
           </div>
           {thermal ? (
             <>
-              <div className="thermal-rule" />
+              <h3 className="document-section-title">Passenger &amp; ticket register</h3>
               {rows.map(({ booking, seat }) => (
                 <div
                   className="thermal-passenger"
@@ -4440,11 +4461,14 @@ function ReportModal({
               {!rows.length && (
                 <p className="document-empty">No passengers in this run.</p>
               )}
-              <div className="thermal-total">{totals.map(([label, value]) => <span key={label}>{label}<b>{value}</b></span>)}</div>
+              <h3 className="document-section-title">Collection summary</h3>
+              <div className="thermal-total">{totals.map(([label, value]) => <span className={label === "Net collected" ? "document-grand-total" : undefined} key={label}>{label}<b>{value}</b></span>)}</div>
             </>
           ) : report.kind === "terminal-a4" ? (
             <>
+              <h3 className="document-section-title">Ticket &amp; payment register</h3>
               <table className="document-table">
+                <colgroup>{[14, 16, 20, 10, 6, 10, 24].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
                 <thead>
                   <tr>
                     <th>Ticket</th>
@@ -4477,10 +4501,13 @@ function ReportModal({
                   ))}
                 </tbody>
               </table>
-              <div className="voucher-summary-grid">{totals.map(([label,value]) => <span key={label}><small>{label}</small><strong>{value}</strong></span>)}</div>
+              {!records.length && <p className="document-empty">No tickets recorded for this departure.</p>}
+              <h3 className="document-section-title">Collection summary</h3>
+              <div className="voucher-summary-grid">{totals.map(([label,value]) => <span className={label === "Net collected" ? "document-grand-total" : undefined} key={label}><small>{label}</small><strong>{value}</strong></span>)}</div>
             </>
           ) : (
             <table className="document-table">
+              <colgroup>{(report.kind === "cnic" ? [4, 15, 8, 10, 8, 6, 12, 21, 16] : [12, 19, 6, 11, 15, 8, 19, 10]).map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
               <thead>
                 <tr>
                   {report.kind === "cnic" ? (
@@ -4488,7 +4515,7 @@ function ReportModal({
                       <th>Seat #</th>
                       <th>Terminal</th>
                       <th>Destination</th>
-                      <th>User ID</th>
+                      <th>Issued by</th>
                       <th>Status</th>
                       <th>Type</th>
                       <th>Seat print time</th>
@@ -4544,8 +4571,9 @@ function ReportModal({
             </table>
           )}
           {!voucher && <p className="document-empty">Passengers: {rows.length} · {trip.departedAt ? `Departed ${formatPrintTime(trip.departedAt)}` : "Before departure"}{trip.returnedAt ? ` · Returned ${formatPrintTime(trip.returnedAt)}` : ""}</p>}
+          {voucher && <div className="document-signatures"><span>Prepared by</span><span>Checked by</span></div>}
           <footer className="document-footer">
-            <span>Printed {new Date().toLocaleString("en-PK", {timeZone: "Asia/Karachi"})}</span>
+            <span>Printed {ticketDate(dateInPakistan(printedAt))} · {ticketTime(printedAt)}</span>
             <span>Prepared by {preparedBy}</span>
           </footer>
         </article>
@@ -6207,191 +6235,105 @@ function ReceiptModal({
   booking: Booking;
   onClose: () => void;
 }) {
+  const [printedAt, setPrintedAt] = useState(() => new Date());
+  const [printing, setPrinting] = useState(false);
+  const ticket = ticketPresentation(booking);
+  const seats = seatList(booking.seats, booking.service);
+  const printDate = ticketDate(dateInPakistan(printedAt));
+  const printTime = ticketTime(printedAt);
+  const bookingDate = ticketDate(dateInPakistan(booking.createdAt));
+  const bookingTime = ticketTime(new Date(booking.createdAt));
+  const printTicket = async () => {
+    setPrinting(true);
+    try {
+      // Embed the Urdu font before opening the print dialog, including on first use.
+      await document.fonts.load('12px "Noto Nastaliq Urdu"');
+      await document.fonts.ready;
+      flushSync(() => setPrintedAt(new Date()));
+      window.print();
+    } finally {
+      setPrinting(false);
+    }
+  };
   return (
-    <div
-      className="receipt-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Ticket ${booking.ticketNo}`}
-    >
-      <div className="receipt-modal">
+    <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}>
+      <div className="receipt-modal ticket-print-modal">
         <div className="receipt-toolbar">
-          <div>
-            <strong>
-              {booking.bookingStatus === "Reserved"
-                ? "Reservation slip"
-                : booking.bookingStatus === "Refunded"
-                  ? "Refunded ticket"
-                  : booking.bookingStatus === "Cancelled" ? "Cancelled ticket" : "Confirmed ticket"}
-            </strong>
-            <small>80mm thermal receipt</small>
-          </div>
-          <button type="button" onClick={onClose}>
-            <X size={18} />
-          </button>
+          <div><strong>{ticket.title}</strong><small>{ticket.canBoard ? "Passenger receipt + conductor token · 80mm" : "Passenger record · 80mm"}</small></div>
+          <button type="button" aria-label="Close ticket" onClick={onClose}><X size={18} /></button>
         </div>
-        <article className="receipt">
-          <header>
-            <div className="receipt-logo">ME</div>
-            <h2>MADINA EXPRESS</h2>
-            <p>Travel with confidence</p>
-            <small>0311-777-2299 · Madina Terminal, Peshawar</small>
-          </header>
-          <div className="receipt-rule" />
-          <div className="ticket-heading">
-            <span>
-              <small>
-                {booking.bookingStatus === "Reserved"
-                  ? "RESERVATION NO."
-                  : "TICKET NO."}
-              </small>
-              <strong>{booking.ticketNo}</strong>
-            </span>
-            <span
-              className={`receipt-status ${booking.paymentStatus.toLowerCase().replaceAll(" ", "-")}`}
-            >
-              {booking.paymentStatus}
-            </span>
-          </div>
-          <div className="receipt-route">
-            <span>{booking.route.split(" → ")[0]}</span>
-            <i>→</i>
-            <span>{booking.destination}</span>
-          </div>
-          <div className="receipt-grid">
-            <span>
-              <small>Departure</small>
-              <strong>
-                {booking.date}
-                <br />
-                {booking.time}
-              </strong>
-            </span>
-            <span>
-              <small>Bus / Service</small>
-              <strong>
-                {booking.bus}
-                <br />
-                {booking.service}
-              </strong>
-            </span>
-            <span>
-              <small>Passenger</small>
-              <strong>{booking.passenger}</strong>
-            </span>
-            <span>
-              <small>Seat number</small>
-              <strong className="large-seat">{seatList(booking.seats, booking.service)}</strong>
-            </span>
-            <span>
-              <small>Boarding point</small>
-              <strong>{booking.boardingPoint}</strong>
-            </span>
-            <span>
-              <small>Female attendant</small>
-              <strong>{booking.attendant}</strong>
-            </span>
-          </div>
-          <div className="receipt-rule" />
-          <div className="receipt-line">
-            <span>Fare</span>
-            <strong>{money(booking.fare * booking.seats.length)}</strong>
-          </div>
-          <div className="receipt-line">
-            <span>Discount</span>
-            <strong>- {money(booking.discount)}</strong>
-          </div>
-          <div className="receipt-line total-line">
-            <span>Total</span>
-            <strong>{money(booking.total)}</strong>
-          </div>
-          <div className="receipt-line">
-            <span>
-              {booking.paymentStatus === "Unpaid"
-                ? "Amount due"
-                : `Net paid via ${booking.paymentMethod}`}
-            </span>
-            <strong>
-              {booking.paymentStatus === "Unpaid"
-                ? money(booking.balance)
-                : money(netCollected(booking))}
-            </strong>
-          </div>
-          {booking.paymentReference && (
-            <div className="receipt-line">
-              <span>Payment reference</span>
-              <strong>{booking.paymentReference}</strong>
+        <div className="receipt thermal-ticket">
+          <article className="passenger-receipt" aria-label="Passenger receipt">
+            <header className="thermal-heading">
+              <h2>MADINA EXPRESS</h2>
+              <p>This Bus Operated By</p>
+              <strong>Madina Express</strong>
+              <p className="ticket-urdu" lang="ur" dir="rtl">مدینہ ایکسپریس میں خوش آمدید۔ ٹکٹ لیتے وقت اپنی منزل، سیٹ نمبر، تاریخ اور وقت ضرور چیک کریں۔</p>
+              <p className="ticket-contact">Mob: 0311-777-2299 / 0315-777-2299</p>
+            </header>
+            <div className="ticket-bus-type"><span>BUS Type</span><strong>{booking.service}</strong></div>
+            <div className="ticket-departure">
+              <dl>
+                <div className="ticket-seat-number"><dt>SEAT NO #</dt><dd>{seats}</dd></div>
+                <div><dt>Departure Time</dt><dd>{booking.time}</dd></div>
+                <div><dt>Departure Date</dt><dd>{ticketDate(booking.date)}</dd></div>
+                <div><dt>Route Time</dt><dd>{booking.time}</dd></div>
+              </dl>
+              <QRCodeSVG value={`MADINA EXPRESS\nTicket: ${booking.ticketNo}`} size={90} level="M" marginSize={4} title="Ticket number QR code" />
             </div>
-          )}
-          {refundedTotal(booking) > 0 && (
-            <>
-              <div className="receipt-line refund-line">
-                <span>Total refunded</span>
-                <strong>- {money(refundedTotal(booking))}</strong>
-              </div>
-              {(booking.refunds ?? []).map((refund) => (
-                <div className="receipt-refund" key={refund.id}>
-                  <span>
-                    {formatPrintTime(refund.processedAt)} · {refund.reason}
-                  </span>
-                  <strong>
-                    {money(refund.amount)} · {refund.method} · {refund.reference}
-                  </strong>
-                  {refund.notes && <small>{refund.notes}</small>}
-                </div>
-              ))}
-            </>
-          )}
-          <div className="receipt-barcode">
-            <span />
-            <small>{booking.ticketNo}</small>
-          </div>
-          {booking.bookingStatus === "Confirmed" && (
-            <div className="boarding-coupon">
-              <strong>BOARDING COUPON</strong>
-              <span>
-                <small>Seat</small>
-                <b>{seatList(booking.seats, booking.service)}</b>
-              </span>
-              <span>
-                <small>Bus</small>
-                <b>{booking.bus}</b>
-              </span>
-              <span>
-                <small>Time</small>
-                <b>{booking.time}</b>
-              </span>
+            <div className="ticket-terminal"><span>Terminal Name</span><strong>{booking.terminal || booking.boardingPoint}</strong></div>
+            <table className="thermal-details"><tbody>
+              <tr><th scope="row">Passenger</th><td>{booking.passenger}</td></tr>
+              <tr><th scope="row">Destination</th><td>{booking.destination}</td></tr>
+              <tr><th scope="row">Route Name</th><td>{booking.route}</td></tr>
+              <tr><th scope="row">Boarding Point</th><td>{booking.boardingPoint}</td></tr>
+              <tr><th scope="row">Contact / ID</th><td>{booking.phone}<br />{booking.cnic}</td></tr>
+              <tr><th scope="row">Discount</th><td>{money(booking.discount)}</td></tr>
+              <tr className="ticket-fare"><th scope="row">Base Fare</th><td>{money(booking.fare)}{booking.seats.length > 1 && <small> × {booking.seats.length} seats</small>}</td></tr>
+              <tr className="ticket-fare"><th scope="row">Total Fare</th><td>{money(booking.total)}</td></tr>
+              <tr><th scope="row">{booking.paymentStatus === "Unpaid" ? "Amount Due" : "Net Paid"}</th><td>{money(booking.paymentStatus === "Unpaid" ? booking.balance : netCollected(booking))}<br /><small>{booking.paymentStatus === "Unpaid" ? "Pay at the terminal" : booking.paymentMethod}</small></td></tr>
+              {booking.paymentReference && <tr><th scope="row">Payment Ref.</th><td>{booking.paymentReference}</td></tr>}
+              {refundedTotal(booking) > 0 && <tr><th scope="row">Refunded</th><td>{money(refundedTotal(booking))}</td></tr>}
+              {(booking.refunds ?? []).map((refund) => <tr key={refund.id}>
+                <th scope="row">Refund detail<br /><small>{formatPrintTime(refund.processedAt)}</small></th>
+                <td>{money(refund.amount)} · {refund.method}<br />{refund.reference}<br /><small>{refund.reason}{refund.notes ? ` · ${refund.notes}` : ""}</small></td>
+              </tr>)}
+              <tr><th scope="row">Print Time &amp; Date</th><td>{printTime} · {printDate}</td></tr>
+              <tr><th scope="row">Ticket No.</th><td className="ticket-identifier">{booking.ticketNo}</td></tr>
+              <tr><th scope="row">Issued By</th><td>{booking.issuedBy || "Public website"}</td></tr>
+              <tr><th scope="row">BUS NO</th><td>{booking.bus}</td></tr>
+              <tr><th scope="row">PNR No.</th><td>{booking.ticketNo}</td></tr>
+            </tbody></table>
+            <div className="thermal-payment-status"><strong>{ticket.status}</strong><span>{ticket.message}</span></div>
+            <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl">
+              <p>بس کی روانگی سے دس منٹ پہلے بس میں سوار ہو جائیں۔ کاؤنٹر چھوڑنے سے پہلے بقایاجات، ٹکٹ کی تاریخ اور وقت چیک کر لیں۔</p>
+              <p>{ticket.canBoard ? "سوار ہوتے وقت کنڈکٹر کو بورڈنگ ٹوکن دیں اور اصل رسید اپنے پاس محفوظ رکھیں۔" : "یہ رسید سوار ہونے کا ٹوکن نہیں ہے۔ سفر سے پہلے کاؤنٹر سے ٹکٹ کی تصدیق کروائیں۔"}</p>
+              <p>ٹکٹ کی تبدیلی یا واپسی کے لیے روانگی سے پہلے کاؤنٹر سے رابطہ کریں۔ اپنا اصل شناختی کارڈ ہمراہ رکھیں۔</p>
             </div>
-          )}
-          <footer>
-            <p>
-              {booking.bookingStatus === "Cancelled" ? "CANCELLED · This ticket is no longer valid for boarding." : booking.paymentStatus === "Refunded"
-                ? "REFUNDED · This ticket is no longer valid for boarding."
-                : booking.paymentStatus === "Partially refunded"
-                  ? "PARTIALLY REFUNDED · Ticket remains valid for boarding."
-                  : booking.paymentStatus === "Paid"
-                    ? "PAID & CONFIRMED · Please arrive 30 minutes before departure."
-                    : "UNPAID RESERVATION · Pay at the terminal to confirm."}
-            </p>
-            <small>
-              Terms and conditions apply. Keep this ticket for boarding.
-            </small>
-          </footer>
-        </article>
+          </article>
+          {ticket.canBoard && <>
+            <div className="ticket-cut-line" aria-hidden="true"><span>CUT HERE · CONDUCTOR COPY BELOW</span></div>
+            <article className="conductor-token" aria-label="Conductor boarding token">
+              <header><span>Madina Express</span><strong>MADINA EXPRESS</strong></header>
+              <div className="token-heading"><strong>BOARDING COUPON</strong><span>CONDUCTOR COPY</span></div>
+              <div className="token-terminal"><span>Terminal Name</span><strong>{booking.terminal || booking.boardingPoint}</strong></div>
+              <div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
+              <table className="token-table"><tbody>
+                <tr><th>Ticket No.</th><th>BUS No.</th><th>Destination</th></tr>
+                <tr><td>{booking.ticketNo}</td><td>{booking.bus}</td><td>{booking.destination}</td></tr>
+                <tr><th>Booking Date / Time</th><th>Departure</th><th>Travel Date</th></tr>
+                <tr><td>{bookingTime}<br />{bookingDate}</td><td className="token-time">{booking.time}</td><td>{ticketDate(booking.date)}</td></tr>
+                <tr><th>Fare / Discount</th><th>Net Paid</th><th>Issued By</th></tr>
+                <tr><td>{money(booking.total)}<br /><small>Discount {money(booking.discount)}</small></td><td>{money(netCollected(booking))}<br /><small>{booking.paymentMethod}</small></td><td>{booking.issuedBy || "Public website"}</td></tr>
+              </tbody></table>
+              <div className="token-payment"><strong>{ticket.status}</strong><span>VALID FOR BOARDING</span></div>
+              <p className="ticket-urdu" lang="ur" dir="rtl">یہ ٹوکن کنڈکٹر کے حوالے کریں۔</p>
+            </article>
+          </>}
+        </div>
         <div className="receipt-actions">
-          <button className="secondary-button" type="button" onClick={onClose}>
-            Close
-          </button>
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => window.print()}
-          >
-            <Printer size={16} />{" "}
-            {booking.bookingStatus === "Refunded"
-              ? "Print refund record"
-              : "Print ticket"}
-          </button>
+          <button className="secondary-button" type="button" onClick={onClose}>Close</button>
+          <button className="primary-button" type="button" disabled={printing} onClick={() => void printTicket()}><Printer size={16} />{printing ? "Preparing…" : ticket.canBoard ? "Print receipt & token" : "Print record"}</button>
         </div>
       </div>
     </div>

@@ -10,6 +10,7 @@
     "db:install": "node backend/scripts/install.js",
     "db:backup": "node backend/scripts/backup.js",
     "test:api": "node backend/tests/integration.js",
+    "test:layout": "node --test scripts/ticket-layout.test.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -21,6 +22,7 @@
     "express": "^5.2.1",
     "lucide-react": "^1.38.0",
     "mysql2": "^3.24.4",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },

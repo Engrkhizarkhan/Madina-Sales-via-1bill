@@ -17,6 +17,8 @@ deploy/.env
 deploy/backups/*.sql
 
 .qa-browser/
+.playwright-cli/
+output/playwright/
 
 # Editor directories and files
 .vscode/*

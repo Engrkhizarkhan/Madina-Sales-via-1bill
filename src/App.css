@@ -5884,3 +5884,171 @@ td small {
     min-width: 0;
   }
 }
+
+/* Physical coach plans supplied by Madina Express. */
+.reference-seat-map .bus-shell {
+  width: min(100%, 560px);
+  padding: 14px;
+  border: 1px solid #bccfc5;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: none;
+}
+.reference-seat-map .bus-front { height: 38px; padding: 0 4px; color: #35644e; }
+.reference-seat-map .seat-layout { padding-top: 14px; }
+.reference-seat-map .seat-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(38px, 1fr) minmax(0, 2fr);
+  gap: 6px;
+  min-height: 42px;
+  margin: 0;
+}
+.reference-seat-map .seat-pair { gap: 0; }
+.reference-seat-map .seat-pair > span { min-width: 0; }
+.reference-seat-map .seat {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 44px;
+  padding: 4px 2px;
+  border: 1px solid #39745a;
+  border-radius: 0;
+  box-shadow: none;
+  font-family: Arial, sans-serif;
+}
+.reference-seat-map .seat b { font-size: 23px; font-weight: 750; }
+.reference-seat-map .seat--available { color: #146141; background: #fff; }
+.reference-seat-map .seat--selected { color: #fff; background: #146141; }
+.reference-seat-map .seat--booked { color: #525e58; background: #e1e5e2; border-color: #a2b1a8; }
+.reference-seat-map .seat:focus-visible { outline: 3px solid #d28b1e; outline-offset: -4px; }
+.reference-seat-map .seat:not(:disabled):hover { transform: none; outline: 2px solid #146141; outline-offset: -3px; }
+.reference-seat-map .aisle { min-width: 0; }
+.reference-seat-map .legend .available { background: #fff; border-color: #39745a; }
+.reference-seat-map .legend .selected { background: #146141; border-color: #146141; }
+.reference-seat-map .legend .booked { background: #e1e5e2; border-color: #a2b1a8; }
+.sleeper-deck-headings { display: grid; grid-template-columns: 1fr 1fr; gap: 36px; margin: 16px 0 10px; text-align: center; color: #146141; font-size: 11px; font-weight: 800; letter-spacing: .08em; }
+.sleeper-room-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)) 24px repeat(2, minmax(0, 1fr)); gap: 7px; margin-bottom: 12px; }
+.sleeper-room-row > :nth-child(3) { grid-column: 4; }
+.sleeper-room { min-width: 0; padding: 7px 5px; border: 1.5px solid #39745a; border-radius: 7px; color: #146141; }
+.room-caption { display: block; font-size: 9px; font-weight: 800; letter-spacing: .05em; }
+.room-label { display: block; margin: 6px 0 10px; text-align: center; font: 750 20px Arial, sans-serif; }
+.room-berths { display: flex; gap: 3px; }
+.room-berths > span { flex: 1; min-width: 0; }
+.sleeper-map .room-berths .seat { height: 38px; border-radius: 4px; }
+.sleeper-map .room-berths .seat b { font-size: 12px; }
+.sleeper-rear { border-top: 4px solid #39745a; margin: 8px 8px 0; padding-top: 14px; }
+.sleeper-rear-row { display: flex; justify-content: center; gap: 10px; margin-bottom: 10px; }
+.sleeper-rear-row .sleeper-room { width: 24%; }
+.sleeper-rear-row .seat { margin-top: 6px; border-radius: 4px; }
+.sleeper-selection-note { margin: 12px 0 0; text-align: center; color: #52665b; font-size: 11px; line-height: 1.5; }
+@media (max-width: 600px) {
+  .reference-seat-map .bus-shell { padding: 10px; }
+  .reference-seat-map .seat-row { gap: 4px; }
+  .reference-seat-map .seat b { font-size: 20px; }
+  .sleeper-room-row { grid-template-columns: repeat(2, minmax(0, 1fr)) 10px repeat(2, minmax(0, 1fr)); gap: 4px; }
+  .sleeper-room { padding: 6px 3px; }
+  .room-label { font-size: 16px; }
+  .sleeper-map .room-berths .seat b { font-size: 10px; }
+}
+
+@font-face {
+  font-family: "Noto Nastaliq Urdu";
+  src: url("../public/fonts/NotoNastaliqUrdu.ttf") format("truetype");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+/* Passenger receipt and detachable conductor token, matching the paper reference. */
+.ticket-print-modal { width: min(100%, 440px); }
+.receipt.thermal-ticket {
+  width: 80mm;
+  max-width: calc(100% - 24px);
+  padding: 0;
+  color: #000;
+  font: 11px/1.3 Arial, Helvetica, sans-serif;
+  letter-spacing: .15px;
+  font-variant-numeric: tabular-nums;
+}
+.passenger-receipt, .conductor-token { padding: 5mm 3mm; }
+.thermal-ticket .thermal-heading h2 { font: 700 23px/1.15 Arial, sans-serif; letter-spacing: .3px; white-space: nowrap; }
+.thermal-ticket .thermal-heading > p { margin: 3px 0; font-size: 11px; }
+.thermal-heading > strong { font-size: 15px; font-weight: 600; }
+.thermal-ticket .ticket-urdu { font-family: "Noto Nastaliq Urdu", "Urdu Typesetting", serif; font-size: 11px; line-height: 2.3; letter-spacing: 0; text-align: right; }
+.thermal-ticket .thermal-heading .ticket-urdu { margin: 7px 0; }
+.thermal-ticket .thermal-heading .ticket-contact { padding: 5px 0 3px; margin: 0; border-bottom: 1px solid #333; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.ticket-bus-type { display: grid; grid-template-columns: 34% 1fr; gap: 5px; padding: 4px 0; border-bottom: 1px solid #333; font-size: 13px; }
+.ticket-bus-type strong { text-align: center; }
+.ticket-departure { display: grid; grid-template-columns: minmax(0, 1fr) 23mm; gap: 2px; align-items: center; }
+.ticket-departure dl { margin: 0; }
+.ticket-departure dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 5px; padding: 4px 0; }
+.ticket-departure dt { font-size: 10px; }
+.ticket-departure dd { margin: 0; font-size: 12px; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+.ticket-departure .ticket-seat-number { display: block; }
+.ticket-seat-number dt { font-size: 14px; font-weight: 700; }
+.ticket-seat-number dd { font-size: 19px; text-align: left; }
+.ticket-departure svg { width: 23mm; height: 23mm; }
+.ticket-terminal { display: flex; gap: 8px; padding: 6px 0; border-bottom: 1px solid #333; }
+.ticket-terminal > span { flex: 0 0 32%; }
+.ticket-terminal strong { font-weight: 400; }
+.thermal-details { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11px; }
+.thermal-details th, .thermal-details td { border: 1px solid #555; padding: 4px 5px; overflow-wrap: anywhere; vertical-align: middle; }
+.thermal-details th { width: 34%; text-align: left; font-weight: 400; }
+.thermal-details td { text-align: center; }
+.thermal-details small { font-size: 9px; }
+.thermal-details .ticket-fare td { font-size: 15px; font-weight: 600; }
+.thermal-details .ticket-identifier { font-weight: 700; }
+.thermal-payment-status { display: grid; gap: 3px; padding: 7px 0; text-align: center; border-bottom: 1px solid #555; }
+.thermal-payment-status strong { font-size: 12px; }
+.thermal-payment-status span { font-size: 10px; }
+.ticket-terms { border: 1px solid #555; padding: 4px 7px 7px; margin-top: 7px; }
+.ticket-terms p { margin: 0 0 4px; }
+.ticket-terms p:last-child { margin: 0; }
+.ticket-cut-line { margin: 6mm 0 2mm; border-top: 1px dashed #555; text-align: center; }
+.ticket-cut-line span { display: inline-block; padding: 3px 5px; background: #fff; font: 8px Arial, sans-serif; letter-spacing: .7px; }
+.conductor-token header { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; text-align: left; }
+.conductor-token header span { font-size: 10px; }
+.conductor-token header strong { font-size: 14px; }
+.token-heading { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #333; }
+.token-heading strong { font-size: 12px; }
+.token-heading span { font-size: 8px; align-self: center; }
+.token-terminal { display: flex; gap: 8px; font-size: 9px; padding: 5px 0; }
+.token-terminal > span { flex: 0 0 auto; }
+.token-terminal strong { font-weight: 400; }
+.token-seats { display: flex; align-items: baseline; gap: 10px; border-block: 2px solid #000; padding: 5px 0; }
+.token-seats span { font-size: 12px; white-space: nowrap; }
+.token-seats strong { font-size: 23px; line-height: 1.2; overflow-wrap: anywhere; }
+.token-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 10px; }
+.token-table th { text-align: left; font-size: 9px; font-weight: 400; padding: 6px 3px 2px; }
+.token-table td { border-bottom: 1px solid #555; padding: 2px 3px 5px; font-weight: 600; vertical-align: top; overflow-wrap: anywhere; }
+.token-table small { font-size: 8px; font-weight: 400; }
+.token-table .token-time { font-size: 16px; }
+.token-payment { display: flex; flex-direction: column; align-items: center; padding: 7px 0 3px; gap: 2px; }
+.token-payment strong { font-size: 14px; }
+.token-payment span { font-size: 9px; letter-spacing: .5px; }
+.conductor-token .ticket-urdu { text-align: center; margin: 3px 0 0; }
+@page madina-passenger-ticket { size: 80mm 280mm; margin: 0; }
+@page madina-conductor-token { size: 80mm 115mm; margin: 0; }
+@media print {
+  body:has(.thermal-ticket) .receipt-modal { display: block !important; width: 80mm !important; max-width: none !important; max-height: none !important; overflow: visible !important; border-radius: 0 !important; background: #fff !important; box-shadow: none !important; }
+  .receipt-toolbar, .ticket-cut-line { display: none !important; }
+  .receipt.thermal-ticket { width: 80mm !important; max-width: none !important; padding: 0 !important; page: auto; }
+  .passenger-receipt { page: madina-passenger-ticket; }
+  .conductor-token { page: madina-conductor-token; break-before: page; }
+  .thermal-ticket table tr, .ticket-departure, .thermal-payment-status, .ticket-terms, .token-payment { break-inside: avoid; }
+}
+/* Isolate thermal tables from the wide staff-register table rules. */
+.thermal-ticket .thermal-details,
+.thermal-ticket .token-table { width: 100%; min-width: 0; table-layout: fixed; border-spacing: 0; }
+.thermal-ticket .thermal-details th,
+.thermal-ticket .thermal-details td,
+.thermal-ticket .token-table th,
+.thermal-ticket .token-table td { height: auto; min-width: 0; white-space: normal; text-transform: none; letter-spacing: inherit; color: #000; background: #fff; line-height: 1.3; }
+.thermal-ticket .thermal-details th,
+.thermal-ticket .thermal-details td { font-size: 11px; padding: 4px 5px; border: 1px solid #555; }
+.thermal-ticket .thermal-details .ticket-fare td { font-size: 15px; }
+.thermal-ticket .token-table th { font-size: 9px; padding: 6px 3px 2px; border-bottom: 1px solid #555; }
+.thermal-ticket .token-table td { font-size: 10px; padding: 2px 3px 5px; }
+.thermal-ticket .token-table .token-time { font-size: 16px; }
+.thermal-ticket .thermal-details small,
+.thermal-ticket .token-table small { display: inline; color: #000; font-size: 9px; margin: 0; }
