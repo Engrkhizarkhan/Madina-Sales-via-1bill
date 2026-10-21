@@ -15,7 +15,7 @@ backend/.env
 backend/backups/*.sql
 deploy/.env
 deploy/backups/*.sql
-projectScope/
+
 .qa-browser/
 
 # Editor directories and files
