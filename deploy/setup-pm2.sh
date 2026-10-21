@@ -13,6 +13,7 @@ if [[ $INSTALLED_VERSION != "$PM2_VERSION" ]]; then
 fi
 install -d -m 0750 -o madina-express -g madina-express /var/lib/madina-express /var/lib/madina-express/.pm2 /var/log/madina-express
 install -m 0755 "$PROJECT_DIR/deploy/madina-pm2" /usr/local/bin/madina-pm2
+install -m 0755 "$PROJECT_DIR/deploy/pm2" /usr/local/bin/pm2
 install -m 0644 "$PROJECT_DIR/deploy/pm2-logrotate.conf" /etc/logrotate.d/madina-express
 
 # Preserve the current service as a rollback before the first PM2 migration.

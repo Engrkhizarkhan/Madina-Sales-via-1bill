@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import "./App.css";
 import { api, ApiError } from "./api";
+import { coachRows, isSleeper, seatLabel, seatList, sleeperRows } from "./seat-layout";
 
 type PaymentMethod = "Cash" | "Card" | "Bank transfer" | "1Bill";
 type PaymentStatus = "Paid" | "Unpaid" | "Partially refunded" | "Refunded";
@@ -1151,6 +1152,7 @@ function PublicCheckout({
             />
             <SeatMap
               seats={trip.bus.seats}
+              service={trip.bus.service}
               selectedSeats={selectedSeats}
               occupied={occupied}
               onSelect={toggleSeat}
@@ -1239,7 +1241,7 @@ function PublicCheckout({
                   <small>Seats</small>
                   <strong>
                     {selectedSeats.length
-                      ? selectedSeats.join(", ")
+                      ? seatList(selectedSeats, bus.service)
                       : "None selected"}
                   </strong>
                 </span>
@@ -2807,7 +2809,7 @@ function BookingWorkspace({
                 <h2>Select seats</h2>
                 <p>
                   {selectedSeats.length
-                    ? `Seats ${selectedSeats.join(", ")} selected`
+                    ? `Seats ${seatList(selectedSeats, bus.service)} selected`
                     : "Choose one or more available seats"}
                 </p>
               </div>
@@ -2815,6 +2817,7 @@ function BookingWorkspace({
             </div>
             <SeatMap
               seats={bus.seats}
+              service={bus.service}
               selectedSeats={selectedSeats}
               occupied={occupied}
               onSelect={(seat) =>
@@ -2896,7 +2899,7 @@ function BookingEditModal({
             <h2>Edit passenger details</h2>
             <p>
               {booking.ticketNo} · {booking.route} · Seats{" "}
-              {booking.seats.join(", ")}
+              {seatList(booking.seats, booking.service)}
             </p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose}>
@@ -3043,7 +3046,7 @@ function RefundModal({
             <h2>Issue refund</h2>
             <p>
               {booking.ticketNo} · {booking.passenger} · Seats{" "}
-              {booking.seats.join(", ")}
+              {seatList(booking.seats, booking.service)}
             </p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose}>
@@ -3227,7 +3230,7 @@ function BookingsView({
                   booking.cnic,
                   booking.route,
                   booking.bus,
-                  booking.seats.join(" "),
+                  seatList(booking.seats, booking.service, " "),
                   booking.paid,
                   refundedTotal(booking),
                   netCollected(booking),
@@ -3349,7 +3352,7 @@ function ReservationsView({
                       </small>
                     </td>
                     <td>
-                      <span className="seat-list">{b.seats.join(", ")}</span>
+                      <span className="seat-list">{seatList(b.seats, b.service)}</span>
                     </td>
                     <td>
                       <strong>{money(b.balance)}</strong>
@@ -3374,7 +3377,7 @@ function ReservationsView({
                           className="icon-action danger"
                           type="button"
                           aria-label={`Cancel ${b.ticketNo}`}
-                          onClick={() => { if (window.confirm(`Cancel reservation ${b.ticketNo} and release seats ${b.seats.join(", ")}?`)) onCancel(b.id); }}
+                          onClick={() => { if (window.confirm(`Cancel reservation ${b.ticketNo} and release seats ${seatList(b.seats, b.service)}?`)) onCancel(b.id); }}
                         >
                           <XCircle size={15} />
                         </button>
@@ -3443,7 +3446,7 @@ function CollectPaymentModal({
         <header>
           <div>
             <h2>Collect {money(booking.balance)}</h2>
-            <p>{booking.ticketNo} · {booking.passenger} · Seats {booking.seats.join(", ")}</p>
+            <p>{booking.ticketNo} · {booking.passenger} · Seats {seatList(booking.seats, booking.service)}</p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose}><X size={19} /></button>
         </header>
@@ -4178,7 +4181,7 @@ function TripRunModal({
                 passengerRows.map(({ booking, seat }) => (
                   <tr key={`${booking.id}-${seat}`}>
                     <td>
-                      <span className="seat-list">{seat}</span>
+                      <span className="seat-list">{seatLabel(seat, booking.service)}</span>
                     </td>
                     <td>
                       <strong>{booking.passenger}</strong>
@@ -4417,7 +4420,7 @@ function ReportModal({
                   key={`${booking.id}-${seat}`}
                 >
                   <span>
-                    <b>Seat {seat}</b>
+                    <b>Seat {seatLabel(seat, booking.service)}</b>
                     <strong>{booking.passenger}</strong>
                   </span>
                   <span>
@@ -4467,7 +4470,7 @@ function ReportModal({
                       </td>
                       <td>{booking.passenger}</td>
                       <td>{booking.destination}</td>
-                      <td>{booking.seats.join(", ")}</td>
+                      <td>{seatList(booking.seats, booking.service)}</td>
                       <td>{booking.paymentMethod}</td>
                       <td>{money(booking.paid)}<small>Refund {money(refundedTotal(booking))} · Net {money(netCollected(booking))}</small></td>
                     </tr>
@@ -4510,7 +4513,7 @@ function ReportModal({
                 {rows.map(({ booking, seat }) =>
                   report.kind === "cnic" ? (
                     <tr key={`${booking.id}-${seat}`}>
-                      <td>{seat}</td>
+                      <td>{seatLabel(seat, booking.service)}</td>
                       <td>{booking.terminal ?? "Peshawar"}</td>
                       <td>{booking.destination}</td>
                       <td>{booking.issuedBy ?? "Online"}</td>
@@ -4526,7 +4529,7 @@ function ReportModal({
                     </tr>
                   ) : (
                     <tr key={`${booking.id}-${seat}`}>
-                      <td>{seat}<small>{booking.ticketNo}</small></td>
+                      <td>{seatLabel(seat, booking.service)}<small>{booking.ticketNo}</small></td>
                       <td>{booking.passenger}<small>{booking.bookingStatus} · {booking.paymentMethod}</small></td>
                       <td>{booking.gender}</td>
                       <td>{booking.phone}</td>
@@ -5993,7 +5996,7 @@ function BookingTable({
                   </small>
                 </td>
                 <td>
-                  <span className="seat-list">{b.seats.join(", ")}</span>
+                  <span className="seat-list">{seatList(b.seats, b.service)}</span>
                 </td>
                 <td>
                   <strong>{b.source}</strong>
@@ -6091,86 +6094,84 @@ function BookingTable({
 
 function SeatMap({
   seats,
+  service,
   selectedSeats,
   occupied,
   onSelect,
   large = false,
 }: {
   seats: number;
+  service: string;
   selectedSeats: number[];
   occupied: Set<number>;
   onSelect: (seat: number) => void;
   large?: boolean;
 }) {
+  const sleeper = isSleeper(service);
+  const renderSeat = (seat: number | null) => seat === null
+    ? <span className="seat-space" aria-hidden="true" />
+    : <SeatButton seat={seat} label={seatLabel(seat, service)}
+        selected={selectedSeats.includes(seat)} occupied={occupied.has(seat)}
+        onSelect={onSelect} />;
   return (
-    <div className={`seat-map-wrap ${large ? "large" : ""}`}>
+    <div className={`seat-map-wrap reference-seat-map ${sleeper ? "sleeper-map" : "coach-map"} ${large ? "large" : ""}`}>
       <div className="legend">
-        <span>
-          <i className="available" />
-          Available
-        </span>
-        <span>
-          <i className="selected" />
-          Selected
-        </span>
-        <span>
-          <i className="booked" />
-          Occupied
-        </span>
+        <span><i className="available" />Available</span>
+        <span><i className="selected" />Selected</span>
+        <span><i className="booked" />Occupied</span>
       </div>
       <div className="bus-shell">
         <div className="bus-front">
-          <span>
-            <BusFront size={17} /> FRONT
-          </span>
+          <span><BusFront size={17} /> FRONT</span>
           <span>DRIVER</span>
         </div>
-        <div className="seat-layout">
-          {Array.from({ length: Math.ceil(seats / 4) }, (_, rowIndex) => {
-            const rowSeats = Array.from(
-              { length: 4 },
-              (__, i) => rowIndex * 4 + i + 1,
-            ).filter((s) => s <= seats);
-            return (
-              <div className="seat-row" key={rowIndex}>
-                <div className="seat-pair">
-                  {rowSeats.slice(0, 2).map((s) => (
-                    <SeatButton
-                      seat={s}
-                      selected={selectedSeats.includes(s)}
-                      occupied={occupied.has(s)}
-                      onSelect={onSelect}
-                      key={s}
-                    />
-                  ))}
-                </div>
-                <span className="aisle">{rowIndex + 1}</span>
-                <div className="seat-pair">
-                  {rowSeats.slice(2, 4).map((s) => (
-                    <SeatButton
-                      seat={s}
-                      selected={selectedSeats.includes(s)}
-                      occupied={occupied.has(s)}
-                      onSelect={onSelect}
-                      key={s}
-                    />
-                  ))}
-                </div>
+        {sleeper ? <>
+          <div className="sleeper-deck-headings"><span>A ROOMS</span><span>B ROOMS</span></div>
+          <div className="sleeper-layout" aria-label="Sleeper rooms">
+            {sleeperRows(seats).map((rooms, index) => (
+              <div className="sleeper-room-row" key={index}>
+                {rooms.map((room, roomIndex) => room.seats.length ? (
+                  <div className="sleeper-room" role="group" aria-label={`Room ${room.label}`} key={roomIndex}>
+                    <span className="room-caption">ROOM</span>
+                    <strong className="room-label">{room.label}</strong>
+                    <div className="room-berths">{room.seats.map((seat) => <span key={seat}>{renderSeat(seat)}</span>)}</div>
+                  </div>
+                ) : <span key={roomIndex} aria-hidden="true" />)}
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+          {seats > 30 && <div className="sleeper-rear" aria-label="Rear sleeper seats">
+            {Array.from({length: Math.ceil((seats - 30) / 3)}, (_, row) => (
+              <div className="sleeper-rear-row" key={row}>
+                {Array.from({length: Math.min(3, seats - 30 - row * 3)}, (_, index) => 31 + row * 3 + index).map((seat) => (
+                  <div className="sleeper-room" key={seat}><span className="room-caption">ROOM</span>{renderSeat(seat)}</div>
+                ))}
+              </div>
+            ))}
+          </div>}
+          <p className="sleeper-selection-note">Select each berth separately in a shared room.</p>
+        </> : <div className="seat-layout" aria-label="Coach seating plan">
+          {coachRows(seats).map((row, index) => (
+            <div className={`seat-row ${row.center ? "rear-bench" : ""}`} key={index}>
+              <div className="seat-pair">{row.left.map((seat, position) => <span key={position}>{renderSeat(seat)}</span>)}</div>
+              <div className="aisle">{row.center ? renderSeat(row.center) : null}</div>
+              <div className="seat-pair">{row.right.map((seat, position) => <span key={position}>{renderSeat(seat)}</span>)}</div>
+            </div>
+          ))}
+        </div>}
       </div>
     </div>
   );
 }
 function SeatButton({
   seat,
+  label,
   selected,
   occupied,
   onSelect,
 }: {
   seat: number;
+  label: string;
   selected: boolean;
   occupied: boolean;
   onSelect: (seat: number) => void;
@@ -6181,12 +6182,11 @@ function SeatButton({
       type="button"
       disabled={occupied}
       className={`seat seat--${status}`}
-      aria-label={`Seat ${seat}, ${status}`}
-      aria-pressed={selected}
+      aria-label={`Seat ${label}, ${status}`}
+      aria-pressed={selected && !occupied}
       onClick={() => onSelect(seat)}
     >
-      <Armchair size={15} />
-      <b>{seat}</b>
+      <b>{label}</b>
     </button>
   );
 }
@@ -6281,7 +6281,7 @@ function ReceiptModal({
             </span>
             <span>
               <small>Seat number</small>
-              <strong className="large-seat">{booking.seats.join(", ")}</strong>
+              <strong className="large-seat">{seatList(booking.seats, booking.service)}</strong>
             </span>
             <span>
               <small>Boarding point</small>
@@ -6351,7 +6351,7 @@ function ReceiptModal({
               <strong>BOARDING COUPON</strong>
               <span>
                 <small>Seat</small>
-                <b>{booking.seats.join(", ")}</b>
+                <b>{seatList(booking.seats, booking.service)}</b>
               </span>
               <span>
                 <small>Bus</small>

@@ -60,7 +60,7 @@ The IP-address certificate is a trusted, short-lived Let's Encrypt certificate. 
 
 ## PM2 operation
 
-PM2 7.0.4 runs as the unprivileged `madina-express` user. Always use `sudo madina-pm2` (not bare `sudo pm2`), which targets `/var/lib/madina-express/.pm2`. The `madina-express` systemd service starts PM2 and the versioned ecosystem configuration at boot, and restarts the manager if it fails. PM2 restarts the app after a crash with a three-second delay and a 250 MB memory threshold. After 20 rapid startup failures it stops retrying; inspect logs and correct the cause before restarting.
+PM2 7.0.4 runs as the unprivileged `madina-express` user. Use `pm2 list`, `pm2 logs madina-express`, or `sudo madina-pm2`; the installed `/usr/local/bin/pm2` wrapper delegates through sudo to the same service account and targets `/var/lib/madina-express/.pm2`. Existing sudo permissions apply. Avoid invoking `/opt/node-current/bin/pm2` directly from your SSH user, as that targets a different daemon. The `madina-express` systemd service starts PM2 and the versioned ecosystem configuration at boot, and restarts the manager if it fails. PM2 restarts the app after a crash with a three-second delay and a 250 MB memory threshold. After 20 rapid startup failures it stops retrying; inspect logs and correct the cause before restarting.
 
 One fork-mode process is intentional for the small VM and in-memory public-reservation throttling. Restarting causes a short API interruption; this is not a high-availability cluster. The graceful shutdown timeout allows in-flight requests to finish. Daily log rotation retains seven compressed rotations; logs are checked for size at each logrotate run. Credentials remain in `backend/.env`, not the ecosystem file.
 

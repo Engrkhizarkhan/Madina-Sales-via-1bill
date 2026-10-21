@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# Route interactive commands to the existing application service account.
+if [[ ${EUID} -eq 0 ]]; then
+  exec /usr/local/bin/madina-pm2 "$@"
+fi
+exec sudo /usr/local/bin/madina-pm2 "$@"
