@@ -6052,3 +6052,69 @@ td small {
 .thermal-ticket .token-table .token-time { font-size: 16px; }
 .thermal-ticket .thermal-details small,
 .thermal-ticket .token-table small { display: inline; color: #000; font-size: 9px; margin: 0; }
+/* Counter desk: one departure, one workspace. */
+.counter-workspace { --counter-blue:#1454a0; gap:18px; }
+.counter-workspace .surface { border:1px solid #d9e3ee; border-radius:12px; padding:20px; }
+.counter-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:20px; }
+.counter-heading h1 { font-size:25px; margin:0 0 6px; color:#15314d; }
+.counter-heading p,.counter-hint,.counter-voucher .panel-heading p { color:#60748b; font-size:12px; margin:5px 0; }
+.counter-filters { display:grid; grid-template-columns:2fr 1fr 1fr; gap:14px; }
+.counter-workspace label { display:flex; flex-direction:column; gap:7px; min-width:0; font-size:12px; font-weight:600; color:#3e536c; }
+.counter-workspace input,.counter-workspace select { width:100%; min-width:0; height:39px; border:1px solid #cdd9e5; border-radius:6px; padding:8px 10px; background:#fff; color:#15314d; font:inherit; }
+.counter-workspace input:focus,.counter-workspace select:focus { outline:2px solid #90b9ec; outline-offset:1px; }
+.counter-workspace .primary-button,.counter-workspace .mode-tabs .active { background:#1454a0; border-color:#1454a0; color:white; }
+.counter-workspace .secondary-button { color:#194f89; border-color:#c5d6e8; text-decoration:none; }
+.departure-times { display:flex; gap:8px; flex-wrap:wrap; padding:16px 0; }
+.departure-times button { border:1px solid #ccdaea; background:#f4f8fd; color:#335d8d; border-radius:7px; min-width:94px; padding:9px 16px; display:grid; gap:3px; }
+.departure-times button.active { background:#153f70; color:white; border-color:#153f70; }
+.departure-times strong { font-size:19px; }.departure-times small { font-size:10px; }
+.counter-manual { border-top:1px solid #e6edf5; padding-top:14px; display:flex; gap:12px; align-items:end; flex-wrap:wrap; }
+.counter-manual label { width:180px; }.counter-manual .form-error { flex-basis:100%; }
+.seat-statistics { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:16px 0; }
+.seat-statistics>span { padding:13px 18px; border:1px solid #d7e3ee; border-radius:9px; display:flex; align-items:center; justify-content:space-between; background:#fff; color:#244560; }
+.seat-statistics .booked { background:#164b88; color:white; border-color:#164b88; }.seat-statistics .reserved { background:#d9ebff; color:#204e83; border-color:#b0cff5; }.seat-statistics strong { font-size:27px; }.seat-statistics small { font-size:13px; }
+.counter-main { display:grid; grid-template-columns:minmax(320px,1fr) minmax(340px,1fr); gap:18px; align-items:start; }
+.counter-fields { border:0; padding:0; margin:18px 0; min-width:0; }.counter-fields legend.sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.counter-workspace .form-grid { gap:13px; }.counter-workspace .panel-heading { margin-bottom:15px; gap:12px; }.counter-workspace .panel-heading h2 { font-size:17px; }
+.counter-workspace .mode-tabs { display:flex; gap:5px; }.counter-workspace .mode-tabs button { flex:1; justify-content:center; }
+.counter-total { display:flex; justify-content:space-between; gap:10px; padding:16px 0; border-block:1px solid #e2eaf3; color:#153f70; }.counter-total small { display:block; color:#67809a; font-size:11px; margin-top:6px; }.counter-total strong { font-size:22px; }
+.counter-workspace .reference-seat-map .bus-shell { max-width:440px; border-color:#b1c7df; background:#f7faff; padding:13px 17px; }
+.counter-workspace .reference-seat-map .seat { height:35px; border:1px solid #b1c7df; border-radius:4px; }.counter-workspace .reference-seat-map .seat b { font-size:16px; }
+.reference-seat-map .seat--available { background:white; color:#345676; border-color:#aebfd2; }
+.reference-seat-map .seat--booked,.reference-seat-map .legend .booked { background:#164b88; color:white; border-color:#164b88; }
+.reference-seat-map .seat--reserved,.reference-seat-map .legend .reserved { background:#cfe5ff; color:#234e7c; border-color:#94bce9; }
+.reference-seat-map .seat--selected,.reference-seat-map .legend .selected { background:#1678cb; color:white; border-color:#07528b; box-shadow:inset 0 0 0 2px #fff; }
+.reference-seat-map .seat:not(:disabled):hover { outline-color:#528acf; }.counter-workspace .reference-seat-map .seat-row { margin-bottom:5px; }.counter-workspace .reference-seat-map .bus-front { color:#335d8d; }
+.counter-workspace .legend { flex-wrap:wrap; gap:12px; }.counter-workspace .counter-hint { text-align:left; margin-top:14px; }
+.counter-voucher,.counter-history { margin-top:18px; }.voucher-fields { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }.voucher-calculation { display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap; background:#f0f6fd; padding:16px; border-radius:8px; font-size:12px; }.voucher-calculation strong { display:block; margin-top:6px; font-size:17px; color:#194f89; }
+.counter-history .panel-heading input { max-width:260px; }.seat-inspector h3 { font-size:22px; margin:22px 0 8px; }.seat-inspector p { overflow-wrap:anywhere; color:#61768c; font-size:13px; }.inspector-amount { padding:20px 0; display:grid; gap:5px; }.inspector-amount strong { font-size:27px; }.counter-actions { display:grid; gap:12px; }.counter-actions small { color:#61768c; }.counter-workspace .status-pill { display:inline-block; font-size:11px; background:#e9f1fa; color:#194f89; border-radius:5px; padding:4px 8px; }
+.reservation-confirmation { padding:28px; }.reservation-confirmation p { line-height:1.7; }
+@media(max-width:1050px) { .counter-main { grid-template-columns:1fr 1fr; }.counter-workspace .surface { padding:14px; }.counter-filters { grid-template-columns:1.5fr 1fr 1fr; } }
+@media(max-width:760px) { .counter-main,.counter-filters { grid-template-columns:1fr; }.counter-heading { align-items:start; flex-direction:column; }.voucher-fields { grid-template-columns:1fr 1fr; }.seat-statistics { gap:5px; }.seat-statistics>span { padding:12px 9px; flex-direction:column; gap:7px; }.counter-workspace .form-grid { grid-template-columns:1fr 1fr; }.counter-voucher .panel-heading { flex-wrap:wrap; } }
+/* Compact receipt and separate conductor slip. */
+@page madina-passenger-ticket { size:80mm 155mm; margin:0; }
+@page madina-conductor-token { size:80mm 75mm; margin:0; }
+.thermal-ticket .passenger-receipt,.thermal-ticket .conductor-token { padding:4mm 3mm; }
+.thermal-ticket .ticket-terms { border:0; padding:3px 0; margin-top:6px; }
+.thermal-ticket .ticket-terms p { font-size:10px; line-height:2.1; }
+.thermal-ticket .ticket-seat-number dd { font-size:26px; }.thermal-ticket .conductor-token header { padding-bottom:8px; }
+@media print { .thermal-ticket .passenger-receipt { break-before:page; }.thermal-ticket .passenger-receipt:first-child { break-before:auto; }.reservation-confirmation { display:none!important; } }
+.finance-cost-summary { display:flex; gap:30px; padding:22px; margin:18px 0; }.finance-cost-summary>div { flex:1; }.finance-cost-summary small { display:block; color:#64748b; margin-bottom:8px; }.finance-cost-summary strong { font-size:25px; }
+.counter-workspace .money-input input { padding-left:42px; }
+.counter-workspace .counter-selector { padding:16px 20px; }
+.counter-heading { margin-bottom:12px; }.counter-heading h1 { font-size:23px; }
+.counter-workspace .counter-filters input,.counter-workspace .counter-filters select { height:36px; }
+.departure-times { padding:10px 0; }.departure-times button { padding:6px 14px; }.departure-times strong { font-size:17px; }
+.counter-manual { padding-top:10px; }.counter-manual input { height:35px; }
+.counter-workspace .reference-seat-map .seat-row { min-height:0; margin-bottom:4px; }
+.counter-workspace .reference-seat-map .seat-pair { gap:3px; }
+.counter-workspace .reference-seat-map .seat { height:31px; }
+.counter-workspace .reference-seat-map .seat-layout { padding-top:10px; }
+@page madina-passenger-ticket { size:80mm 140mm; margin:0; }
+@media (max-width:920px) {
+  .admin-sidebar:not(.open) { visibility:hidden; pointer-events:none; }
+  .admin-sidebar.open { visibility:visible; width:236px; padding:18px 12px 14px; }
+  .admin-sidebar.open .sidebar-brand { justify-content:space-between; padding-left:8px; }
+  .admin-sidebar.open .sidebar-brand>div,.admin-sidebar.open nav button span,.admin-sidebar.open nav p,.admin-sidebar.open .sidebar-footer button span,.admin-sidebar.open .sidebar-footer small { display:initial; }
+  .admin-sidebar.open nav button,.admin-sidebar.open .sidebar-footer button { justify-content:flex-start; padding:0 10px; }
+}

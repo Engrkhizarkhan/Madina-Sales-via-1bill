@@ -9,6 +9,7 @@
     "server:check": "node --check backend/node/server.js && node --check backend/node/app.js && node --check backend/node/operations.js && node --check backend/node/repository.js",
     "db:install": "node backend/scripts/install.js",
     "db:backup": "node backend/scripts/backup.js",
+    "test:counter": "node backend/tests/counter-workflow.js",
     "test:api": "node backend/tests/integration.js",
     "test:layout": "node --test scripts/ticket-layout.test.mjs",
     "build": "tsc -b && vite build",

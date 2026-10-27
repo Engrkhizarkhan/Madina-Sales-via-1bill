@@ -105,3 +105,8 @@
   .operations-document .document-table thead { display: table-header-group; }
   .operations-document .document-table tr { break-inside: avoid; }
 }
+/* Keep the terminal summary compact enough for ordinary short departures. */
+.operations-document.document-terminal-a4 .voucher-summary-grid > span { padding:5px 7px; }
+.operations-document.document-terminal-a4 .voucher-summary-grid strong { margin-top:2px; }
+.operations-document.document-terminal-a4 .document-signatures { padding-top:20px; }
+.operations-document.document-terminal-a4 .document-footer { margin-top:10px; }

@@ -55,38 +55,43 @@ export async function createBooking(data, user, isPublic, req) {
     if (!reserved && paymentMethod !== "Cash" && !paymentReference) fail("A verified payment reference is required.", 422, "validation_error");
     paymentReference = reserved ? '' : paymentReference || `CASH-${timeCode()}`;
     const fare = Number(run.snapshot.route.fare);
-    const discount = isPublic ? 0 : Math.min(decimal(data.discount ?? 0, "discount"), fare * seats.length);
-    const total = Math.round((fare * seats.length - discount) * 100) / 100;
-    const paid = reserved ? 0 : total;
-    const id = uuid("booking-");
-    const stamp = sqlDateTime().replace(/[-: ]/g, "").slice(2);
-    const ticketNo = `${reserved ? "RS" : "ME"}-${stamp}-${uuid().slice(-6).toUpperCase()}`;
-    const expiresAt = null;
-    await query(connection,
-      `INSERT INTO bookings
-       (id, ticket_no, source, passenger, phone, cnic, gender, route_label, destination, boarding_point,
-        bus_registration, service, fare, discount, total, paid, balance, payment_method, payment_reference,
-        payment_status, booking_status, travel_date, travel_time, driver, attendant, trip_id, trip_run_id,
-        expires_at, seat_printed_at, issued_by, terminal, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, ticketNo, isPublic ? "Public web" : "Counter", String(data.passenger).trim(), String(data.phone).trim(),
-        String(data.cnic).trim(), ["Male", "Female"].includes(data.gender) ? data.gender : "Male",
-        `${run.snapshot.route.from} → ${run.snapshot.route.to}`, run.snapshot.route.to, String(data.boardingPoint || run.snapshot.route.boarding).trim(),
-        run.snapshot.bus.registration, run.snapshot.bus.service, fare, discount, total, paid, reserved ? total : 0, paymentMethod, paymentReference,
-        reserved ? "Unpaid" : "Paid", reserved ? "Reserved" : "Confirmed", travelDate, run.snapshot.departure, run.driver,
-        run.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Public website",
-        "Madina Terminal, Peshawar", user?.id || null]);
-    for (const seat of seats) {
-      await query(connection, "INSERT INTO booking_seats (booking_id, trip_run_id, seat_number, active) VALUES (?, ?, ?, 1)", [id, tripRunId, seat]);
-    }
-    if (!reserved) {
+    const batchDiscount = isPublic ? 0 : Math.min(decimal(data.discount ?? 0, "discount"), fare * seats.length);
+    const discountCents = Math.round(batchDiscount * 100);
+    const createdBookings = [];
+    // One transaction for the whole selection: a conflict rolls back every seat.
+    for (const [index, seat] of seats.entries()) {
+      const discount = (Math.floor(discountCents / seats.length) + (index < discountCents % seats.length ? 1 : 0)) / 100;
+      const total = Math.round((fare - discount) * 100) / 100;
+      const paid = reserved ? 0 : total;
+      const id = uuid("booking-");
+      const stamp = sqlDateTime().replace(/[-: ]/g, "").slice(2);
+      const ticketNo = `${reserved ? "RS" : "ME"}-${stamp}-${uuid().slice(-6).toUpperCase()}`;
+      const expiresAt = null;
       await query(connection,
-        "INSERT INTO financial_transactions (booking_id, transaction_type, amount, payment_method, reference, description, created_by) VALUES (?, 'sale', ?, ?, ?, ?, ?)",
-        [id, paid, paymentMethod, paymentReference, `Ticket ${ticketNo}`, user?.id || null]);
+        `INSERT INTO bookings
+         (id, ticket_no, source, passenger, phone, cnic, gender, route_label, destination, boarding_point,
+          bus_registration, service, fare, discount, total, paid, balance, payment_method, payment_reference,
+          payment_status, booking_status, travel_date, travel_time, driver, attendant, trip_id, trip_run_id,
+          expires_at, seat_printed_at, issued_by, terminal, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, ticketNo, isPublic ? "Public web" : "Counter", String(data.passenger).trim(), String(data.phone).trim(),
+          String(data.cnic).trim(), ["Male", "Female"].includes(data.gender) ? data.gender : "Male",
+          `${run.snapshot.route.from} → ${run.snapshot.route.to}`, run.snapshot.route.to, String(data.boardingPoint || run.snapshot.route.boarding).trim(),
+          run.snapshot.bus.registration, run.snapshot.bus.service, fare, discount, total, paid, reserved ? total : 0, paymentMethod, paymentReference,
+          reserved ? "Unpaid" : "Paid", reserved ? "Reserved" : "Confirmed", travelDate, run.snapshot.departure, run.driver,
+          run.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Public website",
+          "Madina Terminal, Peshawar", user?.id || null]);
+      await query(connection, "INSERT INTO booking_seats (booking_id, trip_run_id, seat_number, active) VALUES (?, ?, ?, 1)", [id, tripRunId, seat]);
+      if (!reserved) {
+        await query(connection,
+          "INSERT INTO financial_transactions (booking_id, transaction_type, amount, payment_method, reference, description, created_by) VALUES (?, 'sale', ?, ?, ?, ?, ?)",
+          [id, paid, paymentMethod, paymentReference, `Ticket ${ticketNo}`, user?.id || null]);
+      }
+      const created = await fetchBooking(id, connection);
+      await audit("booking.created", "booking", id, null, created, user?.id, req, connection);
+      createdBookings.push(created);
     }
-    const created = await fetchBooking(id, connection);
-    await audit("booking.created", "booking", id, null, created, user?.id, req, connection);
-    return created;
+    return createdBookings;
   });
 }
 
@@ -153,6 +158,9 @@ export async function confirmReservation(id, data, user, req) {
 export async function refundBooking(id, data, user, req) {
   requireFields(data, ["amount", "method", "reason"]);
   return transaction(async (connection) => {
+    // Match the departure lock order used by sales and vouchers for a consistent ledger basis.
+    const [lookup] = await query(connection, 'SELECT trip_id FROM bookings WHERE id = ?', [id]);
+    if (lookup) await query(connection, 'SELECT id FROM trips WHERE id = ? FOR UPDATE', [lookup.trip_id]);
     const records = await query(connection, "SELECT * FROM bookings WHERE id = ? FOR UPDATE", [id]);
     const row = records[0];
     if (!row || Number(row.paid) <= 0) fail("Paid booking not found.", 404, "not_found");
@@ -477,4 +485,76 @@ export async function createStaffUser(data, user, req) {
   const created = (await fetchUsers()).find((item) => item.id === Number(result.insertId));
   await audit("user.created", "user", result.insertId, null, created, user.id, req);
   return created;
+}
+
+// Date-specific counter edits. The recurring timetable remains the starting point.
+export async function saveCounterDeparture(id, data, user, req) {
+  const date = String(data.date || '');
+  if (!validDate(date)) fail('Choose a valid travel date.', 422, 'validation_error');
+  const registration = String(data.registration || '').trim().toUpperCase();
+  if (!registration || registration.length > 30) fail('Enter a bus number (up to 30 characters).', 422, 'validation_error');
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(data.departure)) fail('Choose a valid departure time.', 422, 'validation_error');
+  return transaction(async connection => {
+    const [trip] = await query(connection, 'SELECT * FROM trips WHERE id = ? FOR UPDATE', [id]);
+    if (!trip) fail('Schedule not found.', 404, 'not_found');
+    const run = await ensureRun(connection, trip, date);
+    const previous = run.snapshot.voucher || null;
+    const current = {registration: run.snapshot.bus.registration, departure: run.snapshot.departure, revision: previous?.revision || ''};
+    if (Object.keys(current).some(key => current[key] !== data.expected?.[key])) fail('Another operator changed this departure. Refresh before saving.', 409, 'assignment_changed');
+    const changed = registration !== current.registration || data.departure !== current.departure;
+    if (changed && (date < pakistanDate() || !['Scheduled','Boarding'].includes(run.status))) fail('Bus and time cannot be changed after departure.', 409, 'departure_closed');
+    let bus = run.snapshot.bus;
+    if (registration !== bus.registration) {
+      // A known bus keeps its fleet identity; a new number is registered using this layout.
+      let candidate = (await fetchBuses(false, connection)).find(item => item.registration.toUpperCase() === registration);
+      if (!candidate) {
+        const busId = uuid('bus-');
+        await query(connection, `INSERT INTO buses (id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,?,?,?,?,'Ready','Not scheduled')`,
+          [busId,registration,bus.service,bus.seats,'Counter assignment',Number(date.slice(0,4))]);
+        candidate = {...bus,id:busId,registration,status:'Ready'};
+      }
+      if (candidate.status !== 'Ready') fail('This bus is not ready. Check its return or maintenance status.',409,'bus_unavailable');
+      if (candidate.seats !== bus.seats || /sleeper/i.test(candidate.service) !== /sleeper/i.test(bus.service)) fail('This bus has a different seating plan. Choose the matching bus type first.',409,'layout_mismatch');
+      bus = candidate;
+    }
+    if (changed) {
+      await query(connection,'SELECT id FROM buses WHERE id = ? FOR UPDATE',[bus.id]);
+      const conflicts = await query(connection, `SELECT id FROM trip_runs WHERE id <> ? AND bus_id = ? AND (status IN ('Boarding','Departed') OR (status = 'Scheduled' AND service_date = ? AND JSON_UNQUOTE(JSON_EXTRACT(snapshot,'$.departure')) = ?)) LIMIT 1`,[run.id,bus.id,date,data.departure]);
+      if (conflicts.length) fail('This vehicle is already assigned to another active departure.',409,'assignment_in_use');
+    }
+    const snapshot = {...run.snapshot,bus,departure:data.departure};
+    let driver = run.driver, attendant = run.attendant;
+    if (data.voucher) {
+      const draft = data.voucher;
+      driver = String(draft.driver || '').trim(); attendant = String(draft.attendant || '').trim();
+      if (driver.length > 120 || attendant.length > 120) fail('Crew names are too long.',422,'validation_error');
+      const amounts = {};
+      for (const field of ['commissionRate','manualCommission','refreshments','terminalExpense','toll','misc','paidToDriver']) {
+        amounts[field] = decimal(draft[field] ?? 0,field);
+        if (amounts[field] > (field === 'commissionRate' ? 100 : 10000000)) fail(`Invalid ${field}.`,422,'validation_error');
+      }
+      const [sales] = await query(connection, `SELECT COALESCE(SUM(paid),0) gross FROM bookings WHERE trip_run_id = ?`,[run.id]);
+      const [refunds] = await query(connection, `SELECT COALESCE(SUM(r.amount),0) refunded FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.trip_run_id=?`,[run.id]);
+      const basis = Math.round((Number(sales.gross)-Number(refunds.refunded))*100)/100;
+      const commission = Math.round(basis*amounts.commissionRate)/100 + amounts.manualCommission;
+      const deductions = Math.round((commission+amounts.refreshments+amounts.terminalExpense+amounts.toll+amounts.misc)*100)/100;
+      const reference = `VOUCHER-${run.id}`;
+      const description = `Departure voucher · ${registration} · ${date} ${data.departure}`;
+      let expenseId = previous?.expenseId;
+      if (expenseId) {
+        await query(connection,'UPDATE expenses SET amount=?, description=?, notes=? WHERE id=?',[deductions,description,JSON.stringify(amounts),expenseId]);
+      } else {
+        const result = await query(connection,`INSERT INTO expenses (expense_date,category,description,amount,payment_method,reference,notes,created_by) VALUES (?,'Terminal',?,?,'Cash',?,?,?)`,[date,description,deductions,reference,JSON.stringify(amounts),user.id]);
+        expenseId = Number(result.insertId);
+      }
+      const delta = Math.round((deductions-(previous?.deductions || 0))*100)/100;
+      if (delta !== 0) await query(connection,`INSERT INTO financial_transactions (transaction_type,amount,payment_method,reference,description,created_by) VALUES ('expense',?,'Cash',?,?,?)`,[-delta,reference,description,user.id]);
+      snapshot.voucher = {...amounts,driver,attendant,commission,deductions,basis,expenseId,revision:uuid(),savedAt:isoDateTime(sqlDateTime()),savedBy:user.name};
+    }
+    await query(connection,'UPDATE trip_runs SET bus_id=?, driver=?, attendant=?, snapshot=? WHERE id=?',[bus.id,driver,attendant,JSON.stringify(snapshot),run.id]);
+    await query(connection,`UPDATE bookings SET bus_registration=?,service=?,travel_time=?,driver=?,attendant=? WHERE trip_run_id=? AND booking_status IN ('Reserved','Confirmed')`,[bus.registration,bus.service,data.departure,driver,attendant,run.id]);
+    const after = (await fetchTripRuns(date,connection)).find(item=>item.id===run.id);
+    await audit(data.voucher ? 'voucher.saved' : 'departure.updated','trip_run',run.id,{...current,voucher:previous},after,user.id,req,connection);
+    return after;
+  });
 }

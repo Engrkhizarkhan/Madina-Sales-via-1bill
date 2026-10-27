@@ -257,7 +257,7 @@ try {
   check(counterBootstrap.status === 200 && counterBootstrap.body.users.length === 0, "staff cannot retrieve user administration records");
   check((await request("GET", "/finance/status")).status === 403, "staff cannot view finance");
   check((await request("POST", "/auth/finance-unlock", { password: qaPassword }, counterCsrf)).status === 403, "staff cannot unlock finance");
-  check((await request("POST", `/bookings/${booking.id}/refunds`, { amount: 1, method: "Cash", reason: "Other" }, counterCsrf)).status === 403, "counter role cannot issue refunds");
+  check((await request("POST", `/bookings/${booking.id}/refunds`, { amount: 1, method: "Cash", reason: "Other" }, counterCsrf)).status === 422, "counter refunds still reject amounts exceeding the remaining balance");
   await request("POST", "/auth/logout", {}, counterCsrf);
 
   console.log(`\n${passed} Node.js integration checks passed.`);

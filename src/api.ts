@@ -80,12 +80,12 @@ export const api = {
   financeStatus: () =>
     request<{ unlocked: boolean }>("/finance/status"),
   createPublicBooking: <T>(booking: unknown) =>
-    request<{ booking: T }>("/public/bookings", {
+    request<{ booking: T; bookings: T[] }>("/public/bookings", {
       method: "POST",
       body: JSON.stringify(booking),
     }),
   createBooking: <T>(booking: unknown) =>
-    request<{ booking: T }>("/bookings", {
+    request<{ booking: T; bookings: T[] }>("/bookings", {
       method: "POST",
       body: JSON.stringify(booking),
     }),
@@ -145,6 +145,8 @@ export const api = {
     request<{ runs: T[] }>(`/trip-runs?date=${encodeURIComponent(date)}`),
   assignDeparture: <T>(id: string, assignment: unknown) =>
     request<{ trip: T }>(`/trips/${encodeURIComponent(id)}/assignment`, {method: "PUT", body: JSON.stringify(assignment)}),
+  saveCounterDeparture: <T>(id: string, data: unknown) =>
+    request<{trip: T}>(`/trips/${encodeURIComponent(id)}/counter`, {method: "PUT", body: JSON.stringify(data)}),
   saveCrew: <T>(previousName: string | undefined, person: unknown) =>
     request<{ person: T }>(
       `/crew/${encodeURIComponent(previousName ?? "new")}`,

@@ -10,7 +10,7 @@ import {
 import {
   audit, cancelBooking, confirmReservation, createBooking, createExpense,
   createStaffUser, deleteBus, deleteCrew, deleteRoute, deleteTrip, refundBooking, saveBus, saveCrew, saveRoute, saveTrip,
-  transitionTrip, updateBooking, assignDeparture,
+  transitionTrip, updateBooking, assignDeparture, saveCounterDeparture,
 } from "./operations.js";
 
 const app = express();
@@ -155,7 +155,8 @@ app.get("/public/trip-runs", asyncRoute(async (req, res) => {
 app.post("/public/bookings", asyncRoute(async (req, res) => {
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
   allowPublicReservation(req);
-  res.status(201).json({ booking: await createBooking({ ...req.body, bookingStatus: "Reserved" }, null, true, req) });
+  const bookings = await createBooking({ ...req.body, bookingStatus: "Reserved" }, null, true, req);
+  res.status(201).json({ booking: bookings[0], bookings });
 }));
 
 app.use(asyncRoute(async (req, _res, next) => {
@@ -230,7 +231,8 @@ app.get("/finance/status", (req, res) => {
 
 app.post("/bookings", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter"]);
-  res.status(201).json({ booking: await createBooking(req.body, req.user, false, req) });
+  const bookings = await createBooking(req.body, req.user, false, req);
+  res.status(201).json({ booking: bookings[0], bookings });
 }));
 app.put("/bookings/:id", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter"]);
@@ -245,7 +247,7 @@ app.post("/bookings/:id/confirm", asyncRoute(async (req, res) => {
   res.json({ booking: await confirmReservation(req.params.id, req.body, req.user, req) });
 }));
 app.post("/bookings/:id/refunds", asyncRoute(async (req, res) => {
-  requireRole(req.user, ["admin", "manager", "finance"]);
+  requireRole(req.user, ["admin", "manager", "counter", "finance"]);
   res.status(201).json({ booking: await refundBooking(req.params.id, req.body, req.user, req) });
 }));
 
@@ -262,6 +264,10 @@ app.post("/trips/:id/transition", asyncRoute(async (req, res) => { requireRole(r
 app.put('/trips/:id/assignment', asyncRoute(async (req,res) => {
   requireRole(req.user,['admin','manager','counter','dispatcher']);
   res.json({trip:await assignDeparture(req.params.id,req.body,req.user,req)});
+}));
+app.put('/trips/:id/counter', asyncRoute(async (req, res) => {
+  requireRole(req.user, ['admin', 'manager', 'counter']);
+  res.json({trip: await saveCounterDeparture(req.params.id, req.body, req.user, req)});
 }));
 app.get("/trip-runs", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter", "dispatcher"]);
