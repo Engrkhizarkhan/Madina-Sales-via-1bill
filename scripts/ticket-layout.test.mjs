@@ -57,3 +57,16 @@ test('ticket date and print time remain in Pakistan time', () => {
   assert.equal(ticketDate('2026-10-21'),'21-Oct-26');
   assert.equal(ticketTime(new Date('2026-10-20T20:05:00Z')),'01:05');
 });
+
+test('travel date ranges include both endpoints, handle blank bounds and reject reversed ranges', async () => {
+  const {inDateRange}=await import('../src/booking-filters.ts');
+  const range={from:'2026-10-01',to:'2026-10-28'};
+  assert.equal(inDateRange('2026-10-01',range),true);
+  assert.equal(inDateRange('2026-10-28',range),true);
+  assert.equal(inDateRange('2026-09-30',range),false);
+  assert.equal(inDateRange('2026-10-29',range),false);
+  assert.equal(inDateRange('2026-10-28',{from:'',to:''}),true);
+  assert.equal(inDateRange('2026-10-28',{from:'2026-10-29',to:''}),false);
+  assert.equal(inDateRange('2026-10-28',{from:'',to:'2026-10-27'}),false);
+  assert.equal(inDateRange('2026-10-28',{from:'2026-10-29',to:'2026-10-01'}),false);
+});

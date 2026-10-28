@@ -54,6 +54,28 @@ try {
   check((await req('PUT',`/trips/${ids.trip}/counter`,{...payload,expected:{...payload.expected,revision:result.trip.snapshot.voucher.revision},voucher:{...voucher,commissionRate:101}})).status===422,'commission percentage is validated');
   const publicData=await fetch(`${base}/public/trip-runs?date=${date}`).then(r=>r.json());check(!publicData.runs.find(r=>r.id===runId).snapshot.voucher,'public timetable never exposes voucher or financial details');
   check((await req('GET','/expenses')).status===403,'counter still cannot browse protected finance');
+  ids.sleeper=`counter-sleeper-${suffix}`;
+  await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,'Sleeper Bus',35,'Test',2026,'Ready','Not scheduled')",[ids.sleeper,`SLEEP-${suffix}`]);
+  const revision=result.trip.snapshot.voucher.revision;
+  const typeChange={date,registration:`SLEEP-${suffix}`,departure:'19:30',layoutBusId:ids.sleeper,expected:{registration,departure:'19:30',revision,busId:newBus}};
+  result=await req('PUT',`/trips/${ids.trip}/counter`,typeChange);
+  check(result.status===409&&result.error.code==='layout_in_use','bus type cannot reinterpret occupied seats');
+  const future=pakistanDate(new Date(Date.now()+2*86400000));
+  const emptyChange={...typeChange,date:future,expected:{registration:`TEST-${suffix}`,departure:'19:00',revision:'',busId:ids.bus}};
+  result=await req('PUT',`/trips/${ids.trip}/counter`,emptyChange);
+  check(result.status===200&&result.trip.snapshot.bus.seats===35&&result.trip.snapshot.bus.service==='Sleeper Bus','any route can use a different fleet type on an empty dated departure');
+  [rows]=await pool.execute('SELECT bus_id FROM trips WHERE id=?',[ids.trip]);check(rows[0].bus_id===ids.bus,'bus type override leaves recurring schedule unchanged');
+  result=await req('POST','/bookings',{...draft,date:future,seats:[1],bus:`TEST-${suffix}`,service:'Standard Plus',time:'19:00'});
+  check(result.status===409&&result.error.code==='assignment_changed','stale counter cannot sell against the previous bus type');
+  result=await req('POST','/bookings',{...draft,date:future,seats:[36]});check(result.status===422,'new bus capacity is enforced on booking');
+  result=await req('POST','/bookings',{...draft,date:future,seats:[16],gender:'Female',bus:`SLEEP-${suffix}`,service:'Sleeper Bus',time:'19:30'});check(result.status===201&&result.booking.gender==='Female'&&result.booking.service==='Sleeper Bus','tickets use the saved bus type and passenger gender');
+  check((await req('PUT',`/trips/${ids.trip}/counter`,emptyChange)).status===409,'stale bus assignment cannot overwrite saved type');
+  const webDate=pakistanDate(new Date(Date.now()+3*86400000));
+  result=await req('POST','/public/bookings',{...draft,date:webDate,seats:[8],gender:'Female'});const web=result.booking;
+  check(result.status===201&&web.source==='Public web'&&web.gender==='Female','online female reservation keeps source and gender');
+  result=await req('PUT',`/bookings/${web.id}`,{passenger:'Updated online passenger',phone:web.phone,cnic:web.cnic,gender:'Female',destination:web.destination,boardingPoint:web.boardingPoint});
+  check(result.status===200&&result.booking.passenger==='Updated online passenger','counter can edit an online passenger');
+  result=await req('POST',`/bookings/${web.id}/cancel`,{});check(result.status===200&&result.booking.bookingStatus==='Cancelled','counter can remove online reservation');
   console.log(`\n${checks} counter workflow checks passed.`);
 } finally {
   await pool.execute('DELETE FROM audit_logs WHERE user_id=?',[user.insertId]);
@@ -64,7 +86,7 @@ try {
   await pool.execute('DELETE FROM bookings WHERE trip_id=?',[ids.trip]);
   await pool.execute('DELETE FROM trip_runs WHERE trip_id=?',[ids.trip]);
   await pool.execute('DELETE FROM trips WHERE id=?',[ids.trip]);
-  await pool.execute('DELETE FROM buses WHERE id IN (?,?)',[ids.bus,ids.newBus||'']);
+  await pool.execute('DELETE FROM buses WHERE id IN (?,?,?)',[ids.bus,ids.newBus||'',ids.sleeper||'']);
   await pool.execute('DELETE FROM routes WHERE id=?',[ids.route]);
   await pool.execute('DELETE FROM api_sessions WHERE user_id=?',[user.insertId]);
   await pool.execute('DELETE FROM users WHERE id=?',[user.insertId]);

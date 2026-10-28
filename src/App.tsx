@@ -1,9 +1,9 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { flushSync } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
+import { inDateRange, type DateRange } from "./booking-filters";
 import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
 import {
-  Activity,
   ArrowLeft,
   ArrowRight,
   Armchair,
@@ -75,6 +75,7 @@ type RefundTransaction = {
 type AdminView =
   | "dashboard"
   | "sale"
+  | "passengers"
   | "bookings"
   | "reservations"
   | "trips"
@@ -144,7 +145,7 @@ type Voucher = {
   toll: number; misc: number; paidToDriver: number; driver: string; attendant: string;
   commission?: number; deductions?: number; basis?: number; revision?: string; savedAt?: string; savedBy?: string;
 };
-type CounterChanges = {registration: string; departure: string; voucher?: Voucher; expected: {registration: string; departure: string; revision: string}};
+type CounterChanges = {registration: string; departure: string; layoutBusId?: string; voucher?: Voucher; expected: {registration: string; departure: string; revision: string; busId?: string}};
 type TripRun = {
   id: string;
   tripId: string;
@@ -1396,6 +1397,7 @@ const navGroups = [
     items: [
       { id: "dashboard" as AdminView, label: "Today", icon: Gauge },
       { id: "sale" as AdminView, label: "Seat booking", icon: Ticket },
+      { id: "passengers" as AdminView, label: "Passengers", icon: UsersRound },
       {
         id: "bookings" as AdminView,
         label: "Bookings",
@@ -1426,11 +1428,11 @@ const navGroups = [
   },
 ];
 const roleViews: Record<StaffUser["role"], AdminView[]> = {
-  admin: ["dashboard", "sale", "bookings", "reservations", "trips", "fleet", "routes", "finance", "expenses", "reports", "crew", "settings"],
-  manager: ["dashboard", "sale", "bookings", "reservations", "trips", "fleet", "routes", "reports", "crew", "settings"],
-  counter: ["dashboard", "sale", "bookings", "reservations", "reports", "settings"],
+  admin: ["dashboard", "sale", "passengers", "bookings", "reservations", "trips", "fleet", "routes", "finance", "expenses", "reports", "crew", "settings"],
+  manager: ["dashboard", "sale", "passengers", "bookings", "reservations", "trips", "fleet", "routes", "reports", "crew", "settings"],
+  counter: ["dashboard", "sale", "passengers", "bookings", "reservations", "reports", "settings"],
   dispatcher: ["trips", "fleet", "reports", "crew", "settings"],
-  finance: ["bookings", "reports", "settings"],
+  finance: ["passengers", "bookings", "reports", "settings"],
 };
 const defaultAdminView = (user: StaffUser): AdminView => {
   if (user.forcePasswordChange) return "settings";
@@ -1863,6 +1865,7 @@ function ManagementApp({
               paymentMode={paymentMode}
             />
           ))}
+          {activeView === "passengers" && <PassengersView bookings={bookings} onManage={["admin","manager","counter"].includes(user.role)?startSale:undefined}/>}
           {activeView === "bookings" && (
             <BookingsView
               bookings={bookings}
@@ -1870,7 +1873,7 @@ function ManagementApp({
               onUpdate={updateBooking}
               onRefund={processRefund}
               canEdit={["admin", "manager", "counter"].includes(user.role)}
-              canRefund={["admin", "manager", "finance"].includes(user.role)}
+              canRefund={["admin", "manager", "counter", "finance"].includes(user.role)}
             />
           )}
           {activeView === "reservations" && (
@@ -1976,281 +1979,58 @@ function ManagementApp({
   );
 }
 
-function DashboardView({
-  bookings,
-  trips,
-  fleet,
-  routes,
-  onNavigate,
-  userName,
-}: {
-  bookings: Booking[];
-  trips: TripRecord[];
-  fleet: BusRecord[];
-  routes: RouteRecord[];
-  onNavigate: (view: AdminView) => void;
-  userName: string;
-}) {
-  const [revenuePeriod, setRevenuePeriod] = useState<"Today" | "Week">("Today");
-  const settled = bookings.filter((booking) => booking.paid > 0);
-  const paid = settled.filter(
-    (booking) => booking.bookingStatus === "Confirmed",
-  );
-  const inLastDays = (date: string, days: number) => {
-    const difference =
-      new Date(`${today}T00:00:00`).getTime() -
-      new Date(`${date}T00:00:00`).getTime();
-    return difference >= 0 && difference < days * 86400000;
-  };
-  const collectionForDays = (days: number, source?: BookingSource) => {
-    const gross = settled
-      .filter(
-        (booking) =>
-          inLastDays(booking.date, days) &&
-          (!source || booking.source === source),
-      )
-      .reduce((sum, booking) => sum + booking.paid, 0);
-    const refunds = settled
-      .filter((booking) => !source || booking.source === source)
-      .flatMap((booking) => booking.refunds ?? [])
-      .filter((refund) => inLastDays(dateInPakistan(refund.processedAt), days))
-      .reduce((sum, refund) => sum + refund.amount, 0);
-    return Math.max(0, gross - refunds);
-  };
-  const periodDays = revenuePeriod === "Today" ? 1 : 7;
-  const displayedRevenue = collectionForDays(periodDays);
-  const displayedWebSales = collectionForDays(periodDays, "Public web");
-  const todayPaidSeats = paid
-    .filter((booking) => booking.date === today)
-    .reduce((sum, booking) => sum + booking.seats.length, 0);
-  const reservations = bookings.filter(
-    (booking) => booking.bookingStatus === "Reserved",
-  );
-  const todayDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${today}T00:00:00`).getDay()] as Weekday;
-  const pakistanHour = Number(
-    new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
-      hour12: false,
-      timeZone: "Asia/Karachi",
-    }).format(new Date()),
-  );
-  const greeting =
-    pakistanHour < 12 ? "morning" : pakistanHour < 17 ? "afternoon" : "evening";
-  const dateHeading = new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    day: "2-digit",
-    month: "long",
-    timeZone: "Asia/Karachi",
-  })
-    .format(new Date())
-    .toUpperCase();
-  const metrics = [
-    {
-      label: "Today's tickets",
-      value: todayPaidSeats.toLocaleString("en-PK"),
-      note: "Confirmed passenger seats",
-      icon: Ticket,
-      tone: "green",
-    },
-    {
-      label: "Active reservations",
-      value: String(reservations.length),
-      note: "Waiting for payment",
-      icon: CalendarCheck,
-      tone: "blue",
-    },
-    {
-      label: "Scheduled trips",
-      value: String(trips.filter((trip) => trip.active && !["Departed", "Returned", "Cancelled"].includes(trip.status)).length),
-      note: "Upcoming departures",
-      icon: BusFront,
-      tone: "gold",
-    },
-    {
-      label: "Buses ready",
-      value: String(fleet.filter((bus) => bus.status === "Ready").length),
-      note: `${fleet.filter((bus) => bus.status === "Maintenance").length} in maintenance`,
-      icon: Bus,
-      tone: "orange",
-    },
+function DateRangeFilter({value,onChange,defaultValue={from:"",to:""},label="Travel dates"}:{value:DateRange;onChange:(range:DateRange)=>void;defaultValue?:DateRange;label?:string}) {
+  const invalid = Boolean(value.from && value.to && value.from > value.to);
+  return <div className="date-range-filter" role="group" aria-label={`${label} range`}>
+    <span>{label}</span>
+    <label><span>From</span><input aria-label="From date" type="date" value={value.from} max={value.to||undefined} onChange={e=>onChange({...value,from:e.target.value})}/></label>
+    <label><span>To</span><input aria-label="To date" type="date" value={value.to} min={value.from||undefined} onChange={e=>onChange({...value,to:e.target.value})}/></label>
+    <button type="button" className="text-button" onClick={()=>onChange(defaultValue)}>Reset dates</button>
+    {invalid&&<span role="alert" className="form-error">From date must be on or before To date.</span>}
+  </div>;
+}
+
+function DashboardView({bookings,trips,fleet,routes,onNavigate,userName}:{bookings:Booking[];trips:TripRecord[];fleet:BusRecord[];routes:RouteRecord[];onNavigate:(view:AdminView)=>void;userName:string}) {
+  const [range,setRange]=useState<DateRange>({from:today,to:today});
+  const records=bookings.filter(b=>inDateRange(b.date,range));
+  const confirmed=records.filter(b=>b.bookingStatus==="Confirmed");
+  const reservations=records.filter(b=>b.bookingStatus==="Reserved");
+  const count=(items:Booking[])=>items.reduce((sum,b)=>sum+b.seats.length,0);
+  const metrics=[
+    {label:"Booked seats",value:count(confirmed),note:"Confirmed tickets",icon:Ticket,tone:"green"},
+    {label:"Reserved seats",value:count(reservations),note:"Waiting for payment",icon:CalendarCheck,tone:"blue"},
+    {label:"Online seats",value:count([...confirmed,...reservations].filter(b=>b.source==="Public web")),note:"Booked + reserved",icon:UsersRound,tone:"gold"},
+    {label:"Cancelled / refunded",value:count(records.filter(b=>["Cancelled","Refunded"].includes(b.bookingStatus))),note:"Released tickets and holds",icon:ReceiptText,tone:"orange"},
   ];
-  const showDashboardFinance = false;
-  return (
-    <div className="admin-view dashboard-view">
-      <ViewHeading
-        eyebrow={dateHeading}
-        title={`Good ${greeting}, ${userName.split(" ")[0]}`}
-        text="Here is what is happening across Madina Express today."
-        action={
-          <button
-            className="primary-button"
-            type="button"
-            onClick={() => onNavigate("sale")}
-          >
-            <Plus size={16} /> New sale
-          </button>
-        }
-      />
-      <section className="metric-grid">
-        {metrics.map((m) => {
-          const Icon = m.icon;
-          return (
-            <article className="metric-card" key={m.label}>
-              <span className={`metric-icon ${m.tone}`}>
-                <Icon size={19} />
-              </span>
-              <div>
-                <small>{m.label}</small>
-                <strong>{m.value}</strong>
-                <p>{m.note}</p>
-              </div>
-            </article>
-          );
-        })}
-      </section>
-      <div className="dashboard-grid">
-        <section className="surface schedule-panel">
-          <SurfaceHeader
-            title="Today’s departures"
-            text="Live trip and boarding status"
-            action={
-              <button type="button" onClick={() => onNavigate("trips")}>
-                View schedule <ChevronRight size={15} />
-              </button>
-            }
-          />
-          <div className="schedule-list">
-            {trips
-              .filter((trip) => trip.active && trip.days.includes(todayDay) && !["Departed", "Returned", "Cancelled"].includes(trip.status))
-              .map((t) => {
-                const r = routes.find((x) => x.id === t.routeId) ?? routes[0],
-                  bus = fleet.find((x) => x.id === t.busId) ?? fleet[0],
-                  sold = bookingsForTripRun(bookings, t, bus).flatMap(
-                    (booking) => booking.seats,
-                  ).length;
-                return (
-                  <article key={t.id}>
-                    <time>{t.departure}</time>
-                    <span
-                      className={`timeline-dot ${t.status.toLowerCase()}`}
-                    />
-                    <div className="schedule-route">
-                      <strong>{routeLabel(r)}</strong>
-                      <small>
-                        {bus.registration} · {bus.service}
-                      </small>
-                    </div>
-                    <div className="schedule-load">
-                      <span>
-                        <i
-                          style={{
-                            width: `${Math.min(100, Math.round((sold / bus.seats) * 100))}%`,
-                          }}
-                        />
-                      </span>
-                      <small>
-                        {sold}/{bus.seats} seats
-                      </small>
-                    </div>
-                    <b className={`plain-status ${t.status.toLowerCase()}`}>
-                      {t.status}
-                    </b>
-                  </article>
-                );
-              })}
-          </div>
-        </section>
-        {showDashboardFinance && <section className="surface revenue-panel">
-          <SurfaceHeader
-            title="Revenue overview"
-            text="Collections by sales channel"
-            action={
-              <div className="mini-tabs">
-                {(["Week", "Today"] as const).map((item) => (
-                  <button
-                    type="button"
-                    className={revenuePeriod === item ? "active" : ""}
-                    onClick={() => setRevenuePeriod(item)}
-                    key={item}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            }
-          />
-          <div className="revenue-total">
-            <small>Net collected</small>
-            <strong>{money(displayedRevenue)}</strong>
-            <span>
-              <Activity size={13} /> After refunds
-            </span>
-          </div>
-          <div className="channel-bars">
-            <ProgressRow
-              label="Counter sales"
-              value={money(displayedRevenue - displayedWebSales)}
-              percent={
-                displayedRevenue
-                  ? Math.round(
-                      ((displayedRevenue - displayedWebSales) /
-                        displayedRevenue) *
-                        100,
-                    )
-                  : 0
-              }
-            />
-            <ProgressRow
-              label="Public website · 1Bill"
-              value={money(displayedWebSales)}
-              percent={
-                displayedRevenue
-                  ? Math.round((displayedWebSales / displayedRevenue) * 100)
-                  : 0
-              }
-              gold
-            />
-          </div>
-          <SettlementNote
-            title="Refund-aware totals"
-            text="Gross payments less recorded refunds for this period."
-          />
-        </section>}
-      </div>
-      <section className="surface recent-panel">
-        <SurfaceHeader
-          title="Reservations to collect"
-          text={`${reservations.length} unpaid hold${reservations.length === 1 ? "" : "s"}`}
-          action={
-            <button type="button" onClick={() => onNavigate("reservations")}>
-              Open reservations <ChevronRight size={15} />
-            </button>
-          }
-        />
-        {reservations.length ? (
-          <BookingTable bookings={reservations.slice(0, 5)} onPrint={() => undefined} compact />
-        ) : (
-          <EmptyState title="No payment waiting" text="New online and counter reservations will appear here automatically." />
-        )}
-      </section>
-      {showDashboardFinance && <section className="surface recent-panel">
-        <SurfaceHeader
-          title="Recent sales activity"
-          text="Latest paid tickets from web and counter"
-          action={
-            <button type="button" onClick={() => onNavigate("bookings")}>
-              All bookings <ChevronRight size={15} />
-            </button>
-          }
-        />
-        <BookingTable
-          bookings={paid.slice(0, 5)}
-          onPrint={() => undefined}
-          compact
-        />
-      </section>}
-    </div>
-  );
+  return <div className="admin-view dashboard-view">
+    <ViewHeading eyebrow="OPERATIONS" title={`Welcome, ${userName.split(" ")[0]}`} text="Ticket activity for your selected travel dates." action={<button className="primary-button" onClick={()=>onNavigate("sale")}><Plus size={16}/> Seat booking</button>}/>
+    <DateRangeFilter value={range} onChange={setRange} defaultValue={{from:today,to:today}}/>
+    <section className="metric-grid">{metrics.map(m=><article className="metric-card" key={m.label}><span className={`metric-icon ${m.tone}`}><m.icon size={19}/></span><div><small>{m.label}</small><strong>{m.value.toLocaleString("en-PK")}</strong><p>{m.note}</p></div></article>)}</section>
+    <section className="surface recent-panel"><SurfaceHeader title="Passenger activity" text={`${records.length} ticket / reservation records in this date range`} action={<button onClick={()=>onNavigate("passengers")}>Passenger directory <ChevronRight size={15}/></button>}/>{records.length?<BookingTable bookings={records.slice(0,8)} onPrint={()=>undefined} compact/>:<EmptyState title="No tickets in this date range" text="Select different travel dates to see passenger activity."/>}</section>
+    <section className="surface schedule-panel"><SurfaceHeader title={`Today's departures · ${today}`} text="Current boarding status" action={<button onClick={()=>onNavigate("trips")}>Roster <ChevronRight size={15}/></button>}/>
+      <div className="schedule-list">{trips.filter(t=>t.active&&t.days.includes(serviceDayFor(today))&&!["Returned","Cancelled"].includes(t.status)).map(t=>{
+        const bus=tripBus(t,fleet),route=tripRoute(t,routes);if(!bus||!route)return null;
+        const sold=bookings.filter(b=>b.tripRunId===tripRunKey(t,t.runNumber,today)&&b.bookingStatus==="Confirmed").flatMap(b=>b.seats).length;
+        return <article key={t.id}><time>{t.departure}</time><span className={`timeline-dot ${t.status.toLowerCase()}`}/><div className="schedule-route"><strong>{routeLabel(route)}</strong><small>{bus.registration} · {bus.service}</small></div><div className="schedule-load"><small>{sold}/{bus.seats} booked</small></div><b className={`plain-status ${t.status.toLowerCase()}`}>{t.status}</b></article>;
+      })}</div>
+    </section>
+  </div>;
+}
+
+function PassengersView({bookings,onManage}:{bookings:Booking[];onManage?: (id:string,date:string)=>void}) {
+  const [range,setRange]=useState<DateRange>({from:"",to:""});
+  const [search,setSearch]=useState(""),[status,setStatus]=useState("All");
+  const visible=bookings.filter(b=>inDateRange(b.date,range)&&(status==="All"||b.bookingStatus===status)&&`${b.passenger} ${b.phone} ${b.cnic} ${b.ticketNo} ${b.route} ${b.bus}`.toLowerCase().includes(search.toLowerCase()));
+  return <div className="admin-view"><ViewHeading eyebrow="PASSENGER DIRECTORY" title="Passengers" text="Contact details and journey history, including reservations, cancelled tickets and refunds." action={<button className="secondary-button" onClick={()=>downloadCsv("madina-passengers.csv",[["Passenger","Mobile","CNIC / Passport","Gender","Ticket","Travel date","Time","Route","Boarding","Bus","Type","Seats","Source","Status","Paid","Refunded","Balance"],...visible.map(b=>[b.passenger,b.phone,b.cnic,b.gender,b.ticketNo,b.date,b.time,b.route,b.boardingPoint,b.bus,b.service,seatList(b.seats,b.service),b.source,b.bookingStatus,b.paid,refundedTotal(b),["Reserved","Confirmed"].includes(b.bookingStatus)?b.balance:0])])}><FileBarChart size={16}/> Export filtered records</button>}/>
+    <section className="surface data-surface"><DateRangeFilter value={range} onChange={setRange}/><DataToolbar tabs={["All","Confirmed","Reserved","Cancelled","Refunded"]} active={status} onTab={setStatus} search={search} onSearch={setSearch} placeholder="Name, phone, CNIC, ticket or route"/>
+      <p className="directory-count">{visible.length} records · One row per ticket or reservation</p><div className="table-wrap"><table><thead><tr><th>Passenger</th><th>Contact / ID</th><th>Journey</th><th>Ticket / seat</th><th>Payment</th>{onManage&&<th>Action</th>}</tr></thead><tbody>{visible.map(b=><tr key={b.id}>
+        <td><strong>{b.passenger}</strong><small>{b.gender}</small></td><td><strong>{b.phone}</strong><small>{b.cnic}</small></td>
+        <td><strong>{b.route}</strong><small>{b.date} · {b.time} · {b.bus}</small><small>{b.service} · {b.boardingPoint}</small></td>
+        <td><strong>{b.ticketNo}</strong><small>Seat {seatList(b.seats,b.service)} · {b.source}</small><span className="status-pill">{b.bookingStatus}</span></td>
+        <td><strong>{money(netCollected(b))} net</strong><small>{b.paymentMethod} · {b.paymentStatus}</small><small>Refunded {money(refundedTotal(b))} · Due {money(["Reserved","Confirmed"].includes(b.bookingStatus)?b.balance:0)}</small></td>
+        {onManage&&<td>{b.tripId&&<button className="text-button" onClick={()=>onManage(b.tripId!,b.date)}>Open departure</button>}</td>}
+      </tr>)}</tbody></table>{!visible.length&&<EmptyState title="No matching passengers" text="Change the dates or search to find a passenger."/>}</div>
+    </section></div>;
 }
 
 function ViewHeading({
@@ -2294,29 +2074,6 @@ function SurfaceHeader({
     </div>
   );
 }
-function ProgressRow({
-  label,
-  value,
-  percent,
-  gold = false,
-}: {
-  label: string;
-  value: string;
-  percent: number;
-  gold?: boolean;
-}) {
-  return (
-    <div>
-      <span>
-        <b>{label}</b>
-        <small>{value}</small>
-      </span>
-      <i>
-        <em className={gold ? "gold" : ""} style={{ width: `${percent}%` }} />
-      </i>
-    </div>
-  );
-}
 function SettlementNote({ title, text }: { title: string; text: string }) {
   return (
     <div className="settlement-note">
@@ -2344,7 +2101,6 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const [tripId,setTripId] = useState(defaultTrip.id);
   const [date,setDate] = useState(initialSelection?.date ?? params.get("date") ?? today);
   const [routeId,setRouteId] = useState(defaultTrip.routeId);
-  const [service,setService] = useState(tripBus(defaultTrip,fleet).service);
   const [mode,setMode] = useState<"Ticket"|"Reservation">(initialSelection?.mode ?? "Ticket");
   const [selected,setSelected] = useState<number[]>([]);
   const [busy,setBusy] = useState(false), [error,setError] = useState("");
@@ -2354,6 +2110,9 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const [departureDirty,setDepartureDirty] = useState(false);
   const trip = tripOnDate(trips.find(t=>t.id===tripId) ?? defaultTrip,date,runs);
   const bus = tripBus(trip,fleet), route = tripRoute(trip,routes);
+  const [selectionBasis,setSelectionBasis]=useState("");
+  const selectionContext=`${trip.id}/${date}/${bus.id}/${bus.service}/${bus.seats}/${trip.departure}`;
+  const chosenSeats=selectionBasis===selectionContext?selected:[];
   const runId = tripRunKey(trip,trip.runNumber,date);
   const records = bookings.filter(b=>b.tripRunId===runId);
   const active = records.filter(b=>["Reserved","Confirmed"].includes(b.bookingStatus));
@@ -2364,8 +2123,8 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const blank = ():PassengerForm=>({passenger:"",phone:"",cnic:"",idType:"CNIC",gender:"Male",boardingPoint:route.boarding,fare:route.fare,discount:0,paymentMethod:"Cash",paymentReference:""});
   const [passenger,setPassenger] = useState<PassengerForm>(blank);
   const update = <K extends keyof PassengerForm>(key:K,value:PassengerForm[K])=>setPassenger(p=>({...p,[key]:value}));
-  const total = Math.max(0,route.fare*selected.length-passenger.discount);
-  const choices = trips.filter(t=>t.active && t.routeId===routeId && tripBus(t,fleet).service===service && t.days.includes(serviceDayFor(date)));
+  const total = Math.max(0,route.fare*chosenSeats.length-passenger.discount);
+  const choices = trips.filter(t=>t.active && t.routeId===routeId && t.days.includes(serviceDayFor(date)));
   const choose = (id:string,newDate=date)=>{
     setTripId(id);setDate(newDate);setDepartureDirty(false);setSelected([]);setFocusedId(null);setAction(null);setError("");
     const next = trips.find(t=>t.id===id)!;
@@ -2376,13 +2135,13 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const submit = async (event:FormEvent)=>{
     event.preventDefault();if(busy)return;
     if(departureDirty)return setError("Save the vehicle number and departure time first.");
-    if(!selected.length)return setError("Select an available seat.");
-    if(selected.some(s=>occupied.has(s)))return setError("A selected seat was just booked. Choose another seat.");
+    if(!chosenSeats.length)return setError("Select an available seat.");
+    if(chosenSeats.some(s=>occupied.has(s)))return setError("A selected seat was just booked. Choose another seat.");
     if(mode==="Ticket" && passenger.paymentMethod!=="Cash" && !passenger.paymentReference.trim())return setError("Enter the verified payment reference.");
     setBusy(true);setError("");
     try {
       await onSave({id:"",ticketNo:"",source:"Counter",passenger:passenger.passenger.trim(),phone:passenger.phone.trim(),cnic:passenger.cnic.trim(),gender:passenger.gender,
-        route:routeLabel(route),destination:route.to,boardingPoint:passenger.boardingPoint,bus:bus.registration,service:bus.service,seats:selected,
+        route:routeLabel(route),destination:route.to,boardingPoint:passenger.boardingPoint,bus:bus.registration,service:bus.service,seats:chosenSeats,
         fare:route.fare,discount:passenger.discount,total,paid:mode==="Ticket"?total:0,balance:mode==="Ticket"?0:total,paymentMethod:passenger.paymentMethod,paymentReference:passenger.paymentReference,
         paymentStatus:mode==="Ticket"?"Paid":"Unpaid",bookingStatus:mode==="Ticket"?"Confirmed":"Reserved",date,time:trip.departure,driver:trip.driver,attendant:trip.attendant,createdAt:new Date().toISOString(),tripId:trip.id,tripRunId:runId});
       reset();
@@ -2393,22 +2152,20 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
     <section className="surface counter-selector">
       <div className="counter-heading"><div><h1>Seat booking</h1><p>Select a departure. Everything for this journey stays here.</p></div><a className="secondary-button" href={`?trip=${encodeURIComponent(tripId)}&date=${date}`} target="_blank" rel="noreferrer">Open in another tab ↗</a></div>
       <div className="counter-filters">
-        <label><span>Route</span><select value={routeId} onChange={e=>{const next=trips.find(t=>t.active&&t.routeId===e.target.value);setRouteId(e.target.value);if(next){setService(tripBus(next,fleet).service);choose(next.id);}}}>{routes.filter(r=>trips.some(t=>t.active&&t.routeId===r.id)).map(r=><option value={r.id} key={r.id}>{routeLabel(r)}</option>)}</select></label>
+        <label><span>Route</span><select value={routeId} onChange={e=>{const next=trips.find(t=>t.active&&t.routeId===e.target.value);setRouteId(e.target.value);if(next)choose(next.id);}}>{routes.filter(r=>trips.some(t=>t.active&&t.routeId===r.id)).map(r=><option value={r.id} key={r.id}>{routeLabel(r)}</option>)}</select></label>
         <label><span>Travel date</span><input type="date" value={date} onChange={e=>{if(e.target.value)choose(tripId,e.target.value);}}/></label>
-        <label><span>Bus type</span><select value={service} onChange={e=>{setService(e.target.value);const next=trips.find(t=>t.active&&t.routeId===routeId&&tripBus(t,fleet).service===e.target.value);if(next)choose(next.id);}}>{[...new Set(trips.filter(t=>t.active&&t.routeId===routeId).map(t=>tripBus(t,fleet).service))].map(value=><option key={value}>{value}</option>)}</select></label>
       </div>
-      <div className="departure-times" aria-label="Departure times">{choices.map(t=>{const dated=tripOnDate(t,date,runs);return <button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{dated.departure}</strong><small>{dated.status}</small></button>;})}{!choices.length&&<p>No departures for this route, type and date.</p>}</div>
-      <CounterDeparture key={`${runId}-${bus.registration}-${trip.departure}`} trip={trip} bus={bus} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);return saved;}}/>
+      <div className="departure-times" aria-label="Departure times">{choices.map(t=>{const dated=tripOnDate(t,date,runs);return <button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{dated.departure}</strong><small>{dated.status}</small></button>;})}{!choices.length&&<p>No departures for this route and date.</p>}</div>
+      <CounterDeparture key={`${runId}-${bus.id}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setFocusedId(null);return saved;}}/>
     </section>
-    <div className="seat-statistics" aria-label="Seat totals"><span className="booked"><small>Booked</small><strong>{occupied.size-reserved.size}</strong></span><span className="reserved"><small>Reserved</small><strong>{reserved.size}</strong></span><span><small>Available / {bus.seats} total</small><strong>{bus.seats-occupied.size}</strong></span></div>
     <div className="counter-main">
-      <section className="surface counter-passenger">
+      <div className="counter-passenger-column"><section className="surface counter-passenger">
         {focused ? <div className="seat-inspector">
           <div className="panel-heading"><h2>Seat {seatList(focused.seats,focused.service)}</h2><button type="button" className="secondary-button" onClick={()=>{setFocusedId(null);setAction(null);}}>New passenger</button></div>
-          <span className="status-pill">{focused.bookingStatus}</span><h3>{focused.passenger}</h3><p>{focused.phone} · {focused.cnic}</p><p>{focused.ticketNo}</p>
+          <span className="status-pill">{focused.bookingStatus} · {focused.source} · {focused.gender}</span><h3>{focused.passenger}</h3><p>{focused.phone} · {focused.cnic}</p><p>{focused.ticketNo}</p>
           <div className="inspector-amount"><small>{focused.bookingStatus==="Reserved"?"To collect":"Net collected"}</small><strong>{money(focused.bookingStatus==="Reserved"?focused.balance:netCollected(focused))}</strong></div>
           <div className="counter-actions">
-            {focused.bookingStatus==="Reserved"&&<><button type="button" className="primary-button" disabled={unavailable} onClick={()=>setAction("payment")}>Collect payment & issue ticket</button><button type="button" className="danger-button" disabled={busy} onClick={async()=>{setBusy(true);try{await onCancel(focused.id);setFocusedId(null);}catch(e){showToast(e instanceof Error?e.message:"Could not remove reservation.");}finally{setBusy(false);}}}>Remove reservation</button><small>Reserved seats have no ticket or boarding token.</small></>}
+            {focused.bookingStatus==="Reserved"&&<><button type="button" className="primary-button" disabled={unavailable||departureDirty} onClick={()=>setAction("payment")}>Collect payment & issue ticket</button><button type="button" className="danger-button" disabled={busy} onClick={async()=>{setBusy(true);try{await onCancel(focused.id);setFocusedId(null);}catch(e){showToast(e instanceof Error?e.message:"Could not remove reservation.");}finally{setBusy(false);}}}>Remove reservation</button><small>Reserved seats have no ticket or boarding token.</small></>}
             {focused.bookingStatus!=="Reserved"&&<button type="button" className="primary-button" onClick={()=>onPrint(focused)}><Printer size={16}/> {focused.bookingStatus==="Confirmed"?"Print receipt & token":"Print refund record"}</button>}
             {focused.bookingStatus==="Confirmed"&&focused.paid===0&&<button type="button" className="danger-button" disabled={busy} onClick={async()=>{setBusy(true);try{await onCancel(focused.id);setFocusedId(null);}catch(e){showToast(e instanceof Error?e.message:"Could not cancel ticket.");}finally{setBusy(false);}}}>Cancel ticket & release seat</button>}
             {refundableBalance(focused)>0&&<button type="button" className="danger-button" onClick={()=>setAction("refund")}>Cancel / refund ticket</button>}
@@ -2422,17 +2179,18 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
             <label><span>CNIC / Passport *</span><input required maxLength={50} value={passenger.cnic} onChange={e=>update("cnic",e.target.value)}/></label>
             <label><span>Gender</span><select value={passenger.gender} onChange={e=>update("gender",e.target.value as "Male"|"Female")}><option>Male</option><option>Female</option></select></label>
             <label><span>Boarding point</span><input value={passenger.boardingPoint} onChange={e=>update("boardingPoint",e.target.value)}/></label>
-            <MoneyField label="Fare per seat" value={route.fare} readOnly/><MoneyField label="Total discount" value={passenger.discount} onChange={v=>update("discount",Math.min(v,route.fare*selected.length))}/>
+            <MoneyField label="Fare per seat" value={route.fare} readOnly/><MoneyField label="Total discount" value={passenger.discount} onChange={v=>update("discount",Math.min(v,route.fare*chosenSeats.length))}/>
             {mode==="Ticket"&&<><label><span>Payment</span><select value={passenger.paymentMethod} onChange={e=>update("paymentMethod",e.target.value as PaymentMethod)}><option>Cash</option><option>Card</option><option>Bank transfer</option>{paymentMode!=="disabled"&&<option>1Bill</option>}</select></label>{passenger.paymentMethod!=="Cash"&&<label><span>Payment reference *</span><input required value={passenger.paymentReference} onChange={e=>update("paymentReference",e.target.value)}/></label>}</>}
           </div></fieldset>
-          <div className="counter-total"><span>{selected.length ? `Seat ${seatList(selected,bus.service)}`:"Select seats"}<small>{mode==="Ticket"?"One ticket + token per seat":"Hold only · no ticket issued"}</small></span><strong>{money(total)}</strong></div>
-          {unavailable&&<p className="form-error">This departure is closed for booking.</p>}{error&&<p className="form-error" role="alert">{error}</p>}
-          <div className="form-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>Clear</button><button type="submit" className="primary-button" disabled={busy||unavailable||!choices.some(t=>t.id===tripId)}>{busy?"Saving…":mode==="Ticket"?`Collect & issue ${selected.length>1?selected.length+" tickets":"ticket"}`:"Reserve seats"}</button></div>
+          <div className="counter-total"><span>{chosenSeats.length ? `Seat ${seatList(chosenSeats,bus.service)}`:"Select seats"}<small>{mode==="Ticket"?"One ticket + token per seat":"Hold only · no ticket issued"}</small></span><strong>{money(total)}</strong></div>
+          {departureDirty&&<p className="pending-departure" role="status">Save bus / time before issuing or reserving seats.</p>}{unavailable&&<p className="form-error">This departure is closed for booking.</p>}{error&&<p className="form-error" role="alert">{error}</p>}
+          <div className="form-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>Clear</button><button type="submit" className="primary-button" disabled={busy||unavailable||departureDirty||!choices.some(t=>t.id===tripId)}>{busy?"Saving…":mode==="Ticket"?`Collect & issue ${chosenSeats.length>1?chosenSeats.length+" tickets":"ticket"}`:"Reserve seats"}</button></div>
         </form>}
       </section>
-      <section className="surface counter-seats"><div className="panel-heading"><h2>{bus.service}</h2><span>{bus.registration} · {trip.departure}</span></div>
-        <SeatMap seats={bus.seats} service={bus.service} selectedSeats={selected.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onSelect={seat=>{if(busy)return;setFocusedId(null);setSelected(current=>current.includes(seat)?current.filter(s=>s!==seat):[...current,seat].sort((a,b)=>a-b));}} large/>
-        <p className="counter-hint">Click a blue seat to collect payment, reprint or refund.</p>
+    <div className="seat-statistics" aria-label="Seat totals"><span className="booked"><small>Booked</small><strong>{occupied.size-reserved.size}</strong></span><span className="reserved"><small>Reserved</small><strong>{reserved.size}</strong></span><span><small>Available / {bus.seats} total</small><strong>{bus.seats-occupied.size}</strong></span></div>
+      </div><section className="surface counter-seats"><div className="panel-heading"><h2>{bus.service}</h2><span>{bus.registration} · {trip.departure}</span></div>
+        <SeatMap seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onSelect={seat=>{if(busy)return;setFocusedId(null);setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
+        <p className="counter-hint">Click any booked or reserved seat to edit, collect payment, remove a reservation or refund. W = online; R = reserved.</p>
       </section>
     </div>
     <VoucherEditor key={runId} trip={trip} bus={bus} net={net} records={records} onSave={changes=>onCounterSave(trip.id,date,changes)} onReport={kind=>onReport(kind,trip.id,trip.runNumber,date)}/>
@@ -2443,10 +2201,13 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   </div>;
 }
 
-function CounterDeparture({trip,bus,disabled,onDirty,onSave}:{trip:TripRecord;bus:BusRecord;disabled:boolean;onDirty:(dirty:boolean)=>void;onSave:(changes:CounterChanges)=>Promise<TripRun>}) {
-  const [registration,setRegistration]=useState(bus.registration),[departure,setDeparture]=useState(trip.departure),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  return <form className="counter-manual" onSubmit={async e=>{e.preventDefault();if(busy)return;setBusy(true);setError("");try{await onSave({registration,departure,expected:{registration:bus.registration,departure:trip.departure,revision:trip.snapshot?.voucher?.revision??""}});}catch(e){setError(e instanceof Error?e.message:"Could not save departure.");}finally{setBusy(false);}}}>
-    <label><span>Vehicle number</span><input aria-label="Vehicle number" value={registration} maxLength={30} disabled={disabled||busy} onChange={e=>{setRegistration(e.target.value);onDirty(e.target.value!==bus.registration||departure!==trip.departure);}} required/></label><label><span>Actual departure</span><input aria-label="Actual departure" type="time" value={departure} disabled={disabled||busy} onChange={e=>{setDeparture(e.target.value);onDirty(registration!==bus.registration||e.target.value!==trip.departure);}} required/></label><button className="secondary-button" disabled={disabled||busy||(registration===bus.registration&&departure===trip.departure)}>Save bus / time</button>{error&&<p className="form-error">{error}</p>}
+function CounterDeparture({trip,bus,fleet,disabled,onDirty,onSave}:{trip:TripRecord;bus:BusRecord;fleet:BusRecord[];disabled:boolean;onDirty:(dirty:boolean)=>void;onSave:(changes:CounterChanges)=>Promise<TripRun>}) {
+  const layouts=[bus,...fleet.filter(b=>b.status!=="Retired")].filter((b,index,list)=>list.findIndex(other=>other.service===b.service&&other.seats===b.seats)===index);
+  const [layoutId,setLayoutId]=useState(bus.id),[registration,setRegistration]=useState(bus.registration),[departure,setDeparture]=useState(trip.departure),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const changed=layoutId!==bus.id||registration!==bus.registration||departure!==trip.departure;
+  return <form className="counter-manual" onSubmit={async e=>{e.preventDefault();if(busy||disabled)return;setBusy(true);setError("");try{await onSave({registration,departure,layoutBusId:layoutId,expected:{registration:bus.registration,departure:trip.departure,revision:trip.snapshot?.voucher?.revision??"",busId:bus.id}});}catch(e){setError(e instanceof Error?e.message:"Could not save departure.");}finally{setBusy(false);}}}>
+    <label><span>Bus type</span><select value={layoutId} disabled={disabled||busy} onChange={e=>{const next=layouts.find(b=>b.id===e.target.value)!;setLayoutId(next.id);setRegistration(next.registration);onDirty(next.id!==bus.id||next.registration!==bus.registration||departure!==trip.departure);setError("");}}>{layouts.map(b=><option key={b.id} value={b.id}>{b.service} · {b.seats} seats</option>)}</select></label>
+    <label><span>Vehicle number</span><input aria-label="Vehicle number" value={registration} maxLength={30} disabled={disabled||busy} onChange={e=>{setRegistration(e.target.value);onDirty(layoutId!==bus.id||e.target.value!==bus.registration||departure!==trip.departure);}} required/></label><label><span>Actual departure</span><input aria-label="Actual departure" type="time" value={departure} disabled={disabled||busy} onChange={e=>{setDeparture(e.target.value);onDirty(layoutId!==bus.id||registration!==bus.registration||e.target.value!==trip.departure);}} required/></label><button className="secondary-button" disabled={disabled||busy||!changed}>{busy?"Saving…":"Save bus / time"}</button>{error&&<p className="form-error" role="alert">{error}</p>}
   </form>;
 }
 
@@ -2805,18 +2566,19 @@ function BookingsView({
 }: {
   bookings: Booking[];
   onPrint: (booking: Booking) => void;
-  onUpdate: (booking: Booking) => void;
+  onUpdate: (booking: Booking) => Promise<void>;
   onRefund: (id: string, refund: RefundTransaction) => Promise<void>;
   canEdit: boolean;
   canRefund: boolean;
 }) {
+  const [range,setRange]=useState<DateRange>({from:"",to:""});
   const [search, setSearch] = useState(""),
     [filter, setFilter] = useState<"All" | BookingSource>("All"),
     [editing, setEditing] = useState<Booking | null>(null),
     [refunding, setRefunding] = useState<Booking | null>(null);
   const visible = bookings.filter(
     (b) =>
-      b.paid > 0 &&
+      inDateRange(b.date,range) && b.paid > 0 &&
       b.bookingStatus !== "Reserved" &&
       (filter === "All" || b.source === filter) &&
       `${b.ticketNo} ${b.passenger} ${b.phone} ${b.cnic} ${b.route} ${(b.refunds ?? [])
@@ -2877,6 +2639,7 @@ function BookingsView({
         }
       />
       <section className="surface data-surface">
+        <DateRangeFilter value={range} onChange={setRange}/>
         <DataToolbar
           tabs={["All", "Public web", "Counter"]}
           active={filter}
@@ -2896,8 +2659,8 @@ function BookingsView({
         <BookingEditModal
           booking={editing}
           onClose={() => setEditing(null)}
-          onSave={(booking) => {
-            onUpdate(booking);
+          onSave={async (booking) => {
+            await onUpdate(booking);
             setEditing(null);
           }}
         />
@@ -2926,8 +2689,9 @@ function ReservationsView({
   onNew: () => void;
   paymentMode: string;
 }) {
+  const [range,setRange]=useState<DateRange>({from:"",to:""});
   const [collecting, setCollecting] = useState<Booking | null>(null);
-  const reservations = bookings.filter((b) => b.bookingStatus === "Reserved");
+  const reservations = bookings.filter((b) => b.bookingStatus === "Reserved" && inDateRange(b.date,range));
   return (
     <div className="admin-view">
       <ViewHeading
@@ -2941,6 +2705,7 @@ function ReservationsView({
         }
       />
       <section className="surface data-surface">
+        <DateRangeFilter value={range} onChange={setRange}/>
         <div className="info-banner">
           <ShieldCheck size={18} />
           <div>
@@ -3120,10 +2885,11 @@ function TripsView({
   const [deleting, setDeleting] = useState<TripRecord | null>(null);
   const [openTrip, setOpenTrip] = useState<{ id: string; date: string } | null>(null);
   const [serviceDate, setServiceDate] = useState(today);
+  const [range,setRange]=useState<DateRange>({from:"",to:""});
   const [filter, setFilter] = useState("This date");
   const visible = filter === "This date"
     ? tripsOnDate(trips, serviceDate, runs).map((trip) => ({ trip, date: serviceDate }))
-    : runs.filter((run) => filter === "On route" ? run.status === "Departed" : ["Departed", "Returned"].includes(run.status))
+    : runs.filter((run) => (filter === "On route" ? run.status === "Departed" : ["Departed", "Returned"].includes(run.status)) && inDateRange(run.date,range))
       .flatMap((run) => { const trip = trips.find((item) => item.id === run.tripId); return trip ? [{ trip: tripOnDate(trip, run.date, runs), date: run.date }] : []; });
   const modalTrip = openTrip && trips.find((trip) => trip.id === openTrip.id);
   return (
@@ -3135,6 +2901,7 @@ function TripsView({
           <div className="date-switcher"><label><CalendarDays size={17}/><span>Service date</span><input type="date" value={serviceDate} onChange={(event) => { setServiceDate(event.target.value); setFilter("This date"); }}/></label></div>
           <div className="filter-tabs">{["This date", "On route", "History"].map((label) => <button type="button" key={label} className={filter === label ? "active" : ""} onClick={() => setFilter(label)}>{label}</button>)}</div>
         </div>
+        {filter!=="This date"&&<DateRangeFilter value={range} onChange={setRange}/>}
         <div className="trip-cards" role="table" aria-label="Departures">
           <div className="trip-table-head" role="row"><span>Time</span><span>Route</span><span>Bus</span><span>Crew</span><span>Seats</span><span>Status</span><span>Actions</span></div>
           {visible.map(({trip, date}) => {
@@ -4591,6 +4358,7 @@ function ConfirmDeleteModal({
 }
 
 function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
+  const [range,setRange]=useState<DateRange>({from:"",to:""});
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState({
@@ -4608,6 +4376,7 @@ function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
       .catch((error: unknown) => showToast(error instanceof Error ? error.message : "Expenses could not be loaded."))
       .finally(() => setLoading(false));
   }, [showToast]);
+  const visibleExpenses=expenses.filter(e=>inDateRange(e.date,range));
   const updateDraft = (key: keyof typeof draft, value: string | number) =>
     setDraft((current) => ({ ...current, [key]: value }));
   return (
@@ -4640,10 +4409,10 @@ function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
         </form>
       </section>
       <section className="surface data-surface">
-        <SurfaceHeader title="Expense history" text="Latest recorded operating costs" />
+        <SurfaceHeader title="Expense history" text={`${visibleExpenses.length} records · ${money(visibleExpenses.reduce((sum,e)=>sum+e.amount,0))}`} /><DateRangeFilter value={range} onChange={setRange} label="Expense dates"/>
         {loading ? <p className="table-loading">Loading expenses…</p> : (
           <div className="table-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Method</th><th>Amount</th><th>Recorded by</th></tr></thead><tbody>
-            {expenses.length ? expenses.map((expense) => <tr key={expense.id}><td>{expense.date}</td><td>{expense.category}</td><td><strong>{expense.description}</strong><small>{expense.reference || expense.notes || "—"}</small></td><td>{expense.paymentMethod}</td><td><strong>{money(expense.amount)}</strong></td><td>{expense.createdBy}</td></tr>) : <tr><td colSpan={6}><EmptyState title="No expenses recorded" text="Use the form above to add the first expense." /></td></tr>}
+            {visibleExpenses.length ? visibleExpenses.map((expense) => <tr key={expense.id}><td>{expense.date}</td><td>{expense.category}</td><td><strong>{expense.description}</strong><small>{expense.reference || expense.notes || "—"}</small></td><td>{expense.paymentMethod}</td><td><strong>{money(expense.amount)}</strong></td><td>{expense.createdBy}</td></tr>) : <tr><td colSpan={6}><EmptyState title="No expenses recorded" text="Use the form above to add the first expense." /></td></tr>}
           </tbody></table></div>
         )}
       </section>
@@ -4652,13 +4421,15 @@ function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
 }
 
 function FinanceView({ bookings }: { bookings: Booking[] }) {
+  const [range,setRange]=useState<DateRange>({from:"",to:""});
   const [expenses,setExpenses] = useState<ExpenseRecord[]>([]);
   const [expenseError,setExpenseError] = useState("");
   const [expensesLoaded,setExpensesLoaded] = useState(false);
   useEffect(()=>{let active=true;const refresh=()=>api.listExpenses<ExpenseRecord>().then(result=>{if(active){setExpenses(result.expenses);setExpensesLoaded(true);setExpenseError("");}}).catch(e=>{if(active)setExpenseError(e instanceof Error?e.message:"Could not load expenses.");});void refresh();const timer=window.setInterval(()=>void refresh(),30000);return()=>{active=false;window.clearInterval(timer);};},[]);
-  const expenseTotal=expenses.reduce((sum,e)=>sum+e.amount,0);
+  const visibleExpenses=expenses.filter(e=>inDateRange(e.date,range));
+  const expenseTotal=visibleExpenses.reduce((sum,e)=>sum+e.amount,0);
   const [period, setPeriod] = useState<"7 days" | "30 days">("7 days");
-  const settled = bookings.filter((booking) => booking.paid > 0);
+  const settled = bookings.filter((booking) => booking.paid > 0 && inDateRange(booking.date,range));
   const refunds = settled.flatMap((booking) =>
     (booking.refunds ?? []).map((refund) => ({ booking, refund })),
   );
@@ -4684,7 +4455,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
   const chartPoints = Array.from({ length: bucketCount }, (_, index) => {
     const endOffset = (bucketCount - index - 1) * bucketDays;
     const dates = Array.from({ length: bucketDays }, (__, dayIndex) => {
-      const date = new Date(`${today}T12:00:00`);
+      const date = new Date(`${range.to||today}T12:00:00`);
       date.setDate(date.getDate() - endOffset - dayIndex);
       return dateInPakistan(date);
     });
@@ -4692,7 +4463,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
       .filter((booking) => dates.includes(booking.date))
       .reduce((sum, booking) => sum + booking.paid, 0);
     const returned = refunds
-      .filter((item) => dates.includes(dateInPakistan(item.refund.processedAt)))
+      .filter((item) => dates.includes(item.booking.date))
       .reduce((sum, item) => sum + item.refund.amount, 0);
     const labelDate = new Date(`${dates[0]}T12:00:00`);
     return {
@@ -4712,7 +4483,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
       <ViewHeading
         eyebrow="COLLECTIONS & SETTLEMENTS"
         title="Finance"
-        text="Gross sales, traceable refunds, payment channels and daily reconciliation."
+        text="Sales and their refunds by travel date; operating costs by expense date."
         action={
           <div className="view-actions">
             <button
@@ -4744,7 +4515,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
                     booking.time,
                     booking.issuedBy ?? "Online",
                   ]),
-                  ...expenses.map(e=>["Expense","",e.description,e.paymentMethod,e.reference,-e.amount,e.category,e.date,"",e.createdBy]),
+                  ...visibleExpenses.map(e=>["Expense","",e.description,e.paymentMethod,e.reference,-e.amount,e.category,e.date,"",e.createdBy]),
                   ...refunds.map(({ booking, refund }) => [
                     "Refund",
                     booking.ticketNo,
@@ -4768,6 +4539,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
           </div>
         }
       />
+      <DateRangeFilter value={range} onChange={setRange}/>
       <section className="metric-grid finance-metrics">
         {[
           {
@@ -4824,7 +4596,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
             title={
               period === "7 days" ? "Seven-day collections" : "Thirty-day trend"
             }
-            text="Net collections after refunds"
+            text={`Travel-date collections after refunds · ending ${range.to||today}`}
             action={
               <div className="mini-tabs">
                 {(["7 days", "30 days"] as const).map((item) => (
@@ -5764,6 +5536,8 @@ function SeatMap({
   selectedSeats,
   occupied,
   reserved = new Set<number>(),
+  female,
+  online,
   onOccupied,
   onSelect,
   large = false,
@@ -5773,6 +5547,8 @@ function SeatMap({
   selectedSeats: number[];
   occupied: Set<number>;
   reserved?: Set<number>;
+  female?: Set<number>;
+  online?: Set<number>;
   onOccupied?: (seat:number)=>void;
   onSelect: (seat: number) => void;
   large?: boolean;
@@ -5782,13 +5558,14 @@ function SeatMap({
     ? <span className="seat-space" aria-hidden="true" />
     : <SeatButton seat={seat} label={seatLabel(seat, service)}
         selected={selectedSeats.includes(seat)} occupied={occupied.has(seat)}
-        reserved={reserved.has(seat)} interactive={Boolean(onOccupied)} onSelect={occupied.has(seat) && onOccupied ? onOccupied : onSelect} />;
+        female={Boolean(female?.has(seat))} online={Boolean(online?.has(seat))} reserved={reserved.has(seat)} interactive={Boolean(onOccupied)} onSelect={occupied.has(seat) && onOccupied ? onOccupied : onSelect} />;
   return (
     <div className={`seat-map-wrap reference-seat-map ${sleeper ? "sleeper-map" : "coach-map"} ${large ? "large" : ""}`}>
       <div className="legend">
         <span><i className="available" />Available</span>
         <span><i className="selected" />Selected</span>
         <span><i className="reserved" />Reserved</span><span><i className="booked" />Booked</span>
+        {female&&<span><i className="female"/>Female</span>}{online&&<span><i className="online"/>Online · W</span>}
       </div>
       <div className="bus-shell">
         <div className="bus-front">
@@ -5839,6 +5616,8 @@ function SeatButton({
   selected,
   occupied,
   reserved,
+  female,
+  online,
   interactive,
   onSelect,
 }: {
@@ -5847,6 +5626,8 @@ function SeatButton({
   selected: boolean;
   occupied: boolean;
   reserved: boolean;
+  female: boolean;
+  online: boolean;
   interactive: boolean;
   onSelect: (seat: number) => void;
 }) {
@@ -5855,12 +5636,12 @@ function SeatButton({
     <button
       type="button"
       disabled={occupied && !interactive}
-      className={`seat seat--${status}`}
-      aria-label={`Seat ${label}, ${status}`}
+      className={`seat seat--${status}${female?" seat--female":""}${online?" seat--online":""}`}
+      aria-label={`Seat ${label}, ${status}${female?", female":""}${online?", online":""}`}
       aria-pressed={selected && !occupied}
       onClick={() => onSelect(seat)}
     >
-      <b>{label}</b>
+      <b>{label}</b>{(online||reserved)&&<small className="seat-marker" aria-hidden="true">{online?"W":""}{reserved?"R":""}</small>}
     </button>
   );
 }

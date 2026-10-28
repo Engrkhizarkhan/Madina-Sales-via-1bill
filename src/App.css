@@ -6118,3 +6118,70 @@ td small {
   .admin-sidebar.open .sidebar-brand>div,.admin-sidebar.open nav button span,.admin-sidebar.open nav p,.admin-sidebar.open .sidebar-footer button span,.admin-sidebar.open .sidebar-footer small { display:initial; }
   .admin-sidebar.open nav button,.admin-sidebar.open .sidebar-footer button { justify-content:flex-start; padding:0 10px; }
 }
+
+/* Compact counter workspace and passenger registers. Printed slips keep their own sizing. */
+.admin-main { padding: 18px clamp(14px, 1.6vw, 24px) 32px; }
+.admin-main .view-heading { margin-bottom: 14px; }
+.admin-main .surface-header { padding-top: 14px; padding-bottom: 14px; }
+.admin-main .data-toolbar { padding: 12px 14px; gap: 10px; }
+.admin-main .table-wrap th, .admin-main .table-wrap td { padding: 9px 12px; font-size: 13px; }
+.admin-main .table-wrap td strong { font-size: 14px; }
+.admin-main .table-wrap td small { font-size: 12px; margin-top: 2px; }
+.admin-shell .admin-sidebar nav button, .admin-shell .sidebar-footer button { min-height: 36px; height: auto; padding-top: 7px; padding-bottom: 7px; font-size: 14px; }
+.admin-sidebar .nav-group { margin-bottom: 12px; }
+.admin-sidebar .nav-group p { margin-top: 10px; margin-bottom: 5px; }
+.admin-sidebar nav { gap: 8px; }
+.admin-main .trip-table-head, .admin-main .trip-cards article { min-width: 990px; grid-template-columns: 75px minmax(160px,1.1fr) 95px minmax(120px,.8fr) 102px 94px 220px; gap: 8px; }
+.admin-main .trip-cards article { min-height: 64px; padding: 8px 12px; }
+.admin-main .trip-cards article > div > strong, .admin-main .trip-card-route strong { font-size: 14px; }
+.admin-main .trip-actions { gap: 5px; }
+.admin-main .trip-actions button { min-height: 30px; font-size: 12px; }
+.counter-workspace .surface { padding: 16px; }
+.counter-workspace .counter-main { gap: 12px; margin-top: 12px; }
+.counter-passenger-column { min-width: 0; }
+.counter-passenger-column .seat-statistics { margin: 8px 0 0; gap: 6px; }
+.counter-passenger-column .seat-statistics > span { padding: 8px 10px; border-radius: 8px; }
+.counter-passenger-column .seat-statistics strong { font-size: 21px; }
+.counter-passenger-column .seat-statistics small { font-size: 12px; }
+.counter-workspace .counter-filters { grid-template-columns: minmax(220px,2fr) minmax(150px,1fr); gap: 10px; }
+.counter-workspace .counter-manual { display: grid; grid-template-columns: minmax(170px,1.4fr) minmax(120px,1fr) minmax(130px,1fr) auto; gap: 10px; }
+.counter-workspace .counter-manual .form-error { grid-column: 1 / -1; }
+.counter-workspace label > span { font-size: 13px; }
+.counter-workspace input, .counter-workspace select { min-height: 38px; font-size: 14px; }
+.counter-workspace .counter-fields .form-grid { gap: 10px; }
+.counter-workspace .legend { flex-wrap: wrap; gap: 9px; font-size: 12px; }
+.pending-departure { padding: 8px 10px; border-radius: 6px; background: #fff7d6; color: #725400; font-size: 13px; }
+.reference-seat-map .seat { position: relative; }
+.reference-seat-map .seat--online { background: #fff0ac; border-color: #c8a237; color: #57420b; }
+.reference-seat-map .seat--online.seat--reserved { background: #fff8d7; border-style: dashed; }
+.reference-seat-map .seat--female { background: #e88bbb; border-color: #aa3d79; color: #4b1030; }
+.reference-seat-map .seat--female.seat--reserved { background: #fce1ef; border-color: #c86b9f; border-style: dashed; }
+.reference-seat-map .seat-marker { position: absolute; top: -4px; right: -4px; background: #e5efff; color: #164b88; border: 1px solid currentColor; border-radius: 3px; font: 700 8px/11px system-ui,sans-serif; min-width: 10px; padding: 0 1px; pointer-events: none; }
+.reference-seat-map .seat--online .seat-marker { background: #ffe383; color: #594305; }
+.reference-seat-map .legend i.female { background: #e88bbb; border: 1px solid #aa3d79; }
+.reference-seat-map .legend i.online { background: #fff0ac; border: 1px solid #c8a237; }
+.date-range-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 14px; border-bottom: 1px solid #e5eaf0; }
+.date-range-filter > span:first-child { font-size: 13px; font-weight: 700; }
+.date-range-filter label { display: flex; align-items: center; gap: 6px; }
+.admin-main .date-range-filter label > span { font-size: 13px; }
+.admin-main .date-range-filter input { min-height: 36px; padding: 5px 8px; width: 150px; font-size: 13px; }
+.dashboard-view > .date-range-filter { padding: 0 0 12px; margin-bottom: 12px; }
+.directory-count { padding: 0 14px 8px; margin: 0; color: #64748b; font-size: 12px; }
+.dashboard-view .metric-card { padding: 16px; }
+.dashboard-view .recent-panel, .dashboard-view .schedule-panel { margin-top: 16px; }
+@media (max-width: 760px) {
+  .counter-workspace .counter-manual { display: grid; grid-template-columns: 1fr 1fr; }
+  .counter-workspace .counter-filters { grid-template-columns: 1fr; }
+  .counter-workspace input, .counter-workspace select { min-height: 44px; }
+  .date-range-filter { gap: 8px; }
+  .date-range-filter > span:first-child { width: 100%; }
+  .admin-main .date-range-filter input { width: 140px; min-height: 40px; }
+  .admin-shell .admin-sidebar nav button { min-height: 42px; }
+}
+
+.counter-workspace .counter-manual label { width: auto; min-width: 0; }
+.admin-sidebar nav, .admin-sidebar .nav-group { align-content: start; }
+.admin-sidebar nav { margin-top: 12px; }
+.admin-main .text-button { padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: #1454a0; font-size: 13px; font-weight: 650; cursor: pointer; }
+.admin-main .text-button:hover { background: #edf4fc; }
+.admin-main .text-button:focus-visible { outline: 2px solid #1454a0; outline-offset: 2px; }

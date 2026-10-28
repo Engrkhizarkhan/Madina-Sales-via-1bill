@@ -45,6 +45,9 @@ export async function createBooking(data, user, isPublic, req) {
     if (!parseJson(trip.service_days).includes(weekday(travelDate))) fail("This trip does not run on the selected date.", 409, "departure_unavailable");
     const run = await ensureRun(connection, trip, travelDate);
     await assertSaleOpen(connection, run, travelDate, isPublic);
+    if (!isPublic && ((data.bus !== undefined && data.bus !== run.snapshot.bus.registration) || (data.time !== undefined && data.time !== run.snapshot.departure) || (data.service !== undefined && data.service !== run.snapshot.bus.service))) {
+      fail('This departure changed while you were booking. Refresh and select the seats again.',409,'assignment_changed');
+    }
     const tripRunId = run.id;
     if (seats.some((seat) => seat < 1 || seat > Number(run.snapshot.bus.seats))) fail("One or more selected seats are invalid.", 422, "validation_error");
     const reserved = isPublic || data.bookingStatus === "Reserved";
@@ -501,20 +504,29 @@ export async function saveCounterDeparture(id, data, user, req) {
     const previous = run.snapshot.voucher || null;
     const current = {registration: run.snapshot.bus.registration, departure: run.snapshot.departure, revision: previous?.revision || ''};
     if (Object.keys(current).some(key => current[key] !== data.expected?.[key])) fail('Another operator changed this departure. Refresh before saving.', 409, 'assignment_changed');
-    const changed = registration !== current.registration || data.departure !== current.departure;
+    if (data.expected?.busId !== undefined && data.expected.busId !== run.bus_id) fail('Another operator changed this bus. Refresh before saving.',409,'assignment_changed');
+    const fleet = await fetchBuses(false, connection);
+    const layout = data.layoutBusId ? fleet.find(item => item.id === data.layoutBusId) : run.snapshot.bus;
+    if (!layout || (data.layoutBusId && layout.status === 'Retired')) fail('Choose an available bus type.',422,'validation_error');
+    const layoutChanged = layout.seats !== run.snapshot.bus.seats || layout.service !== run.snapshot.bus.service;
+    const changed = registration !== current.registration || data.departure !== current.departure || layoutChanged;
+    if (layoutChanged) {
+      const active = await query(connection, "SELECT id FROM bookings WHERE trip_run_id=? AND booking_status IN ('Reserved','Confirmed') LIMIT 1 FOR UPDATE", [run.id]);
+      if (active.length) fail('This departure already has booked or reserved seats. Keep its seating plan, or release those seats before changing bus type.',409,'layout_in_use');
+    }
     if (changed && (date < pakistanDate() || !['Scheduled','Boarding'].includes(run.status))) fail('Bus and time cannot be changed after departure.', 409, 'departure_closed');
     let bus = run.snapshot.bus;
-    if (registration !== bus.registration) {
+    if (registration !== bus.registration || layoutChanged) {
       // A known bus keeps its fleet identity; a new number is registered using this layout.
-      let candidate = (await fetchBuses(false, connection)).find(item => item.registration.toUpperCase() === registration);
+      let candidate = fleet.find(item => item.registration.toUpperCase() === registration);
       if (!candidate) {
         const busId = uuid('bus-');
         await query(connection, `INSERT INTO buses (id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,?,?,?,?,'Ready','Not scheduled')`,
-          [busId,registration,bus.service,bus.seats,'Counter assignment',Number(date.slice(0,4))]);
-        candidate = {...bus,id:busId,registration,status:'Ready'};
+          [busId,registration,layout.service,layout.seats,'Counter assignment',Number(date.slice(0,4))]);
+        candidate = {...layout,id:busId,registration,status:'Ready'};
       }
       if (candidate.status !== 'Ready') fail('This bus is not ready. Check its return or maintenance status.',409,'bus_unavailable');
-      if (candidate.seats !== bus.seats || /sleeper/i.test(candidate.service) !== /sleeper/i.test(bus.service)) fail('This bus has a different seating plan. Choose the matching bus type first.',409,'layout_mismatch');
+      if (candidate.seats !== layout.seats || candidate.service !== layout.service) fail('This bus has a different seating plan. Choose the matching bus type first.',409,'layout_mismatch');
       bus = candidate;
     }
     if (changed) {

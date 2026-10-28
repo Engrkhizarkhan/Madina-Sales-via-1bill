@@ -126,7 +126,7 @@ export async function fetchExpenses(executor = pool) {
   const result = await rows(
     `SELECT e.id, e.expense_date, e.category, e.description, e.amount, e.payment_method,
             e.reference, e.notes, e.shift_id, e.created_at, u.name created_by_name
-     FROM expenses e JOIN users u ON u.id = e.created_by ORDER BY e.expense_date DESC, e.id DESC LIMIT 1000`,
+     FROM expenses e JOIN users u ON u.id = e.created_by ORDER BY e.expense_date DESC, e.id DESC`,
     [], executor,
   );
   return result.map((row) => ({
