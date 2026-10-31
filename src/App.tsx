@@ -1,6 +1,7 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
+import { presentationText } from "./presentation-text";
 import { inDateRange, type DateRange } from "./booking-filters";
 import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
 import {
@@ -563,6 +564,7 @@ const tripOnDate = (trip: TripRecord, date: string, runs: TripRun[]): TripRecord
   return run ? { ...trip, ...run.snapshot, status: run.status, salesPaused:run.salesPaused, salesOverride:run.salesOverride, runNumber: run.runNumber, busId: run.busId, driver: run.driver, attendant: run.attendant, platform: run.platform, snapshot: run.snapshot, departedAt: run.departedAt, returnedAt: run.returnedAt, notes: run.notes } : { ...trip, status: "Scheduled", runNumber: 1 };
 };
 const tripBus = (trip: TripRecord, fleet: BusRecord[]) => trip.snapshot?.bus ?? fleet.find((bus) => bus.id === trip.busId)!;
+const vehicleLabel = (bus?:BusRecord)=>bus?.isTemplate?"Not assigned":presentationText(bus?.registration??"Not assigned");
 const tripRoute = (trip: TripRecord, routes: RouteRecord[]) => trip.snapshot?.route ?? routes.find((route) => route.id === trip.routeId)!;
 const serviceDayFor = (date: string) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${date}T12:00:00`).getDay()] as Weekday;
 const tripsOnDate = (trips: TripRecord[], date: string, runs: TripRun[]) =>
@@ -577,7 +579,7 @@ const netCollected = (booking: Booking) =>
 function downloadCsv(filename: string, rows: (string | number)[][]) {
   const csv = rows
     .map((row) =>
-      row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","),
+      row.map((value) => `"${presentationText(String(value)).replaceAll('"', '""')}"`).join(","),
     )
     .join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -813,8 +815,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <em>Travel with confidence.</em>
             </h1>
             <p>
-              Find a departure, choose your seats and book with a demo 1Bill payment.
-              No real money is charged.
+              Find a departure, choose your seats and book online with 1Bill.
             </p>
             <div className="hero-trust">
               <span>
@@ -836,18 +837,13 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             </span>
             <div>
               <h2>Find your bus</h2>
-              <p>Book online with a demo 1Bill payment.</p>
+              <p>Choose your seats and book online.</p>
             </div>
             <div className="payment-assurance">
-              <ShieldCheck size={15} /> 1Bill demo payment
+              <ShieldCheck size={15} /> 1Bill payment
             </div>
           </div>
           {loadError && <p className="form-error">{loadError}</p>}
-          {paymentMode === "demo" && (
-            <p className="system-note">
-              Payment sandbox is active. No real money is charged in this environment.
-            </p>
-          )}
           <form
             className="public-search"
             onSubmit={(event) => {
@@ -1016,7 +1012,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             <div>
               <strong>Book and pay online</strong>
               <p>
-                Choose your seat and receive a separate paid demo ticket for each passenger.
+                Choose your seat and receive a separate ticket for each passenger.
               </p>
             </div>
           </article>
@@ -1254,8 +1250,8 @@ function PublicCheckout({
             <section className="checkout-card payment-card">
               <SectionTitle
                 number="3"
-                title="Demo 1Bill payment"
-                text="Simulate payment and issue your ticket. No real money is charged."
+                title="Payment"
+                text="Complete your booking and receive your tickets."
                 icon
               />
               <div className="payment-total">
@@ -1268,7 +1264,7 @@ function PublicCheckout({
                   </strong>
                 </span>
                 <span>
-                  <small>Demo total</small>
+                  <small>Total fare</small>
                   <strong>{money(total)}</strong>
                 </span>
               </div>
@@ -1285,12 +1281,12 @@ function PublicCheckout({
                   </>
                 ) : (
                   <>
-                    <CreditCard size={17} /> Pay demo & issue tickets
+                    <CreditCard size={17} /> Pay & issue tickets
                   </>
                 )}
               </button>
               <small className="gateway-note">
-                <ShieldCheck size={13} /> Demo payment only. No money is collected.
+                <ShieldCheck size={13} /> Your ticket details are saved with your booking.
                 {paymentMode === "disabled" && " Live 1Bill checkout is unavailable until merchant setup."}
               </small>
             </section>
@@ -1852,7 +1848,7 @@ function ManagementApp({
               <strong>Madina Express</strong>
             </div>
           </div>
-          <div className="admin-topbar-right">{paymentMode==="demo"&&<span className="demo-badge">Client demo · simulated payments</span>}
+          <div className="admin-topbar-right">
             <div className="admin-user">
               <span className="avatar">{initials}</span>
               <div>
@@ -2050,7 +2046,7 @@ function DashboardView({bookings,trips,fleet,routes,onNavigate,userName}:{bookin
       <div className="schedule-list">{trips.filter(t=>t.active&&t.days.includes(serviceDayFor(today))&&!["Returned","Cancelled"].includes(t.status)).map(t=>{
         const bus=tripBus(t,fleet),route=tripRoute(t,routes);if(!bus||!route)return null;
         const sold=bookings.filter(b=>b.tripRunId===tripRunKey(t,t.runNumber,today)&&b.bookingStatus==="Confirmed").flatMap(b=>b.seats).length;
-        return <article key={t.id}><time>{t.departure}</time><span className={`timeline-dot ${t.status.toLowerCase()}`}/><div className="schedule-route"><strong>{routeLabel(route)}</strong><small>{bus.registration} · {bus.service}</small></div><div className="schedule-load"><small>{sold}/{bus.seats} booked</small></div><b className={`plain-status ${t.status.toLowerCase()}`}>{t.status}</b></article>;
+        return <article key={t.id}><time>{t.departure}</time><span className={`timeline-dot ${t.status.toLowerCase()}`}/><div className="schedule-route"><strong>{routeLabel(route)}</strong><small>{vehicleLabel(bus)} · {bus.service}</small></div><div className="schedule-load"><small>{sold}/{bus.seats} booked</small></div><b className={`plain-status ${t.status.toLowerCase()}`}>{t.status}</b></article>;
       })}</div>
     </section>
   </div>;
@@ -2231,7 +2227,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
         </form>}
       </section>
     <div className="seat-statistics" aria-label="Seat totals"><span className="booked"><small>Booked</small><strong>{occupied.size-reserved.size}</strong></span><span className="reserved"><small>Reserved</small><strong>{reserved.size}</strong></span><span><small>Available / {bus.seats} total</small><strong>{bus.seats-occupied.size}</strong></span></div>
-      </div><section className="surface counter-seats"><div className="panel-heading"><h2>{bus.service}</h2><span>{bus.registration} · {trip.departure}</span></div>
+      </div><section className="surface counter-seats"><div className="panel-heading"><h2>{bus.service}</h2><span>{vehicleLabel(bus)} · {trip.departure}</span></div>
         <SeatMap locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
         <div className="seat-refresh"><button className="secondary-button" type="button" disabled={refreshing} onClick={()=>void onRefresh()}><RefreshCw size={15} className={refreshing?"spin":""}/> Refresh seats</button><small>{refreshError||`Auto-updates every 5s${lastUpdated?" · Updated "+lastUpdated:""}`}</small></div>
         <p className="counter-hint">Click any booked or reserved seat to edit, collect payment, remove a reservation or refund. W = online; R = reserved.</p>
@@ -2266,7 +2262,7 @@ function VoucherEditor({trip,bus,net,records,onSave,onReport,readOnly}:{readOnly
   const dirty=!saved||fields.some(([key])=>saved[key]!==draft[key])||saved.driver!==draft.driver||saved.attendant!==draft.attendant||Math.abs((saved.basis??0)-net)>.005;
   const stale=revision!==(saved?.revision??"");
   const cash=records.reduce((sum,b)=>sum+(b.paymentMethod==="Cash"?b.paid:0)-(b.refunds??[]).filter(r=>r.method==="Cash").reduce((a,r)=>a+r.amount,0),0);
-  return <details className="surface counter-voucher"><summary><span>Voucher summary</span><small>Commission, crew, deductions & printing</small><ChevronRight size={18}/></summary><div className="voucher-content"><div className="panel-heading"><div><h2>Voucher summary</h2><p>{saved?`Saved by ${saved.savedBy} · ${formatPrintTime(saved.savedAt)}`:"Enter deductions and crew, then save to print."}</p></div><button type="button" className="secondary-button" onClick={()=>onReport("cnic")}><FileText size={16}/> Passenger / CNIC sheet</button></div>
+  return <details className="surface counter-voucher"><summary><span>Voucher summary</span><small>Commission, crew, deductions & printing</small><ChevronRight size={18}/></summary><div className="voucher-content"><div className="panel-heading"><div><h2>Voucher summary</h2><p>{saved?`Saved by ${presentationText(saved.savedBy??"")} · ${formatPrintTime(saved.savedAt)}`:"Enter deductions and crew, then save to print."}</p></div><button type="button" className="secondary-button" onClick={()=>onReport("cnic")}><FileText size={16}/> Passenger / CNIC sheet</button></div>
     <form onSubmit={async e=>{e.preventDefault();if(busy)return;setBusy(true);setError("");try{const updated=await onSave({registration:bus.registration,departure:trip.departure,voucher:draft,expected:{registration:bus.registration,departure:trip.departure,revision}});setRevision(updated.snapshot!.voucher!.revision!);setDraft(updated.snapshot!.voucher!);}catch(e){setError(e instanceof Error?e.message:"Voucher could not be saved.");}finally{setBusy(false);}}}>
       <fieldset disabled={busy||readOnly} className="counter-fields"><div className="voucher-fields">{fields.map(([key,label])=><label key={key}><span>{label}</span><input type="number" min="0" max={key==="commissionRate"?100:10000000} step="0.01" value={draft[key]} onChange={e=>setDraft({...draft,[key]:Number(e.target.value)})}/></label>)}<label><span>Driver</span><input value={draft.driver} maxLength={120} onChange={e=>setDraft({...draft,driver:e.target.value})}/></label><label><span>Hostess</span><input value={draft.attendant} maxLength={120} onChange={e=>setDraft({...draft,attendant:e.target.value})}/></label></div></fieldset>
       <div className="voucher-calculation"><span>Net collection <strong>{money(net)}</strong></span><span>Commission <strong>{money(commission)}</strong></span><span>Total deductions <strong>{money(deductions)}</strong></span><span>Cash remaining <strong>{money(cash-deductions-draft.paidToDriver)}</strong></span></div>
@@ -2626,7 +2622,7 @@ function BookingsView({
       b.bookingStatus !== "Reserved" &&
       (filter === "All" || b.source === filter) &&
       `${b.ticketNo} ${b.passenger} ${b.phone} ${b.cnic} ${b.route} ${(b.refunds ?? [])
-        .map((refund) => `${refund.reference} ${refund.reason}`)
+        .map((refund) => `${presentationText(refund.reference)} ${refund.reason}`)
         .join(" ")}`
         .toLowerCase()
         .includes(search.toLowerCase()),
@@ -2972,7 +2968,7 @@ function TripsView({
         </div>
       </section>
       {editing && <TripFormModal trip={editing === "new" ? undefined : editing} fleet={fleet} routes={routes} onClose={() => setEditing(null)} onSave={async (trip) => { await onSave(trip); setEditing(null); }}/>}
-      {deleting && <ConfirmDeleteModal title="Delete schedule?" item={deleting.id} text="Remove this schedule from the roster and stop future sales. Existing tickets, refunds and journey history are retained." onClose={() => setDeleting(null)} onConfirm={async () => { await onDelete(deleting.id); setDeleting(null); }}/>}
+      {deleting && <ConfirmDeleteModal title="Delete schedule?" item={`${routeLabel(tripRoute(deleting,routes))} · ${deleting.departure}`} text="Remove this schedule from the roster and stop future sales. Existing tickets, refunds and journey history are retained." onClose={() => setDeleting(null)} onConfirm={async () => { await onDelete(deleting.id); setDeleting(null); }}/>}
       {modalTrip && openTrip && <TripRunModal trip={tripOnDate(modalTrip, openTrip.date, runs)} fleet={fleet} bookings={bookings} routes={routes} serviceDate={openTrip.date} onClose={() => setOpenTrip(null)} onReport={onReport}/>}
     </div>
   );
@@ -3238,7 +3234,7 @@ function TripRunModal({
               {routeLabel(route)} · {trip.departure}
             </h2>
             <p>
-              {serviceDate} · {bus.registration} · Run {trip.runNumber} ·{" "}
+              {serviceDate} · {vehicleLabel(bus)} · Run {trip.runNumber} ·{" "}
               {trip.platform}
             </p>
           </div>
@@ -3249,7 +3245,7 @@ function TripRunModal({
             <X size={19} />
           </button>
         </header>
-        {trip.notes && <p className="system-note">{trip.notes}</p>}
+        {trip.notes && <p className="system-note">{presentationText(trip.notes)}</p>}
         <div className="run-summary">
           <span>
             <small>Paid seats</small>
@@ -3391,12 +3387,12 @@ function ReportsView({bookings, trips, fleet, routes, runs, onReport, onSell, on
       <label><span>Service date</span><input type="date" value={reportDate} onChange={(event) => {setReportDate(event.target.value);setTripId("");}} /></label>
       <label><span>Bus / route</span><select value={trip?.id ?? ""} onChange={(event) => setTripId(event.target.value)}>
         {!options.length && <option value="">No departures for this date</option>}
-        {options.map((item) => <option value={item.id} key={item.id}>{item.departure} · {tripBus(item,fleet)?.registration} · {tripRoute(item,routes) ? routeLabel(tripRoute(item,routes)) : ""} · {item.status}</option>)}
+        {options.map((item) => <option value={item.id} key={item.id}>{item.departure} · {vehicleLabel(tripBus(item,fleet))} · {tripRoute(item,routes) ? routeLabel(tripRoute(item,routes)) : ""} · {item.status}</option>)}
       </select></label>
       <label><span>Previous departures</span><select value="" onChange={(event) => {const run = runs.find((item) => item.id === event.target.value);if(run){setReportDate(run.date);setTripId(run.tripId);}}}>
-        <option value="">Choose a recorded departure</option>{history.map((run) => <option key={run.id} value={run.id}>{run.date} · {run.snapshot?.bus.registration} · {run.snapshot?.route.from} → {run.snapshot?.route.to} · {run.status}</option>)}
+        <option value="">Choose a recorded departure</option>{history.map((run) => <option key={run.id} value={run.id}>{run.date} · {vehicleLabel(run.snapshot?.bus)} · {run.snapshot?.route.from} → {run.snapshot?.route.to} · {run.status}</option>)}
       </select></label>
-      {trip && bus && route && <div className="report-trip-summary"><span><small>Bus</small><strong>{bus.registration}</strong></span><span><small>Route</small><strong>{routeLabel(route)}</strong></span><span><small>Status</small><strong>{trip.status}</strong></span><span><small>Tickets</small><strong>{records.length}</strong></span></div>}
+      {trip && bus && route && <div className="report-trip-summary"><span><small>Bus</small><strong>{vehicleLabel(bus)}</strong></span><span><small>Route</small><strong>{routeLabel(route)}</strong></span><span><small>Status</small><strong>{trip.status}</strong></span><span><small>Tickets</small><strong>{records.length}</strong></span></div>}
     </section>
     {trip && <><section className="report-card-grid">{cards.map((card) => <article className="surface report-card" key={card.kind}><div><b>{card.format}</b><h2>{card.title}</h2><p>{card.text}</p></div><button className="primary-button" type="button" onClick={() => onReport(card.kind,trip.id,trip.runNumber,reportDate)}><Printer size={16}/> Preview & print</button></article>)}</section>
     <section className="surface data-surface">
@@ -3542,7 +3538,7 @@ function ReportModal({
             <div className="document-title-block">
               <h2>{title}</h2>
               <p>{ticketDate(report.date)} · Run {report.runNumber}</p>
-              <strong>{bus.registration}</strong>
+              <strong>{vehicleLabel(bus)}</strong>
             </div>
           </header>
           <div className="document-meta">
@@ -3559,7 +3555,7 @@ function ReportModal({
             <span>
               <small>Bus</small>
               <strong>
-                {bus.registration} · {bus.service}
+                {vehicleLabel(bus)} · {bus.service}
               </strong>
             </span>
             <span>
@@ -3630,7 +3626,7 @@ function ReportModal({
                     <tr key={booking.id}>
                       <td>{booking.ticketNo}<small>{booking.bookingStatus}</small></td>
                       <td>
-                        {booking.issuedBy ?? "Web / Counter"}
+                        {presentationText(booking.issuedBy ?? "Web / Counter")}
                         <small>
                           {formatPrintTime(
                             booking.seatPrintedAt ?? booking.createdAt,
@@ -3688,7 +3684,7 @@ function ReportModal({
                       <td>{seatLabel(seat, booking.service)}</td>
                       <td>{booking.terminal ?? "Peshawar"}</td>
                       <td>{booking.destination}</td>
-                      <td>{booking.issuedBy ?? "Online"}</td>
+                      <td>{presentationText(booking.issuedBy ?? "Online")}</td>
                       <td>{booking.bookingStatus}</td>
                       <td>{booking.source}</td>
                       <td>
@@ -3921,7 +3917,7 @@ function RoutesView({
                 <tr key={r.id}>
                   <td>
                     <strong>{routeLabel(r)}</strong>
-                    <small>Route ID · {r.id.toUpperCase()}</small>
+                    <small>Route code · {presentationText(r.id).toUpperCase()}</small>
                   </td>
                   <td>
                     <strong>{r.distance}</strong>
@@ -4161,7 +4157,7 @@ function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
         <SurfaceHeader title="Expense history" text={`${visibleExpenses.length} records · ${money(visibleExpenses.reduce((sum,e)=>sum+e.amount,0))}`} /><DateRangeFilter value={range} onChange={setRange} label="Expense dates"/>
         {loading ? <p className="table-loading">Loading expenses…</p> : (
           <div className="table-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Method</th><th>Amount</th><th>Recorded by</th></tr></thead><tbody>
-            {visibleExpenses.length ? visibleExpenses.map((expense) => <tr key={expense.id}><td>{expense.date}</td><td>{expense.category}</td><td><strong>{expense.description}</strong><small>{expense.reference || expense.notes || "—"}</small></td><td>{expense.paymentMethod}</td><td><strong>{money(expense.amount)}</strong></td><td>{expense.createdBy}</td></tr>) : <tr><td colSpan={6}><EmptyState title="No expenses recorded" text="Use the form above to add the first expense." /></td></tr>}
+            {visibleExpenses.length ? visibleExpenses.map((expense) => <tr key={expense.id}><td>{expense.date}</td><td>{expense.category}</td><td><strong>{presentationText(expense.description)}</strong><small>{presentationText(expense.reference || expense.notes || "—")}</small></td><td>{expense.paymentMethod}</td><td><strong>{money(expense.amount)}</strong></td><td>{presentationText(expense.createdBy)}</td></tr>) : <tr><td colSpan={6}><EmptyState title="No expenses recorded" text="Use the form above to add the first expense." /></td></tr>}
           </tbody></table></div>
         )}
       </section>
@@ -4477,15 +4473,15 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
                       </td>
                       <td>
                         <strong>{refund.method}</strong>
-                        <small>{refund.reference}</small>
+                        <small>{presentationText(refund.reference)}</small>
                       </td>
                       <td>
                         <strong>{refund.reason}</strong>
-                        <small>{refund.notes || "No additional notes"}</small>
+                        <small>{presentationText(refund.notes || "No additional notes")}</small>
                       </td>
                       <td>
                         <strong>{formatPrintTime(refund.processedAt)}</strong>
-                        <small>{refund.processedBy}</small>
+                        <small>{presentationText(refund.processedBy)}</small>
                       </td>
                     </tr>
                   ))
@@ -4627,7 +4623,7 @@ function CrewFormModal({
               <span>HTV license number *</span>
               <input
                 required
-                value={draft.license}
+                value={presentationText(draft.license)}
                 onChange={(event) => update("license", event.target.value)}
               />
             </label>
@@ -4850,11 +4846,11 @@ function SettingsView({
           <div className="settings-fields">
             <label>
               <span>Gateway status</span>
-              <input value={paymentMode === "demo" ? "Demo adapter" : paymentMode === "disabled" ? "Not configured" : "Production"} readOnly />
+              <input value={paymentMode === "disabled" ? "Unavailable" : "Checkout available"} readOnly />
             </label>
             <label>
-              <span>Payment environment</span>
-              <input value={paymentMode} readOnly />
+              <span>Online booking</span>
+              <input value={paymentMode === "disabled" ? "Unavailable" : "Enabled"} readOnly />
             </label>
             <label className="span-2">
               <span>Callback URL</span>
@@ -4867,8 +4863,8 @@ function SettingsView({
           <div className="policy-box">
             <ShieldCheck size={17} />
             <span>
-              <strong>{paymentMode === "demo" ? "Demonstration payments only" : "Server-controlled payment mode"}</strong>
-              <small>{paymentMode === "demo" ? "No real money is collected until authorized 1Bill merchant credentials are installed." : "Payment secrets are never exposed in this browser."}</small>
+              <strong>Payment settings</strong>
+              <small>Payment configuration is managed on the server.</small>
             </span>
           </div>
         </section>
@@ -4931,7 +4927,7 @@ function SettingsView({
             <span>
               <strong>Public payment rule</strong>
               <small>
-                Web bookings issue simulated paid tickets in demo mode. Counter staff can still reserve seats. Live online payment requires 1Bill setup.
+                Web bookings issue tickets after checkout. Counter staff can reserve seats and collect payment on the ticket page.
               </small>
             </span>
           </div>
@@ -5198,14 +5194,14 @@ function BookingTable({
                   <strong>{b.source}</strong>
                   <small>
                     {b.paymentMethod}
-                    {b.paymentReference ? ` · ${b.paymentReference}` : ""}
+                    {b.paymentReference ? ` · ${presentationText(b.paymentReference)}` : ""}
                   </small>
                 </td>
                 <td>
                   <strong>{money(b.paid || b.total)}</strong>
                   <small>
                     {refundedTotal(b)
-                      ? `${money(refundedTotal(b))} refunded · ${(b.refunds ?? []).at(-1)?.reason}${(b.refunds ?? []).at(-1)?.notes ? ` · ${(b.refunds ?? []).at(-1)?.notes}` : ""}`
+                      ? `${money(refundedTotal(b))} refunded · ${(b.refunds ?? []).at(-1)?.reason}${(b.refunds ?? []).at(-1)?.notes ? ` · ${presentationText((b.refunds ?? []).at(-1)?.notes??"")}` : ""}`
                       : b.paymentStatus}
                   </small>
                 </td>
@@ -5439,7 +5435,7 @@ function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
   return <>
     <article className="passenger-receipt" aria-label={`Passenger receipt seat ${seats}`}>
       <header className="thermal-heading"><h2>MADINA EXPRESS</h2><p className="ticket-contact">0311-777-2299 / 0315-777-2299</p></header>
-      {booking.paymentReference.startsWith("DEMO-")&&<p className="ticket-demo">DEMO TICKET · NO MONEY COLLECTED</p>}<div className="ticket-bus-type"><span>BUS Type</span><strong>{booking.service}</strong></div>
+      <div className="ticket-bus-type"><span>BUS Type</span><strong>{booking.service}</strong></div>
       <div className="ticket-departure"><dl><div className="ticket-seat-number"><dt>SEAT NO #</dt><dd>{seats}</dd></div><div><dt>Departure</dt><dd>{booking.time}</dd></div><div><dt>Travel date</dt><dd>{ticketDate(booking.date)}</dd></div></dl><QRCodeSVG value={`MADINA EXPRESS\nTicket: ${booking.ticketNo}\nSeat: ${seats}`} size={76} level="M" marginSize={2} title="Ticket reference"/></div>
       <table className="thermal-details"><tbody>
         <tr><th>Passenger</th><td>{booking.passenger}</td></tr><tr><th>Route</th><td>{booking.route}</td></tr><tr><th>Destination</th><td>{booking.destination}</td></tr><tr><th>Terminal</th><td>{booking.boardingPoint}</td></tr>
@@ -5451,7 +5447,7 @@ function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
       <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>روانگی سے دس منٹ پہلے پہنچیں۔ ٹکٹ کی تاریخ، وقت اور سیٹ نمبر چیک کریں۔ اصل شناختی کارڈ ہمراہ رکھیں۔</p></div>
     </article>
     {ticket.canBoard&&<><div className="ticket-cut-line"><span>SEPARATE BOARDING TOKEN</span></div><article className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
-      <header><strong>MADINA EXPRESS</strong><span>{booking.paymentReference.startsWith("DEMO-")?"DEMO TOKEN":"BOARDING TOKEN"}</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
+      <header><strong>MADINA EXPRESS</strong><span>BOARDING TOKEN</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
       <table className="token-table"><tbody><tr><th>Bus No.</th><th>Destination</th></tr><tr><td>{booking.bus}</td><td>{booking.destination}</td></tr><tr><th>Travel date</th><th>Departure</th></tr><tr><td>{ticketDate(booking.date)}</td><td className="token-time">{booking.time}</td></tr><tr><th>Ticket No.</th><th>Paid</th></tr><tr><td>{booking.ticketNo}</td><td>{money(netCollected(booking))}</td></tr></tbody></table>
       <p className="ticket-urdu" lang="ur" dir="rtl">یہ ٹوکن کنڈکٹر کے حوالے کریں۔</p>
     </article></>}

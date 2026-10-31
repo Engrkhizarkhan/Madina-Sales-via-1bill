@@ -6205,8 +6205,6 @@ td small {
 .counter-voucher[open] > summary svg { transform:rotate(90deg); }
 .counter-voucher > summary:focus-visible { outline:2px solid #1454a0; outline-offset:6px; }
 .counter-voucher .voucher-content { padding-top:18px; }
-.demo-badge { background:#fff2ce; color:#725400; font-size:12px; border-radius:6px; padding:6px 9px; }
-.ticket-demo { margin:3px 0; text-align:center; font:700 9px/1.2 monospace; border-block:1px dashed #222; padding:3px 0; }
 .finance-visuals { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:16px 0; }
 .donut-body { display:flex; align-items:center; gap:12px; padding:12px 18px 18px; }
 .donut-body svg { flex:0 0 160px; width:160px; height:160px; }
@@ -6228,7 +6226,6 @@ td small {
   .counter-voucher > summary { flex-wrap:wrap; }
   .counter-voucher > summary small { order:3; flex-basis:100%; }
   .counter-voucher > summary svg { margin-left:auto; }
-  .demo-badge { display:none; }
   .donut-body { flex-direction:column; align-items:stretch; }
   .donut-body svg { align-self:center; }
   .route-revenue-row { grid-template-columns:1fr 105px; gap:8px; }

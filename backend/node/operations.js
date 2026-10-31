@@ -84,7 +84,7 @@ export async function createBooking(data, user, isPublic, req) {
           `${run.snapshot.route.from} → ${run.snapshot.route.to}`, run.snapshot.route.to, String(data.boardingPoint || run.snapshot.route.boarding).trim(),
           (run.snapshot.bus.isTemplate ? "To be assigned" : run.snapshot.bus.registration), run.snapshot.bus.service, fare, discount, total, paid, reserved ? total : 0, paymentMethod, paymentReference,
           reserved ? "Unpaid" : "Paid", reserved ? "Reserved" : "Confirmed", travelDate, run.snapshot.departure, run.driver,
-          run.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Demo web payment",
+          run.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Public website",
           "Madina Terminal, Peshawar", user?.id || null]);
       await query(connection, "INSERT INTO booking_seats (booking_id, trip_run_id, seat_number, active) VALUES (?, ?, ?, 1)", [id, tripRunId, seat]);
       if (!reserved) {
