@@ -2246,7 +2246,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
 }
 
 function CounterDeparture({trip,bus,fleet,disabled,onDirty,onSave}:{trip:TripRecord;bus:BusRecord;fleet:BusRecord[];disabled:boolean;onDirty:(dirty:boolean)=>void;onSave:(changes:CounterChanges)=>Promise<TripRun>}) {
-  const layouts=[bus,...fleet.filter(b=>!b.deleted&&b.status!=="Retired")].filter((b,index,list)=>list.findIndex(other=>other.service===b.service&&other.seats===b.seats)===index);
+  const layouts=[bus,...fleet.filter(b=>!b.deleted&&b.isTemplate&&b.status!=="Retired")].filter((b,index,list)=>list.findIndex(other=>other.service===b.service&&other.seats===b.seats)===index);
   const [layoutId,setLayoutId]=useState(bus.id),[registration,setRegistration]=useState(bus.isTemplate?"":bus.registration),[departure,setDeparture]=useState(trip.departure),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const changed=layoutId!==bus.id||registration!==bus.registration||departure!==trip.departure;
   return <form className="counter-manual" onSubmit={async e=>{e.preventDefault();if(busy||disabled)return;setBusy(true);setError("");try{await onSave({registration,departure,layoutBusId:layoutId,expected:{registration:bus.registration,departure:trip.departure,revision:trip.snapshot?.voucher?.revision??"",busId:bus.id}});}catch(e){setError(e instanceof Error?e.message:"Could not save departure.");}finally{setBusy(false);}}}>
