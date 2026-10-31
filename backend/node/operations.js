@@ -32,12 +32,12 @@ export async function createBooking(data, user, isPublic, req) {
   }
   return transaction(async (connection) => {
     const trips = await query(connection,
-      `SELECT t.*, r.origin, r.destination, r.fare route_fare, r.boarding_point, r.status route_status,
+      `SELECT t.*, r.origin, r.destination, r.fare route_fare, r.boarding_point, r.status route_status, r.deleted_at route_deleted,
               b.registration, b.service, b.seats capacity, b.status bus_status
        FROM trips t JOIN routes r ON r.id = t.route_id JOIN buses b ON b.id = t.bus_id
        WHERE t.id = ? FOR UPDATE`, [String(data.tripId)]);
     const trip = trips[0];
-    if (!trip || !trip.active || trip.route_status !== "Active") {
+    if (!trip || trip.deleted_at || trip.route_deleted || !trip.active || trip.route_status !== "Active") {
       fail("This departure is not available for booking.", 409, "departure_unavailable");
     }
     const travelDate = String(data.date);
@@ -50,11 +50,13 @@ export async function createBooking(data, user, isPublic, req) {
     }
     const tripRunId = run.id;
     if (seats.some((seat) => seat < 1 || seat > Number(run.snapshot.bus.seats))) fail("One or more selected seats are invalid.", 422, "validation_error");
-    const reserved = isPublic || data.bookingStatus === "Reserved";
-    const paymentMethod = isPublic ? "Cash" : String(data.paymentMethod || "Cash");
+    if (isPublic && config.paymentMode !== "demo") fail("Online payment is not configured. Please contact the terminal.",503,"payment_unavailable");
+    if (!isPublic && run.snapshot.bus.isTemplate) fail("Enter the vehicle number and save bus / time before issuing tickets.",409,"vehicle_required");
+    const reserved = !isPublic && data.bookingStatus === "Reserved";
+    const paymentMethod = isPublic ? "1Bill" : String(data.paymentMethod || "Cash");
     allowed(paymentMethod, ["Cash", "Card", "Bank transfer", "1Bill"], "paymentMethod");
     if (paymentMethod === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or card.", 409, "payment_unavailable");
-    let paymentReference = isPublic ? "" : String(data.paymentReference || "").trim();
+    let paymentReference = isPublic ? `DEMO-1BILL-${uuid()}` : String(data.paymentReference || "").trim();
     if (!reserved && paymentMethod !== "Cash" && !paymentReference) fail("A verified payment reference is required.", 422, "validation_error");
     paymentReference = reserved ? '' : paymentReference || `CASH-${timeCode()}`;
     const fare = Number(run.snapshot.route.fare);
@@ -80,9 +82,9 @@ export async function createBooking(data, user, isPublic, req) {
         [id, ticketNo, isPublic ? "Public web" : "Counter", String(data.passenger).trim(), String(data.phone).trim(),
           String(data.cnic).trim(), ["Male", "Female"].includes(data.gender) ? data.gender : "Male",
           `${run.snapshot.route.from} → ${run.snapshot.route.to}`, run.snapshot.route.to, String(data.boardingPoint || run.snapshot.route.boarding).trim(),
-          run.snapshot.bus.registration, run.snapshot.bus.service, fare, discount, total, paid, reserved ? total : 0, paymentMethod, paymentReference,
+          (run.snapshot.bus.isTemplate ? "To be assigned" : run.snapshot.bus.registration), run.snapshot.bus.service, fare, discount, total, paid, reserved ? total : 0, paymentMethod, paymentReference,
           reserved ? "Unpaid" : "Paid", reserved ? "Reserved" : "Confirmed", travelDate, run.snapshot.departure, run.driver,
-          run.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Public website",
+          run.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Demo web payment",
           "Madina Terminal, Peshawar", user?.id || null]);
       await query(connection, "INSERT INTO booking_seats (booking_id, trip_run_id, seat_number, active) VALUES (?, ?, ?, 1)", [id, tripRunId, seat]);
       if (!reserved) {
@@ -209,26 +211,29 @@ export async function saveRoute(id, data, user, req) {
 }
 
 export async function saveBus(id, data, user, req) {
-  requireFields(data, ["registration", "service", "seats", "model", "year", "status", "nextService"]);
+  requireFields(data, ["service", "seats", "model"]);
+  if (!Number.isInteger(Number(data.seats)) || Number(data.seats)<1 || Number(data.seats)>100) fail('Seat capacity must be between 1 and 100.',422,'validation_error');
+  const template = data.isTemplate === true || !data.registration;
+  data = {...data, registration:data.registration || `LAYOUT-${uuid().slice(-12)}`, year:data.year || new Date().getFullYear(), status:data.status || 'Ready', nextService:data.nextService || 'Not scheduled'};
   const recordId = id === "new" ? String(data.registration).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-") : id;
   return transaction(async (connection) => {
   await query(connection, "SELECT id FROM buses WHERE id = ? FOR UPDATE", [recordId]);
   const before = (await fetchBuses(false, connection)).find((item) => item.id === recordId) || null;
   allowed(data.status, ['Ready', 'On route', 'Maintenance', 'Retired'], 'status');
   const activeRuns = await query(connection, "SELECT id FROM trip_runs WHERE bus_id = ? AND status IN ('Boarding','Departed')", [recordId]);
-  if (activeRuns.length && (data.status !== before?.status || Number(data.seats) !== before.seats || data.registration !== before.registration)) {
-    fail('Record the bus return in Roster before changing its status, registration or capacity.', 409, 'bus_in_service');
+  if (activeRuns.length && (data.status !== before?.status || Number(data.seats) !== before.seats || data.service !== before.service || data.registration !== before.registration)) {
+    fail('Record the bus return on the ticket page before changing its status, registration or capacity.', 409, 'bus_in_service');
   }
-  if (data.status === 'On route' && before?.status !== 'On route') fail('Record departures in Roster.', 409, 'use_roster');
+  if (data.status === 'On route' && before?.status !== 'On route') fail('Record departures on the ticket page.', 409, 'use_roster');
   const held = await query(connection, `SELECT MAX(bs.seat_number) seat FROM booking_seats bs JOIN bookings b ON b.id = bs.booking_id
     JOIN trip_runs tr ON tr.id = b.trip_run_id WHERE tr.bus_id = ? AND tr.status IN ('Scheduled','Boarding') AND bs.active = 1`, [recordId]);
   if (Number(held[0]?.seat || 0) > Number(data.seats)) fail('The capacity cannot be smaller than a sold or reserved seat number.', 409, 'seats_in_use');
   await query(connection,
-    `INSERT INTO buses (id, registration, service, seats, model, model_year, status, next_service) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO buses (id, registration, service, seats, model, model_year, status, next_service, is_template) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE registration = VALUES(registration), service = VALUES(service), seats = VALUES(seats),
-       model = VALUES(model), model_year = VALUES(model_year), status = VALUES(status), next_service = VALUES(next_service)`,
+       model = VALUES(model), model_year = VALUES(model_year), status = VALUES(status), next_service = VALUES(next_service), is_template = VALUES(is_template)`,
     [recordId, String(data.registration).trim().toUpperCase(), String(data.service).trim(), Number(data.seats),
-      String(data.model).trim(), Number(data.year), data.status, String(data.nextService).trim()]);
+      String(data.model).trim(), Number(data.year), data.status, String(data.nextService).trim(), template ? 1 : 0]);
   const after = (await fetchBuses(false, connection)).find((item) => item.id === recordId);
   await audit(before ? "bus.updated" : "bus.created", "bus", recordId, before, after, user.id, req, connection);
   return after;
@@ -236,27 +241,28 @@ export async function saveBus(id, data, user, req) {
 }
 
 export async function saveTrip(id, data, user, req) {
-  requireFields(data, ["routeId", "busId", "departure", "arrival", "driver", "attendant", "platform", "status", "days"]);
+  data={driver:"",attendant:"",platform:"",...data};
+  requireFields(data, ["routeId", "busId", "departure", "arrival", "status", "days"]);
   const recordId = id === "new" ? uuid("trip-") : id;
   return transaction(async (connection) => {
   await query(connection, "SELECT id FROM trips WHERE id = ? FOR UPDATE", [recordId]);
   const days = Array.isArray(data.days) ? data.days.filter((day) => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].includes(day)) : [];
   if (!days.length) fail("Select at least one service day.", 422, "validation_error");
+  const assignedBus=(await fetchBuses(false,connection)).find(b=>b.id===data.busId&&!b.deleted);
+  if(!assignedBus) fail("Choose a bus layout.",422,"validation_error");
   const conflicts = (await fetchTrips(false, connection)).filter((trip) =>
     trip.id !== recordId && trip.active && data.active &&
     trip.departure === String(data.departure).slice(0, 5) &&
     trip.days.some((day) => days.includes(day)) &&
-    (trip.busId === data.busId || trip.driver === String(data.driver).trim() || trip.attendant === String(data.attendant).trim()),
+    ((!assignedBus.isTemplate && trip.busId === data.busId) || (data.driver && trip.driver === String(data.driver).trim()) || (data.attendant && trip.attendant === String(data.attendant).trim())),
   );
   if (conflicts.length) {
     fail("This bus or crew member already has a trip at the same time on one of the selected days.", 409, "roster_conflict");
   }
   const before = (await fetchTrips(false, connection)).find((item) => item.id === recordId) || null;
+  if(before?.deleted) fail("This schedule was deleted. Add a new schedule instead.",409,"schedule_deleted");
   const changingAssignment = before && (before.routeId !== data.routeId || before.busId !== data.busId || before.departure !== data.departure || before.arrival !== data.arrival || before.driver !== data.driver || before.attendant !== data.attendant || before.platform !== data.platform || [...before.days].sort().join() !== [...days].sort().join());
   if (changingAssignment) {
-    const held = await query(connection, "SELECT id FROM bookings WHERE trip_id = ? AND travel_date >= ? AND booking_status IN ('Reserved','Confirmed') LIMIT 1", [recordId, pakistanDate()]);
-    const movement = await query(connection, "SELECT id FROM trip_runs WHERE trip_id = ? AND status IN ('Boarding','Departed') LIMIT 1", [recordId]);
-    if (held.length || movement.length) fail('This schedule has upcoming passengers or an active bus. Keep it for those records and add a new schedule for the changed assignment.', 409, 'schedule_in_use');
     // Empty future snapshots can be rebuilt from the amended schedule.
     await query(connection, "DELETE FROM trip_runs WHERE trip_id = ? AND service_date >= ? AND status = 'Scheduled' AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.trip_run_id = trip_runs.id)", [recordId, pakistanDate()]);
   }
@@ -298,55 +304,39 @@ export async function saveCrew(key, data, user, req) {
 }
 
 export async function deleteRoute(id, user, req) {
-  const before = (await fetchRoutes()).find((item) => item.id === id);
-  if (!before) fail("Route not found.", 404, "not_found");
-  const references = await query(pool, "SELECT COUNT(*) count FROM trips WHERE route_id = ?", [id]);
-  if (Number(references[0].count) > 0) {
-    fail("This route is used by a trip. Delete or reassign that trip first, or pause the route.", 409, "record_in_use");
-  }
-  await query(pool, "DELETE FROM routes WHERE id = ?", [id]);
-  await audit("route.deleted", "route", id, before, null, user.id, req);
+  return transaction(async connection=>{
+    const [before]=await query(connection,'SELECT * FROM routes WHERE id=? AND deleted_at IS NULL FOR UPDATE',[id]);
+    if(!before) fail('Route not found.',404,'not_found');
+    await query(connection,'UPDATE trips SET active=0, deleted_at=COALESCE(deleted_at,NOW()) WHERE route_id=?',[id]);
+    await query(connection,"UPDATE routes SET status='Paused', deleted_at=NOW() WHERE id=?",[id]);
+    await audit('route.deleted','route',id,before,{deleted:true,historyRetained:true},user.id,req,connection);
+  });
 }
 
 export async function deleteBus(id, user, req) {
-  const before = (await fetchBuses()).find((item) => item.id === id);
-  if (!before) fail("Bus not found.", 404, "not_found");
-  const references = await query(pool, "SELECT COUNT(*) count FROM trips WHERE bus_id = ?", [id]);
-  if (Number(references[0].count) > 0) {
-    fail("This bus is assigned to a trip. Delete or reassign that trip first, or mark the bus as retired.", 409, "record_in_use");
-  }
-  await query(pool, "DELETE FROM buses WHERE id = ?", [id]);
-  await audit("bus.deleted", "bus", id, before, null, user.id, req);
+  return transaction(async connection=>{
+    const [before]=await query(connection,'SELECT * FROM buses WHERE id=? AND deleted_at IS NULL FOR UPDATE',[id]);
+    if(!before) fail('Bus layout not found.',404,'not_found');
+    await query(connection,'UPDATE trips SET active=0, deleted_at=COALESCE(deleted_at,NOW()) WHERE bus_id=?',[id]);
+    await query(connection,"UPDATE buses SET deleted_at=NOW() WHERE id=?",[id]);
+    await audit('bus.deleted','bus',id,before,{deleted:true,historyRetained:true},user.id,req,connection);
+  });
 }
 
 export async function deleteTrip(id, user, req) {
-  const before = (await fetchTrips()).find((item) => item.id === id);
-  if (!before) fail("Trip not found.", 404, "not_found");
-  const references = await query(pool, "SELECT COUNT(*) count FROM bookings WHERE trip_id = ?", [id]);
-  if (Number(references[0].count) > 0) {
-    fail("This trip has ticket history and cannot be deleted. Pause the schedule instead.", 409, "record_in_use");
-  }
-  const history = await query(pool, "SELECT id FROM trip_runs WHERE trip_id = ? AND status <> 'Scheduled' LIMIT 1", [id]);
-  if (history.length) fail('This schedule has movement history. Pause it to keep the record.', 409, 'record_in_use');
-  await query(pool, "DELETE FROM trip_runs WHERE trip_id = ?", [id]);
-  await query(pool, "DELETE FROM trips WHERE id = ?", [id]);
-  await audit("trip.deleted", "trip", id, before, null, user.id, req);
+  return transaction(async connection=>{
+    const [before]=await query(connection,'SELECT * FROM trips WHERE id=? AND deleted_at IS NULL FOR UPDATE',[id]);
+    if(!before) fail('Schedule not found.',404,'not_found');
+    await query(connection,'UPDATE trips SET active=0, deleted_at=NOW() WHERE id=?',[id]);
+    await audit('trip.deleted','trip',id,before,{deleted:true,historyRetained:true},user.id,req,connection);
+  });
 }
 
 export async function deleteCrew(id, user, req) {
-  const records = await query(pool, "SELECT * FROM crew WHERE id = ? LIMIT 1", [id]);
-  const before = records[0];
-  if (!before) fail("Staff member not found.", 404, "not_found");
-  const activeAssignments = await query(
-    pool,
-    "SELECT COUNT(*) count FROM trips WHERE active = 1 AND (driver = ? OR attendant = ?)",
-    [before.name, before.name],
-  );
-  if (Number(activeAssignments[0].count) > 0) {
-    fail("This staff member is assigned to an active trip. Reassign or pause that trip first.", 409, "record_in_use");
-  }
-  await query(pool, "DELETE FROM crew WHERE id = ?", [id]);
-  await audit("crew.deleted", "crew", id, before, null, user.id, req);
+  const [before]=await query(pool,'SELECT * FROM crew WHERE id=? AND deleted_at IS NULL',[id]);
+  if(!before) fail('Staff member not found.',404,'not_found');
+  await query(pool,'UPDATE crew SET deleted_at=NOW() WHERE id=?',[id]);
+  await audit('crew.deleted','crew',id,before,{deleted:true},user.id,req);
 }
 
 export async function assignDeparture(id, data, user, req) {
@@ -403,44 +393,51 @@ export async function assignDeparture(id, data, user, req) {
 }
 
 export async function transitionTrip(id, data, user, req) {
-  requireFields(data, ["action", "date"]);
-  const action = allowed(data.action, ["boarding", "depart", "return"], "action");
-  const serviceDate = String(data.date);
-  if (!validDate(serviceDate)) fail("Choose a valid service date.", 422, "validation_error");
-  return transaction(async (connection) => {
-    const [before] = await query(connection, 'SELECT * FROM trips WHERE id = ? FOR UPDATE', [id]);
-    if (!before) fail("Trip not found.", 404, "not_found");
-    if (action !== 'return' && serviceDate !== pakistanDate()) fail('Boarding and departure can only be recorded for today.', 409, 'invalid_service_date');
-    if (action !== 'return' && (!before.active || !parseJson(before.service_days).includes(weekday(serviceDate)))) fail('This schedule is paused or does not run on this day.', 409, 'departure_unavailable');
-    const run = await ensureRun(connection, before, serviceDate);
-    const runId = run.id;
-    const [bus] = await query(connection, 'SELECT * FROM buses WHERE id = ? FOR UPDATE', [run.bus_id]);
-    const expected = { boarding: 'Scheduled', depart: 'Boarding', return: 'Departed' }[action];
-    if (run.status !== expected) fail(`Cannot record ${action} while this departure is ${run.status.toLowerCase()}.`, 409, 'invalid_transition');
-    if (action !== 'return') {
-      await query(connection, 'SELECT id FROM crew WHERE name IN (?, ?) ORDER BY id FOR UPDATE', [run.driver, run.attendant]);
-      if (!bus || bus.status !== 'Ready') fail(`Bus ${bus?.registration || ''} is ${bus?.status?.toLowerCase() || 'unavailable'}. Make it ready before boarding.`, 409, 'bus_unavailable');
-      const conflict = await query(connection, `SELECT id FROM trip_runs WHERE id <> ? AND status IN ('Boarding','Departed')
-        AND (bus_id = ? OR driver = ? OR attendant = ?) LIMIT 1`, [runId, run.bus_id, run.driver, run.attendant]);
-      if (conflict.length) fail('The bus or crew is still assigned to another active departure. Record its return first.', 409, 'assignment_in_use');
+  requireFields(data,["action","date"]);
+  const action=allowed(data.action,['boarding','pause','resume','depart','return','reopen','close-sales'],'action');
+  const date=String(data.date), notes=String(data.notes||'').trim().slice(0,2000);
+  if(!validDate(date)) fail('Choose a valid travel date.',422,'validation_error');
+  return transaction(async connection=>{
+    const [trip]=await query(connection,'SELECT * FROM trips WHERE id=? FOR UPDATE',[id]);
+    if(!trip) fail('Schedule not found.',404,'not_found');
+    const run=await ensureRun(connection,trip,date);
+    const [bus]=await query(connection,'SELECT * FROM buses WHERE id=? FOR UPDATE',[run.bus_id]);
+    if(['pause','resume','boarding','depart','reopen'].includes(action) && (trip.deleted_at || !trip.active || !parseJson(trip.service_days).includes(weekday(date)))) fail('This schedule is deleted, paused or not running today.',409,'departure_unavailable');
+    if(['boarding','depart','reopen'].includes(action) && date!==pakistanDate()) fail('Bus departure and sales overrides are only available for today.',409,'invalid_service_date');
+    if(action==='pause'||action==='resume') {
+      if(!['Scheduled','Boarding'].includes(run.status)||date<pakistanDate()) fail('This departure is closed.',409,'invalid_transition');
+      await query(connection,'UPDATE trip_runs SET sales_paused=? WHERE id=?',[action==='pause'?1:0,run.id]);
+    } else if(action==='reopen'||action==='close-sales') {
+      if(run.status!=='Departed') fail('Only a departed bus can use the counter sales override.',409,'invalid_transition');
+      if(action==='reopen' && (data.confirm!==true||notes.length<5)) fail('Confirm reopening and enter a reason (at least 5 characters).',422,'confirmation_required');
+      await query(connection,'UPDATE trip_runs SET sales_override=? WHERE id=?',[action==='reopen'?1:0,run.id]);
+    } else if(action==='return') {
+      if(run.status!=='Departed') fail('Only a departed bus can be returned.',409,'invalid_transition');
+      await query(connection,"UPDATE trip_runs SET status='Returned',returned_at=NOW(),sales_override=0,notes=? WHERE id=?",[notes,run.id]);
+      await query(connection,"UPDATE buses SET status='Ready' WHERE id=?",[run.bus_id]);
+    } else {
+      if(!['Scheduled','Boarding'].includes(run.status)) fail('This bus is already closed.',409,'invalid_transition');
+      if(!bus||bus.is_template||bus.deleted_at||bus.status!=='Ready') fail('Save an available vehicle number on the ticket page first.',409,'bus_unavailable');
+      const conflict=await query(connection,`SELECT id FROM trip_runs WHERE id<>? AND status IN ('Boarding','Departed') AND (bus_id=? OR (?<>'' AND driver=?) OR (?<>'' AND attendant=?)) LIMIT 1`,[run.id,run.bus_id,run.driver,run.driver,run.attendant,run.attendant]);
+      if(conflict.length) fail('This bus or crew is assigned to another active departure.',409,'assignment_in_use');
+      if(action==='boarding') await query(connection,"UPDATE trip_runs SET status='Boarding' WHERE id=?",[run.id]);
+      else {
+        const holds=await query(connection,"SELECT id FROM bookings WHERE trip_run_id=? AND booking_status='Reserved' FOR UPDATE",[run.id]);
+        if(holds.length && !(data.confirm===true && data.resolveReservations===true)) fail('Collect or cancel remaining reservations, or confirm their release when closing.',409,'unpaid_reservations');
+        for(const hold of holds){
+          await query(connection,"UPDATE bookings SET booking_status='Cancelled' WHERE id=?",[hold.id]);
+          await query(connection,'UPDATE booking_seats SET active=0 WHERE booking_id=?',[hold.id]);
+          await audit('reservation.released_on_departure','booking',hold.id,null,{reason:notes||'Bus departed'},user.id,req,connection);
+        }
+        const ids=await query(connection,"SELECT id FROM bookings WHERE trip_run_id=? AND booking_status='Confirmed'",[run.id]);
+        const passengers=[];for(const item of ids)passengers.push(await fetchBooking(item.id,connection));
+        await query(connection,"UPDATE trip_runs SET status='Departed',departed_at=NOW(),sales_paused=0,sales_override=0,snapshot=? WHERE id=?",[JSON.stringify({...run.snapshot,passengers}),run.id]);
+        await query(connection,'UPDATE trips SET last_departed_at=NOW() WHERE id=?',[id]);
+        await query(connection,"UPDATE buses SET status='On route' WHERE id=?",[run.bus_id]);
+      }
     }
-    if (action === "boarding") await query(connection, "UPDATE trip_runs SET status = 'Boarding', boarding_started_at = NOW() WHERE id = ?", [runId]);
-    if (action === "depart") {
-      const unpaid = await query(connection, "SELECT id FROM bookings WHERE trip_run_id = ? AND booking_status = 'Reserved' FOR UPDATE", [runId]);
-      if (unpaid.length) fail('Collect or cancel the remaining reservations before departure.', 409, 'unpaid_reservations');
-      const passengerIds = await query(connection, "SELECT id FROM bookings WHERE trip_run_id = ? AND booking_status = 'Confirmed' FOR UPDATE", [runId]);
-      const passengers = [];
-      for (const item of passengerIds) passengers.push(await fetchBooking(item.id, connection));
-      await query(connection, "UPDATE trip_runs SET status = 'Departed', departed_at = NOW(), snapshot = ? WHERE id = ?", [JSON.stringify({ ...run.snapshot, passengers }), runId]);
-      await query(connection, "UPDATE trips SET last_departed_at = NOW() WHERE id = ?", [id]);
-      await query(connection, "UPDATE buses SET status = 'On route' WHERE id = ?", [run.bus_id]);
-    }
-    if (action === "return") {
-      await query(connection, "UPDATE trip_runs SET status = 'Returned', returned_at = NOW(), notes = ? WHERE id = ?", [String(data.notes || '').trim().slice(0,2000), runId]);
-      await query(connection, "UPDATE buses SET status = 'Ready' WHERE id = ?", [run.bus_id]);
-    }
-    const after = (await fetchTripRuns(serviceDate, connection)).find((item) => item.id === runId);
-    await audit(`trip.${action}`, "trip_run", runId, run, after, user.id, req, connection);
+    const after=(await fetchTripRuns(date,connection)).find(r=>r.id===run.id);
+    await audit(`trip.${action}`,'trip_run',run.id,run,{...after,operatorReason:notes},user.id,req,connection);
     return after;
   });
 }
@@ -492,6 +489,7 @@ export async function createStaffUser(data, user, req) {
 
 // Date-specific counter edits. The recurring timetable remains the starting point.
 export async function saveCounterDeparture(id, data, user, req) {
+  if(data.voucher&&user.role==='dispatcher') fail('Voucher changes require counter or management access.',403,'forbidden');
   const date = String(data.date || '');
   if (!validDate(date)) fail('Choose a valid travel date.', 422, 'validation_error');
   const registration = String(data.registration || '').trim().toUpperCase();
@@ -507,14 +505,14 @@ export async function saveCounterDeparture(id, data, user, req) {
     if (data.expected?.busId !== undefined && data.expected.busId !== run.bus_id) fail('Another operator changed this bus. Refresh before saving.',409,'assignment_changed');
     const fleet = await fetchBuses(false, connection);
     const layout = data.layoutBusId ? fleet.find(item => item.id === data.layoutBusId) : run.snapshot.bus;
-    if (!layout || (data.layoutBusId && layout.status === 'Retired')) fail('Choose an available bus type.',422,'validation_error');
+    if (!layout || layout.deleted || (data.layoutBusId && layout.status === 'Retired')) fail('Choose an available bus type.',422,'validation_error');
     const layoutChanged = layout.seats !== run.snapshot.bus.seats || layout.service !== run.snapshot.bus.service;
     const changed = registration !== current.registration || data.departure !== current.departure || layoutChanged;
     if (layoutChanged) {
       const active = await query(connection, "SELECT id FROM bookings WHERE trip_run_id=? AND booking_status IN ('Reserved','Confirmed') LIMIT 1 FOR UPDATE", [run.id]);
       if (active.length) fail('This departure already has booked or reserved seats. Keep its seating plan, or release those seats before changing bus type.',409,'layout_in_use');
     }
-    if (changed && (date < pakistanDate() || !['Scheduled','Boarding'].includes(run.status))) fail('Bus and time cannot be changed after departure.', 409, 'departure_closed');
+    if (changed && (trip.deleted_at || date < pakistanDate() || !['Scheduled','Boarding'].includes(run.status))) fail('Bus and time cannot be changed after departure.', 409, 'departure_closed');
     let bus = run.snapshot.bus;
     if (registration !== bus.registration || layoutChanged) {
       // A known bus keeps its fleet identity; a new number is registered using this layout.
@@ -523,8 +521,9 @@ export async function saveCounterDeparture(id, data, user, req) {
         const busId = uuid('bus-');
         await query(connection, `INSERT INTO buses (id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,?,?,?,?,'Ready','Not scheduled')`,
           [busId,registration,layout.service,layout.seats,'Counter assignment',Number(date.slice(0,4))]);
-        candidate = {...layout,id:busId,registration,status:'Ready'};
+        candidate = {...layout,id:busId,registration,status:'Ready',isTemplate:false};
       }
+      if (candidate.deleted || candidate.isTemplate) fail('Enter the actual vehicle number, not a bus layout name.',422,'vehicle_required');
       if (candidate.status !== 'Ready') fail('This bus is not ready. Check its return or maintenance status.',409,'bus_unavailable');
       if (candidate.seats !== layout.seats || candidate.service !== layout.service) fail('This bus has a different seating plan. Choose the matching bus type first.',409,'layout_mismatch');
       bus = candidate;

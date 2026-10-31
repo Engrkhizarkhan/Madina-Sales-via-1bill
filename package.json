@@ -14,7 +14,8 @@
     "test:layout": "node --test scripts/ticket-layout.test.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:migrate": "node backend/scripts/migrate.js"
   },
   "dependencies": {
     "@openai/sites-vite-plugin": "^0.2.0",

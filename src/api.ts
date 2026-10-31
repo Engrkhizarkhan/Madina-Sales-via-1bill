@@ -136,10 +136,10 @@ export const api = {
     request<{ ok: boolean }>(`/trips/${encodeURIComponent(id)}`, {
       method: "DELETE",
     }),
-  transitionTrip: <T>(id: string, action: "boarding" | "depart" | "return", date: string, notes = "") =>
+  transitionTrip: <T>(id: string, action: string, date: string, notes = "", options: {confirm?:boolean;resolveReservations?:boolean}={}) =>
     request<{ trip: T }>(`/trips/${encodeURIComponent(id)}/transition`, {
       method: "POST",
-      body: JSON.stringify({ action, date, notes }),
+      body: JSON.stringify({ action, date, notes, ...options }),
     }),
   listTripRuns: <T>(date: string) =>
     request<{ runs: T[] }>(`/trip-runs?date=${encodeURIComponent(date)}`),

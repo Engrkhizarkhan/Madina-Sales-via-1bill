@@ -56,14 +56,14 @@ const cookieOptions = {
   httpOnly: true, secure: config.secureCookies, sameSite: "lax", path: "/",
 };
 const passwordMatches = (password, hash) => bcrypt.compare(password, String(hash).replace(/^\$2y\$/, "$2b$"));
-const publicReservationAttempts = new Map();
-const allowPublicReservation = (req) => {
+const publicBookingAttempts = new Map();
+const allowPublicBooking = (req) => {
   const key = String(req.ip || "unknown");
   const now = Date.now();
-  const recent = (publicReservationAttempts.get(key) || []).filter((stamp) => now - stamp < 10 * 60 * 1000);
-  if (recent.length >= 6) fail("Too many reservation attempts. Please wait a few minutes.", 429, "rate_limited");
+  const recent = (publicBookingAttempts.get(key) || []).filter((stamp) => now - stamp < 10 * 60 * 1000);
+  if (recent.length >= 6) fail("Too many booking attempts. Please wait a few minutes.", 429, "rate_limited");
   recent.push(now);
-  publicReservationAttempts.set(key, recent);
+  publicBookingAttempts.set(key, recent);
 };
 
 async function loadSession(req) {
@@ -149,13 +149,13 @@ app.get("/public/trip-runs", asyncRoute(async (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("Choose a valid travel date.", 422, "validation_error");
   const runs = await fetchTripRuns(date);
   res.json({ runs: runs.map((run) => ({ id: run.id, tripId: run.tripId, date: run.date, runNumber: run.runNumber,
-    busId: run.busId, status: run.status, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true) });
+    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true) });
 }));
 
 app.post("/public/bookings", asyncRoute(async (req, res) => {
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  allowPublicReservation(req);
-  const bookings = await createBooking({ ...req.body, bookingStatus: "Reserved" }, null, true, req);
+  allowPublicBooking(req);
+  const bookings = await createBooking(req.body, null, true, req);
   res.status(201).json({ booking: bookings[0], bookings });
 }));
 
@@ -260,13 +260,13 @@ app.delete("/buses/:id", asyncRoute(async (req, res) => { requireRole(req.user, 
 app.post("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await saveTrip(req.params.id, req.body, req.user, req) }); }));
 app.put("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await saveTrip(req.params.id, req.body, req.user, req) }); }));
 app.delete("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); await deleteTrip(req.params.id, req.user, req); res.json({ ok: true }); }));
-app.post("/trips/:id/transition", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await transitionTrip(req.params.id, req.body, req.user, req) }); }));
+app.post("/trips/:id/transition", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "counter", "dispatcher"]); res.json({ trip: await transitionTrip(req.params.id, req.body, req.user, req) }); }));
 app.put('/trips/:id/assignment', asyncRoute(async (req,res) => {
   requireRole(req.user,['admin','manager','counter','dispatcher']);
   res.json({trip:await assignDeparture(req.params.id,req.body,req.user,req)});
 }));
 app.put('/trips/:id/counter', asyncRoute(async (req, res) => {
-  requireRole(req.user, ['admin', 'manager', 'counter']);
+  requireRole(req.user, ['admin', 'manager', 'counter', 'dispatcher']);
   res.json({trip: await saveCounterDeparture(req.params.id, req.body, req.user, req)});
 }));
 app.get("/trip-runs", asyncRoute(async (req, res) => {

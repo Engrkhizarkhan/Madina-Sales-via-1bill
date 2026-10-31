@@ -6185,3 +6185,53 @@ td small {
 .admin-main .text-button { padding: 5px 8px; border: 0; border-radius: 5px; background: transparent; color: #1454a0; font-size: 13px; font-weight: 650; cursor: pointer; }
 .admin-main .text-button:hover { background: #edf4fc; }
 .admin-main .text-button:focus-visible { outline: 2px solid #1454a0; outline-offset: 2px; }
+
+/* Ticket-page departure controls, compact voucher and finance visuals. */
+.departure-controls { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
+.departure-controls > div:first-child { display:grid; gap:3px; font-size:14px; }
+.departure-controls small { color:#6c7d90; font-size:12px; }
+.departure-buttons { display:flex; gap:8px; flex-wrap:wrap; }
+.departure-controls .modal-form-grid p { margin:0; font-size:14px; line-height:1.6; }
+.departure-controls .checkbox-label { flex-direction:row; align-items:center; }
+.departure-controls .checkbox-label input { width:18px; min-height:18px; height:18px; }
+.seat-refresh { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:14px; }
+.seat-refresh small { color:#60748b; font-size:12px; }
+.reference-seat-map .seat--available:disabled { opacity:.45; cursor:not-allowed; }
+.counter-workspace details.counter-voucher { margin-top:16px; }
+.counter-voucher > summary { display:flex; align-items:center; gap:12px; cursor:pointer; list-style:none; color:#15314d; }
+.counter-voucher > summary::-webkit-details-marker { display:none; }
+.counter-voucher > summary span { font-size:18px; font-weight:750; }
+.counter-voucher > summary small { color:#60748b; font-size:12px; flex:1; }
+.counter-voucher[open] > summary svg { transform:rotate(90deg); }
+.counter-voucher > summary:focus-visible { outline:2px solid #1454a0; outline-offset:6px; }
+.counter-voucher .voucher-content { padding-top:18px; }
+.demo-badge { background:#fff2ce; color:#725400; font-size:12px; border-radius:6px; padding:6px 9px; }
+.ticket-demo { margin:3px 0; text-align:center; font:700 9px/1.2 monospace; border-block:1px dashed #222; padding:3px 0; }
+.finance-visuals { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin:16px 0; }
+.donut-body { display:flex; align-items:center; gap:12px; padding:12px 18px 18px; }
+.donut-body svg { flex:0 0 160px; width:160px; height:160px; }
+.donut-total { fill:#173f37; font:700 12px system-ui,sans-serif; }
+.donut-caption { fill:#6c7d90; font:600 8px system-ui,sans-serif; }
+.donut-body ul { list-style:none; padding:0; margin:0; flex:1; min-width:0; }
+.donut-body li { display:flex; align-items:center; gap:7px; font-size:12px; margin:10px 0; }
+.donut-body li i { width:9px; height:9px; flex:none; border-radius:50%; }
+.donut-body li span { flex:1; }
+.donut-body li strong { font-size:12px; white-space:nowrap; }
+.route-revenue { margin:16px 0; }
+.route-revenue > div:last-child { padding:0 18px 18px; }
+.route-revenue-row { display:grid; grid-template-columns:minmax(150px,1fr) 2fr 120px; align-items:center; gap:16px; margin:13px 0; font-size:13px; }
+.route-revenue-row i { height:10px; background:#edf2f6; border-radius:10px; overflow:hidden; }
+.route-revenue-row em { display:block; height:100%; background:#1454a0; border-radius:10px; }
+@media(max-width:1000px) { .finance-visuals { grid-template-columns:1fr; } }
+@media(max-width:760px) {
+  .departure-controls { align-items:stretch; flex-direction:column; }
+  .counter-voucher > summary { flex-wrap:wrap; }
+  .counter-voucher > summary small { order:3; flex-basis:100%; }
+  .counter-voucher > summary svg { margin-left:auto; }
+  .demo-badge { display:none; }
+  .donut-body { flex-direction:column; align-items:stretch; }
+  .donut-body svg { align-self:center; }
+  .route-revenue-row { grid-template-columns:1fr 105px; gap:8px; }
+  .route-revenue-row i { grid-column:1/-1; grid-row:2; }
+}
+.counter-workspace .seat--booked, .counter-workspace .seat--reserved { cursor:pointer; }

@@ -12,7 +12,7 @@ const [user]=await pool.execute("INSERT INTO users(name,email,username,password_
 const date=pakistanDate(new Date(Date.now()+86400000));
 const runId=`${ids.trip}-${date}-run-1`;
 const check=(condition,label)=>{assert.ok(condition,label);checks++;console.log(`PASS ${label}`);};
-async function req(method,path,body){const r=await fetch(base+path,{method,headers:{'Content-Type':'application/json',Cookie:cookie,'X-CSRF-Token':csrf},body:body?JSON.stringify(body):undefined});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];return {status:r.status,...await r.json()};}
+async function req(method,path,body){const r=await fetch(base+path,{method,headers:{'Content-Type':'application/json','X-Forwarded-For':`198.51.100.${suffix%250+1}`,Cookie:cookie,'X-CSRF-Token':csrf},body:body?JSON.stringify(body):undefined});if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];return {status:r.status,...await r.json()};}
 try {
   await pool.execute("INSERT INTO routes(id,origin,destination,distance,duration,fare,boarding_point,status) VALUES (?,'Peshawar','Test destination','10 km','1h',500,'Test terminal','Active')",[ids.route]);
   await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,'Standard Plus',49,'Test',2026,'Ready','Not scheduled')",[ids.bus,`TEST-${suffix}`]);
@@ -72,14 +72,56 @@ try {
   check((await req('PUT',`/trips/${ids.trip}/counter`,emptyChange)).status===409,'stale bus assignment cannot overwrite saved type');
   const webDate=pakistanDate(new Date(Date.now()+3*86400000));
   result=await req('POST','/public/bookings',{...draft,date:webDate,seats:[8],gender:'Female'});const web=result.booking;
-  check(result.status===201&&web.source==='Public web'&&web.gender==='Female','online female reservation keeps source and gender');
+  check(result.status===201&&web.source==='Public web'&&web.gender==='Female'&&web.bookingStatus==='Confirmed'&&web.paid===500,'online female paid ticket keeps source and gender');
   result=await req('PUT',`/bookings/${web.id}`,{passenger:'Updated online passenger',phone:web.phone,cnic:web.cnic,gender:'Female',destination:web.destination,boardingPoint:web.boardingPoint});
   check(result.status===200&&result.booking.passenger==='Updated online passenger','counter can edit an online passenger');
-  result=await req('POST',`/bookings/${web.id}/cancel`,{});check(result.status===200&&result.booking.bookingStatus==='Cancelled','counter can remove online reservation');
+  result=await req('POST',`/bookings/${web.id}/refunds`,{amount:web.paid,method:'1Bill',reference:'DEMO-REFUND-TEST',reason:'Passenger request'});check(result.status===201&&result.booking.bookingStatus==='Refunded','counter can refund and release an online paid ticket');
+  const today=pakistanDate();
+  result=await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'pause'});check(result.status===200&&result.trip.salesPaused,'ticket page can pause a dated seat map');
+  check((await req('POST','/bookings',{...draft,date:today,seats:[1]})).status===409,'pause rejects counter sales');
+  check((await req('POST','/public/bookings',{...draft,date:today,seats:[1]})).status===409,'pause rejects web sales');
+  result=await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'resume'});check(result.status===200&&!result.trip.salesPaused,'ticket page can resume sales');
+  const holdToday=await req('POST','/bookings',{...draft,date:today,seats:[1],bookingStatus:'Reserved'});
+  check(holdToday.status===201,'counter reservation remains available');
+  check((await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'depart'})).status===409,'closing requires resolving unpaid holds');
+  result=await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'depart',confirm:true,resolveReservations:true,notes:'Client demo release holds'});
+  check(result.status===200&&result.trip.status==='Departed','bus can depart directly without start boarding and release holds with confirmation');
+  [rows]=await pool.execute('SELECT booking_status FROM bookings WHERE id=?',[holdToday.booking.id]);check(rows[0].booking_status==='Cancelled','confirmed closure cancels unpaid holds');
+  check((await req('POST','/bookings',{...draft,date:today,seats:[2]})).status===409,'bus gone closes ticket sales');
+  check((await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'reopen',notes:'Late passenger'})).status===422,'reopening requires explicit confirmation');
+  result=await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'reopen',confirm:true,notes:'Late passenger approved'});check(result.status===200&&result.trip.salesOverride,'confirmed override reopens counter sales');
+  result=await req('POST','/bookings',{...draft,date:today,seats:[2]});check(result.status===201,'counter can sell after confirmed override');
+  check((await req('POST','/public/bookings',{...draft,date:today,seats:[3]})).status===409,'counter override never reopens public sales');
+  result=await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'close-sales'});check(result.status===200&&!result.trip.salesOverride,'operator can close override again');
+  [rows]=await pool.execute("SELECT after_json FROM audit_logs WHERE entity_id=? AND action='trip.reopen'",[`${ids.trip}-${today}-run-1`]);check(rows.length===1,'sales override is audited');
+  ids.template=`counter-layout-${suffix}`;ids.layoutTrip=`counter-layout-trip-${suffix}`;
+  await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service,is_template) VALUES (?,?,'Executive',41,'Executive 41',2026,'Ready','Not scheduled',1)",[ids.template,`LAYOUT-${suffix}`]);
+  await pool.execute("INSERT INTO trips(id,route_id,bus_id,departure,arrival,driver,attendant,platform,status,service_days,active) VALUES (?,?,?,'23:55','06:00','','','','Scheduled',?,1)",[ids.layoutTrip,ids.route,ids.template,JSON.stringify(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])]);
+  const layoutDate=pakistanDate(new Date(Date.now()+5*86400000));
+  check((await req('POST','/bookings',{...draft,tripId:ids.layoutTrip,date:layoutDate,seats:[1]})).error.code==='vehicle_required','counter requires actual vehicle assignment for a bus layout');
+  result=await req('POST','/public/bookings',{...draft,tripId:ids.layoutTrip,date:layoutDate,seats:[1]});
+  check(result.status===201&&result.booking.bus==='To be assigned','paid web demo can book a layout before vehicle assignment');
+  const layoutWeb=result.booking;
+  result=await req('PUT',`/trips/${ids.layoutTrip}/counter`,{date:layoutDate,registration:`ACTUAL-${suffix}`,departure:'23:55',layoutBusId:ids.template,expected:{registration:`LAYOUT-${suffix}`,departure:'23:55',revision:'',busId:ids.template}});
+  ids.layoutVehicle=result.trip?.busId;
+  check(result.status===200&&!result.trip.snapshot.bus.isTemplate,'vehicle entered on the ticket page inherits its saved layout');
+  [rows]=await pool.execute('SELECT bus_registration FROM bookings WHERE id=?',[layoutWeb.id]);check(rows[0].bus_registration===`ACTUAL-${suffix}`,'online ticket receives actual vehicle assignment after save');
+  await pool.execute("UPDATE users SET role='dispatcher' WHERE id=?",[user.insertId]);
+  check((await req('POST','/bookings',{...draft,seats:[7]})).status===403,'dispatcher cannot issue paid tickets');
+  check((await req('PUT',`/trips/${ids.trip}/counter`,payload)).status===403,'dispatcher cannot change voucher expenses');
+  result=await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'return'});check(result.status===200&&result.trip.status==='Returned','dispatcher can record return through the ticket-page controls');
   console.log(`\n${checks} counter workflow checks passed.`);
 } finally {
   await pool.execute('DELETE FROM audit_logs WHERE user_id=?',[user.insertId]);
-  await pool.execute('DELETE FROM financial_transactions WHERE created_by=?',[user.insertId]);
+  if(ids.layoutTrip){
+    await pool.execute('DELETE ft FROM financial_transactions ft JOIN bookings b ON b.id=ft.booking_id WHERE b.trip_id=?',[ids.layoutTrip]);
+    await pool.execute('DELETE bs FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id WHERE b.trip_id=?',[ids.layoutTrip]);
+    await pool.execute('DELETE FROM bookings WHERE trip_id=?',[ids.layoutTrip]);
+    await pool.execute('DELETE FROM trip_runs WHERE trip_id=?',[ids.layoutTrip]);
+    await pool.execute('DELETE FROM trips WHERE id=?',[ids.layoutTrip]);
+    await pool.execute('DELETE FROM buses WHERE id IN (?,?)',[ids.template,ids.layoutVehicle||'']);
+  }
+  await pool.execute('DELETE ft FROM financial_transactions ft LEFT JOIN bookings b ON b.id=ft.booking_id WHERE ft.created_by=? OR b.trip_id=?',[user.insertId,ids.trip]);
   await pool.execute('DELETE FROM expenses WHERE created_by=?',[user.insertId]);
   await pool.execute('DELETE FROM refunds WHERE processed_by=?',[user.insertId]);
   await pool.execute('DELETE bs FROM booking_seats bs JOIN bookings b ON b.id=bs.booking_id WHERE b.trip_id=?',[ids.trip]);

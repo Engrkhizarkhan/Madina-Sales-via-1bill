@@ -4,6 +4,7 @@ import { pakistanDate } from "../node/helpers.js";
 import { config } from "../node/config.js";
 import { pool, closePool } from "../node/db.js";
 
+if (!/test|qa/i.test(config.db.database)) throw new Error("Use an isolated test database.");
 const baseUrl = process.env.TEST_API_URL || `http://${config.host}:${config.port}`;
 let cookie = "";
 let passed = 0;
@@ -100,19 +101,14 @@ try {
     .find((number) => !publicOccupied.includes(number));
   if (!publicSeat) throw new Error("No public reservation test seat is available.");
   const publicReservation = await request("POST", "/public/bookings", {
-    passenger: "Public Reservation QA", phone: "03001112222", cnic: "17301-7654321-9", gender: "Male",
-    tripId: publicTrip.id, date: publicDate, seats: [publicSeat],
+    passenger:"Public Paid Demo QA",phone:"03001112222",cnic:"17301-7654321-9",gender:"Male",tripId:publicTrip.id,date:publicDate,seats:[publicSeat],bookingStatus:"Reserved",paid:0,paymentReference:"CLIENT-FORGED",
   });
-  check(publicReservation.status === 201 && publicReservation.body.booking.bookingStatus === "Reserved" && publicReservation.body.booking.paid === 0,
-    "public website creates an operator-managed reservation without simulating 1Bill");
+  check(publicReservation.status===201&&publicReservation.body.booking.bookingStatus==='Confirmed'&&publicReservation.body.booking.paid===500,'web demo issues a fully paid ticket and cannot be forced into a reservation');
   createdBookings.push(publicReservation.body.booking.id);
-  check(!publicReservation.body.booking.expiresAt, "reservation has no automatic expiry");
-  await pool.execute("UPDATE bookings SET expires_at = DATE_SUB(NOW(), INTERVAL 1 DAY) WHERE id = ?", [publicReservation.body.booking.id]);
-  await request("GET", "/public/bootstrap");
-  const held = await request("GET", "/admin/bootstrap");
-  check(held.body.bookings.find((item) => item.id === publicReservation.body.booking.id)?.bookingStatus === "Reserved", "even legacy elapsed expiry never drops a reservation");
-  const cancelled = await request("POST", `/bookings/${publicReservation.body.booking.id}/cancel`, {}, csrf);
-  check(cancelled.status === 200 && cancelled.body.booking.bookingStatus === "Cancelled", "operator explicitly releases a reservation");
+  check(publicReservation.body.booking.paymentMethod==='1Bill'&&publicReservation.body.booking.paymentReference.startsWith('DEMO-1BILL-'),'server marks simulated 1Bill payment without trusting the client reference');
+  check((await request('POST',`/bookings/${publicReservation.body.booking.id}/cancel`,{},csrf)).status===409,'paid web ticket requires an audited refund');
+  const publicRefund=await request('POST',`/bookings/${publicReservation.body.booking.id}/refunds`,{amount:500,method:'1Bill',reason:'Passenger request',reference:'DEMO-REFUND-QA'},csrf);
+  check(publicRefund.status===201&&publicRefund.body.booking.bookingStatus==='Refunded','web demo refund releases the seat through the ledger');
   check((await request("POST", "/auth/login", { identity: "not-a-user", password: "wrong" })).status === 401, "invalid staff login is rejected");
 
   const bootstrap = await request("GET", "/admin/bootstrap");
@@ -151,8 +147,8 @@ try {
   check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...originalAssignment,expected:changedAssignment},csrf)).status === 409,'replacement bus cannot remove sold seat numbers');
   await request('POST',`/buses/${createdBusId}`,busResult.body.bus,csrf);
   check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...originalAssignment,expected:changedAssignment},csrf)).status === 200,'operator can restore original assignment while departure is open');
-  check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "1Bill", paymentReference: "UNVERIFIED", discount: 0 }, csrf)).status === 409,
-    "backend blocks 1Bill sales until the gateway is activated");
+  check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Card", paymentReference: "", discount: 0 }, csrf)).status === 422,
+    "counter non-cash sale requires a payment reference");
   check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Cash", discount: 0 }, csrf)).status === 409, "database prevents duplicate trip seats");
   const csrfFailure = await request("POST", `/bookings/${booking.id}/refunds`, { amount: 1, method: "Cash", reason: "Other" });
   check(csrfFailure.status === 403 && csrfFailure.body.error.code === "csrf_failed", "authenticated state changes require CSRF");
@@ -178,7 +174,9 @@ try {
   const contenders = await Promise.all([1,2].map(() => request('POST','/bookings',{...bookingRequest,bookingStatus:'Reserved',paymentMethod:'Cash'},csrf)));
   for (const result of contenders) if (result.status === 201) createdBookings.push(result.body.booking.id);
   check(contenders.filter((result) => result.status === 201).length === 1 && contenders.filter((result) => result.status === 409).length === 1, 'released seat is available but simultaneous attempts cannot double-book it');
-  check((await request('POST', `/trips/${createdTripId}`, {...tripResult.body.trip,departure:'23:40'},csrf)).status === 409, 'schedule with upcoming passengers cannot be reassigned silently');
+  check((await request('POST', `/trips/${createdTripId}`, {...tripResult.body.trip,departure:'23:40'},csrf)).status === 200, 'recurring schedule can be edited while dated passenger assignments are preserved');
+  const preserved=(await request('GET','/admin/bootstrap')).body.bookings.find(b=>b.id===booking.id);
+  check(preserved.time===booking.time,'editing roster does not rewrite the existing dated ticket time');
 
   const locked = await request("GET", "/expenses");
   check(locked.status === 403 && locked.body.error.code === "finance_locked", "finance remains locked by default");
@@ -206,8 +204,6 @@ try {
   check(boarding.status === 200 && boarding.body.trip.status === "Boarding", "dated trip run can open boarding without changing future roster dates");
   const runList = await request("GET", `/trip-runs?date=${runDate}`);
   check(runList.status === 200 && runList.body.runs.some((run) => run.tripId === createdTripId && run.status === "Boarding"), "dated run state is persisted and queryable");
-  check((await request("DELETE", `/routes/${createdRouteId}`, undefined, csrf)).status === 409, "route deletion protects assigned trips");
-  check((await request("DELETE", `/buses/${createdBusId}`, undefined, csrf)).status === 409, "bus deletion protects assigned trips");
   const heldToday = await request("POST", "/bookings", {...bookingRequest, date: runDate, seats:[1], bookingStatus:"Reserved"}, csrf);
   check(heldToday.status === 201, "boarding departure accepts counter reservations");
   createdBookings.push(heldToday.body.booking.id);
@@ -231,14 +227,21 @@ try {
   const refreshed = await request("GET", "/admin/bootstrap");
   check(refreshed.body.fleet.find((item) => item.id === createdBusId).status === "Ready","recorded return makes bus ready");
   check((await request("POST", `/trips/${createdTripId}/transition`, {action:"boarding",date:runDate},csrf)).status === 409,"returned departure cannot be accidentally reopened");
-  check((await request("DELETE", `/trips/${createdTripId}`,undefined,csrf)).status === 409,"movement and ticket history cannot be deleted");
+
   const crewResult = await request("POST", "/crew/new", { name: "Automated Spare Crew", role: "Driver", phone: "03009999999", cnic: `${String(Date.now()).slice(-5)}-1234567-1`, license: "QA-HTV", duty: "Available", status: "Available", initials: "AC" }, csrf);
   createdCrewId = Number(crewResult.body.person.id);
   check(crewResult.status === 200, "crew member can be added");
   check((await request("DELETE", `/crew/${createdCrewId}`, undefined, csrf)).status === 200, "unassigned crew member can be deleted");
-  createdCrewId = null;
+
   check((await request("GET", "/audit")).body.events.length >= 5, "audit trail records sensitive operations");
 
+  check((await request('DELETE',`/trips/${createdTripId}`,undefined,csrf)).status===200,'schedule with ticket and movement history can be deleted');
+  const afterDelete=(await request('GET','/admin/bootstrap')).body;
+  check(afterDelete.trips.find(t=>t.id===createdTripId).deleted&&afterDelete.bookings.some(b=>b.id===booking.id),'deleted schedule is hidden but ticket history is retained');
+  check(!(await request('GET','/public/bootstrap')).body.trips.some(t=>t.id===createdTripId),'deleted schedule is removed from public availability');
+  check((await request('POST','/bookings',{...bookingRequest,seats:[4]},csrf)).status===409,'deleted schedule rejects new sales');
+  check((await request('DELETE',`/buses/${createdBusId}`,undefined,csrf)).status===200,'bus deletion archives referenced setup without destroying history');
+  check((await request('DELETE',`/routes/${createdRouteId}`,undefined,csrf)).status===200,'route deletion archives referenced schedules and retains tickets');
   const qaUsername = `node-counter-${Date.now()}`;
   const qaPassword = "NodeCounter!2026";
   const staff = await request("POST", "/users", { name: "Automated Node Counter", email: `${qaUsername}@example.invalid`, username: qaUsername, role: "counter", password: qaPassword }, csrf);
@@ -252,7 +255,7 @@ try {
   const counterLogin = await request("POST", "/auth/login", { identity: qaUsername, password: qaPassword });
   check(counterLogin.status === 200, "new staff account authenticates through Node.js");
   const counterCsrf = counterLogin.body.csrfToken;
-  check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...changedAssignment,expected:originalAssignment},counterCsrf)).status === 200,'counter staff can adjust a dated assignment without roster-management permission');
+  check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...changedAssignment,expected:originalAssignment},counterCsrf)).status === 409,'counter cannot reassign a deleted schedule');
   const counterBootstrap = await request("GET", "/admin/bootstrap");
   check(counterBootstrap.status === 200 && counterBootstrap.body.users.length === 0, "staff cannot retrieve user administration records");
   check((await request("GET", "/finance/status")).status === 403, "staff cannot view finance");

@@ -20,7 +20,7 @@ export async function ensureRun(connection, trip, date) {
 export async function assertSaleOpen(connection, run, date, isPublic = false) {
   if (date < pakistanDate()) fail('This travel date has passed. Cancel the reservation and book the correct date.', 409, 'departure_unavailable');
   const [buses] = await connection.execute('SELECT status FROM buses WHERE id = ? FOR UPDATE', [run.bus_id]);
-  if (['Departed', 'Returned', 'Cancelled'].includes(run.status) || !buses.length || ['Maintenance', 'Retired'].includes(buses[0].status)) {
+  if (run.sales_paused || (['Departed', 'Returned', 'Cancelled'].includes(run.status) && !(run.status==='Departed' && run.sales_override && !isPublic)) || !buses.length || ['Maintenance', 'Retired'].includes(buses[0].status)) {
     fail('This departure is closed or its bus is unavailable.', 409, 'departure_unavailable');
   }
   // Counter staff may issue last-minute tickets while the actual bus is still boarding.

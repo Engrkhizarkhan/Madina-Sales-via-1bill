@@ -8,30 +8,30 @@ const rows = async (sql, parameters = [], executor = pool) => {
 
 export async function fetchRoutes(activeOnly = false, executor = pool) {
   const result = await rows(
-    `SELECT id, origin, destination, distance, duration, fare, boarding_point, status
-     FROM routes ${activeOnly ? "WHERE status = 'Active'" : ""} ORDER BY origin, destination`,
+    `SELECT id, origin, destination, distance, duration, fare, boarding_point, status, deleted_at
+     FROM routes ${activeOnly ? "WHERE status = 'Active' AND deleted_at IS NULL" : ""} ORDER BY origin, destination`,
     [], executor,
   );
   return result.map((row) => ({
-    id: row.id, from: row.origin, to: row.destination, distance: row.distance,
+    deleted: Boolean(row.deleted_at), id: row.id, from: row.origin, to: row.destination, distance: row.distance,
     duration: row.duration, fare: Number(row.fare), boarding: row.boarding_point, status: row.status,
   }));
 }
 
 export async function fetchBuses(publicOnly = false, executor = pool) {
   const result = await rows(
-    `SELECT id, registration, service, seats, model, model_year, status, next_service
-     FROM buses ${publicOnly ? "WHERE status <> 'Retired'" : ""} ORDER BY registration`,
+    `SELECT id, registration, service, seats, model, model_year, status, next_service, is_template, deleted_at
+     FROM buses ${publicOnly ? "WHERE status <> 'Retired' AND deleted_at IS NULL" : ""} ORDER BY registration`,
     [], executor,
   );
   return result.map((row) => ({
     id: row.id, registration: row.registration, service: row.service, seats: Number(row.seats),
-    model: row.model, year: Number(row.model_year), status: row.status, nextService: row.next_service,
+    isTemplate: Boolean(row.is_template), deleted: Boolean(row.deleted_at), model: row.model, year: Number(row.model_year), status: row.status, nextService: row.next_service,
   }));
 }
 
 export async function fetchCrew(executor = pool) {
-  const result = await rows("SELECT id, name, role, phone, cnic, license, duty, status, initials FROM crew ORDER BY name", [], executor);
+  const result = await rows("SELECT id, name, role, phone, cnic, license, duty, status, initials FROM crew WHERE deleted_at IS NULL ORDER BY name", [], executor);
   return result.map((row) => ({ ...row, id: Number(row.id) }));
 }
 
@@ -47,22 +47,22 @@ export async function fetchUsers(executor = pool) {
 export async function fetchTrips(activeOnly = false, executor = pool) {
   const result = await rows(
     `SELECT id, route_id, bus_id, departure, arrival, driver, attendant, platform, status,
-            service_days, active, run_number, last_departed_at
-     FROM trips ${activeOnly ? "WHERE active = 1" : ""} ORDER BY departure`,
+            service_days, active, run_number, last_departed_at, deleted_at
+     FROM trips ${activeOnly ? "WHERE active = 1 AND deleted_at IS NULL" : ""} ORDER BY departure`,
     [], executor,
   );
   return result.map((row) => ({
     id: row.id, routeId: row.route_id, busId: row.bus_id, departure: trimTime(row.departure),
     arrival: trimTime(row.arrival), driver: row.driver, attendant: row.attendant, platform: row.platform,
     status: row.status, days: parseJson(row.service_days), active: Boolean(row.active),
-    runNumber: Number(row.run_number), lastDepartedAt: isoDateTime(row.last_departed_at),
+    deleted: Boolean(row.deleted_at), runNumber: Number(row.run_number), lastDepartedAt: isoDateTime(row.last_departed_at),
   }));
 }
 
 export async function fetchTripRuns(serviceDate = null, executor = pool) {
   const result = await rows(
     `SELECT tr.id, tr.trip_id, tr.service_date, tr.run_number, tr.bus_id, tr.driver,
-            tr.attendant, tr.platform, tr.status, tr.notes, tr.boarding_started_at, tr.departed_at, tr.returned_at, tr.snapshot
+            tr.attendant, tr.platform, tr.status, tr.notes, tr.sales_paused, tr.sales_override, tr.boarding_started_at, tr.departed_at, tr.returned_at, tr.snapshot
      FROM trip_runs tr
      ${serviceDate ? 'WHERE tr.service_date = ?' : ''}
      ORDER BY tr.service_date DESC, tr.id`,
@@ -79,6 +79,7 @@ export async function fetchTripRuns(serviceDate = null, executor = pool) {
     platform: row.platform,
     status: row.status,
     notes: row.notes,
+    salesPaused: Boolean(row.sales_paused), salesOverride: Boolean(row.sales_override),
     boardingStartedAt: isoDateTime(row.boarding_started_at),
     departedAt: isoDateTime(row.departed_at),
     returnedAt: isoDateTime(row.returned_at),
