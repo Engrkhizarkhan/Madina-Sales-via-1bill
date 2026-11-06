@@ -15,7 +15,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "db:migrate": "node backend/scripts/migrate.js"
+    "db:migrate": "node backend/scripts/migrate.js",
+    "test:services": "node backend/tests/route-services.js"
   },
   "dependencies": {
     "@openai/sites-vite-plugin": "^0.2.0",

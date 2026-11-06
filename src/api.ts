@@ -99,10 +99,10 @@ export const api = {
       method: "POST",
       body: "{}",
     }),
-  confirmReservation: <T>(id: string, paymentMethod: string, paymentReference: string) =>
+  confirmReservation: <T>(id: string, paymentMethod: string, paymentReference: string, details: unknown = {}) =>
     request<{ booking: T }>(`/bookings/${encodeURIComponent(id)}/confirm`, {
       method: "POST",
-      body: JSON.stringify({ paymentMethod, paymentReference }),
+      body: JSON.stringify({ ...details as object, paymentMethod, paymentReference }),
     }),
   refundBooking: <T>(id: string, refund: unknown) =>
     request<{ booking: T }>(`/bookings/${encodeURIComponent(id)}/refunds`, {

@@ -8,24 +8,24 @@ const rows = async (sql, parameters = [], executor = pool) => {
 
 export async function fetchRoutes(activeOnly = false, executor = pool) {
   const result = await rows(
-    `SELECT id, origin, destination, distance, duration, fare, boarding_point, status, deleted_at
+    `SELECT id, origin, destination, distance, duration, fare, boarding_point, status, destinations, services, deleted_at
      FROM routes ${activeOnly ? "WHERE status = 'Active' AND deleted_at IS NULL" : ""} ORDER BY origin, destination`,
     [], executor,
   );
   return result.map((row) => ({
     deleted: Boolean(row.deleted_at), id: row.id, from: row.origin, to: row.destination, distance: row.distance,
-    duration: row.duration, fare: Number(row.fare), boarding: row.boarding_point, status: row.status,
+    destinations: parseJson(row.destinations), services: parseJson(row.services), duration: row.duration, fare: Number(row.fare), boarding: row.boarding_point, status: row.status,
   }));
 }
 
 export async function fetchBuses(publicOnly = false, executor = pool) {
   const result = await rows(
-    `SELECT id, registration, service, seats, model, model_year, status, next_service, is_template, deleted_at
+    `SELECT id, registration, service, seats, model, model_year, status, next_service, is_template, seat_classes, commission_rate, deleted_at
      FROM buses ${publicOnly ? "WHERE status <> 'Retired' AND deleted_at IS NULL" : ""} ORDER BY registration`,
     [], executor,
   );
   return result.map((row) => ({
-    id: row.id, registration: row.registration, service: row.service, seats: Number(row.seats),
+    seatClasses: parseJson(row.seat_classes), commissionRate: Number(row.commission_rate), id: row.id, registration: row.registration, service: row.service, seats: Number(row.seats),
     isTemplate: Boolean(row.is_template), deleted: Boolean(row.deleted_at), model: row.model, year: Number(row.model_year), status: row.status, nextService: row.next_service,
   }));
 }

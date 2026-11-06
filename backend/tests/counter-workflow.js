@@ -98,7 +98,7 @@ try {
   await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service,is_template) VALUES (?,?,'Executive',41,'Executive 41',2026,'Ready','Not scheduled',1)",[ids.template,`LAYOUT-${suffix}`]);
   await pool.execute("INSERT INTO trips(id,route_id,bus_id,departure,arrival,driver,attendant,platform,status,service_days,active) VALUES (?,?,?,'23:55','06:00','','','','Scheduled',?,1)",[ids.layoutTrip,ids.route,ids.template,JSON.stringify(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])]);
   const layoutDate=pakistanDate(new Date(Date.now()+5*86400000));
-  check((await req('POST','/bookings',{...draft,tripId:ids.layoutTrip,date:layoutDate,seats:[1]})).error.code==='vehicle_required','counter requires actual vehicle assignment for a bus layout');
+  result=await req('POST','/bookings',{...draft,tripId:ids.layoutTrip,date:layoutDate,seats:[2]});check(result.status===201&&result.booking.bus==='To be assigned','counter can issue a ticket before vehicle assignment');
   result=await req('POST','/public/bookings',{...draft,tripId:ids.layoutTrip,date:layoutDate,seats:[1]});
   check(result.status===201&&result.booking.bus==='To be assigned','paid web demo can book a layout before vehicle assignment');
   const layoutWeb=result.booking;
@@ -109,7 +109,7 @@ try {
   await pool.execute("UPDATE users SET role='dispatcher' WHERE id=?",[user.insertId]);
   check((await req('POST','/bookings',{...draft,seats:[7]})).status===403,'dispatcher cannot issue paid tickets');
   check((await req('PUT',`/trips/${ids.trip}/counter`,payload)).status===403,'dispatcher cannot change voucher expenses');
-  result=await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'return'});check(result.status===200&&result.trip.status==='Returned','dispatcher can record return through the ticket-page controls');
+  result=await req('POST',`/trips/${ids.trip}/transition`,{date:today,action:'return'});check(result.status===422,'daily workflow has no return transition');
   console.log(`\n${checks} counter workflow checks passed.`);
 } finally {
   await pool.execute('DELETE FROM audit_logs WHERE user_id=?',[user.insertId]);

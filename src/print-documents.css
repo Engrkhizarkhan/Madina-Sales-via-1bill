@@ -110,3 +110,64 @@
 .operations-document.document-terminal-a4 .voucher-summary-grid strong { margin-top:2px; }
 .operations-document.document-terminal-a4 .document-signatures { padding-top:20px; }
 .operations-document.document-terminal-a4 .document-footer { margin-top:10px; }
+/* One A4 sheet accommodates a full 49–60 seat ticket register. */
+@page madina-voucher-a4 { size:A4 portrait; margin:8mm; }
+.operations-document.document-terminal-a4 { width:210mm; padding:8mm; }
+.operations-document.document-terminal-a4 .document-header { padding-bottom:5px; gap:8px; }
+.operations-document.document-terminal-a4 .document-header h1 { font-size:18px; }
+.operations-document.document-terminal-a4 .document-header h2 { font-size:13px; }
+.operations-document.document-terminal-a4 .document-header p { font-size:9px;margin:0; }
+.operations-document.document-terminal-a4 .document-header .document-brand-urdu { font-size:10px;line-height:1.8;margin:0; }
+.operations-document.document-terminal-a4 .document-title-block>strong { font-size:14px;margin-top:3px; }
+.operations-document.document-terminal-a4 .document-meta { margin:5px 0;grid-template-columns:repeat(3,minmax(0,1fr)); }
+.operations-document.document-terminal-a4 .document-meta>span { padding:3px 5px; }
+.operations-document.document-terminal-a4 .document-meta strong { font-size:9px;margin-top:1px; }
+.operations-document.document-terminal-a4 .document-meta small { font-size:8px; }
+.operations-document.document-terminal-a4 .document-section-title { margin:6px 0 3px;font-size:9px; }
+.operations-document.document-terminal-a4 .document-table th,
+.operations-document.document-terminal-a4 .document-table td { padding:1px 3px!important;font-size:8.5px!important;line-height:1.15; }
+.operations-document.document-terminal-a4 .document-table td small { font-size:7px!important;display:inline;margin:0 0 0 2px; }
+.operations-document.document-terminal-a4 .voucher-summary-grid { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.operations-document.document-terminal-a4 .voucher-summary-grid>span { padding:3px 5px; }
+.operations-document.document-terminal-a4 .voucher-summary-grid strong { font-size:10px;margin:0; }
+.operations-document.document-terminal-a4 .voucher-summary-grid small { font-size:8px; }
+.operations-document.document-terminal-a4 .document-signatures { padding-top:13px; }
+.operations-document.document-terminal-a4 .document-footer { font-size:8px;margin-top:7px;padding-top:4px; }
+.operations-document.document-terminal-thermal { padding:3mm; }
+.operations-document.document-terminal-thermal .document-header { padding-bottom:3px; }
+.operations-document.document-terminal-thermal .document-header h1 { font-size:19px; }
+.operations-document.document-terminal-thermal .document-header>div>p:not(.document-brand-urdu) { display:none; }
+.operations-document.document-terminal-thermal .document-header .document-brand-urdu { font-size:10px;margin:0;line-height:1.8; }
+.operations-document.document-terminal-thermal .document-title-block { margin-top:3px; }
+.operations-document.document-terminal-thermal .document-title-block h2 { font-size:11px; }
+.operations-document.document-terminal-thermal .document-title-block>strong { font-size:13px;margin:2px 0; }
+.operations-document.document-terminal-thermal .document-meta { margin:4px 0; }
+.operations-document.document-terminal-thermal .document-meta>span { padding:2px 0; }
+.operations-document.document-terminal-thermal .document-section-title { margin:5px 0 3px; }
+.operations-document.document-terminal-thermal .thermal-passenger { padding:2px 0; }
+.operations-document.document-terminal-thermal .thermal-passenger span:first-child { display:grid;grid-template-columns:42px 1fr auto;gap:4px; }
+.operations-document.document-terminal-thermal .thermal-passenger strong { text-align:left; }
+.operations-document.document-terminal-thermal .thermal-passenger span:nth-child(2) { display:block; }
+.operations-document.document-terminal-thermal .thermal-total>span { padding:2px 0; }
+.operations-document.document-terminal-thermal .thermal-total .document-grand-total { padding:4px 0;font-size:12px; }
+.operations-document.document-terminal-thermal .document-signatures { padding-top:15px; }
+.operations-document.document-terminal-thermal .document-footer { margin-top:5px;padding-top:3px; }
+@media print {
+ .operations-document.document-terminal-a4.report-a4 { page:madina-voucher-a4;width:194mm!important; }
+}
+.operations-document.document-terminal-a4.document-dense .document-table th,
+.operations-document.document-terminal-a4.document-dense .document-table td { font-size:8.5px!important;line-height:1.1;padding:0 2px!important; }
+.operations-document.document-terminal-a4.document-dense .document-table td small { font-size:6.5px!important; }
+.operations-document.document-terminal-a4.document-dense .document-header p:not(.document-brand-urdu) { display:none; }
+.operations-document.document-terminal-a4.document-dense .voucher-summary-grid>span { padding:2px 4px; }
+.operations-document.document-terminal-a4.document-dense .document-meta>span { padding:2px 4px; }
+
+.operations-document.document-terminal-thermal .thermal-passenger { padding:1px 0; }
+.operations-document.document-terminal-thermal .thermal-passenger span:first-child { grid-template-columns:24px 1fr auto;align-items:baseline; }
+.operations-document.document-terminal-thermal .thermal-passenger strong,
+.operations-document.document-terminal-thermal .thermal-passenger b { font-size:9.5px;line-height:1.1; }
+.operations-document.document-terminal-thermal .thermal-passenger strong small { font-size:8px; }
+@media print {
+ body.printing-thermal .report-preview-shell,
+ body.printing-thermal .operations-document.report-thermal { width:74mm!important;max-width:74mm!important; }
+}

@@ -214,7 +214,7 @@ try {
   check(departed.status === 200 && departed.body.trip.departedAt && departed.body.trip.snapshot.passengers.length === 1, "departure records timestamp and immutable passenger manifest");
   check((await request('PUT',`/trips/${createdTripId}/assignment`,{date:runDate,...changedAssignment,expected:originalAssignment},csrf)).status === 409,'departed bus assignments cannot be rewritten');
   check((await request("POST", "/bookings", {...bookingRequest,date:runDate,seats:[2],bookingStatus:"Confirmed",paymentMethod:"Cash"},csrf)).status === 409,"departed bus cannot sell more seats");
-  check((await request("POST", `/buses/${createdBusId}`, {...busResult.body.bus,status:"Ready"},csrf)).status === 409,"fleet cannot independently reset an on-route bus");
+  check((await request("POST", `/buses/${createdBusId}`, {...busResult.body.bus,status:"Ready"},csrf)).status === 200,"daily departures do not lock the bus setup");
   const refundAfterDeparture = await request("POST", `/bookings/${heldToday.body.booking.id}/refunds`, {amount:500,method:"Cash",reason:"Passenger request",notes:"QA retained history"},csrf);
   check(refundAfterDeparture.status === 201,"refund remains linked to original ticket after departure");
   const recorded = await request("GET", `/trip-runs?date=${runDate}`);
@@ -223,10 +223,10 @@ try {
   const publicRuns = await request("GET", `/public/trip-runs?date=${runDate}`, undefined,undefined,false);
   check(!JSON.stringify(publicRuns.body).includes("Automated Node QA Passenger") && !JSON.stringify(publicRuns.body).includes("passengers"),"public departure feed does not expose passenger snapshots");
   const returned = await request("POST", `/trips/${createdTripId}/transition`, {action:"return",date:runDate,notes:"Arrived at terminal"},csrf);
-  check(returned.status === 200 && returned.body.trip.returnedAt && returned.body.trip.notes === "Arrived at terminal","return is recorded against original dated departure");
+  check(returned.status === 422,"return action is no longer part of the daily departure workflow");
   const refreshed = await request("GET", "/admin/bootstrap");
-  check(refreshed.body.fleet.find((item) => item.id === createdBusId).status === "Ready","recorded return makes bus ready");
-  check((await request("POST", `/trips/${createdTripId}/transition`, {action:"boarding",date:runDate},csrf)).status === 409,"returned departure cannot be accidentally reopened");
+  check(refreshed.body.fleet.find((item) => item.id === createdBusId).status === "Ready","departure leaves the bus available for another day");
+  check((await request("POST", `/trips/${createdTripId}/transition`, {action:"boarding",date:runDate},csrf)).status === 409,"closed departure cannot be accidentally reopened");
 
   const crewResult = await request("POST", "/crew/new", { name: "Automated Spare Crew", role: "Driver", phone: "03009999999", cnic: `${String(Date.now()).slice(-5)}-1234567-1`, license: "QA-HTV", duty: "Available", status: "Available", initials: "AC" }, csrf);
   createdCrewId = Number(crewResult.body.person.id);

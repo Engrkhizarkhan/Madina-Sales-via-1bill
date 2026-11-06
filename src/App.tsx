@@ -1,3 +1,4 @@
+import {routeDestinations,seatFare,seatClass,departureTimes,commissionPolicy,type SeatClass,type RouteService} from "../shared/service-pricing.mjs";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
@@ -88,12 +89,14 @@ type AdminView =
   | "crew"
   | "settings";
 
-type DepartureAction = "pause" | "resume" | "depart" | "return" | "reopen" | "close-sales";
+type DepartureAction = "pause" | "resume" | "depart" | "reopen" | "close-sales";
 type DepartureOptions = {confirm?:boolean;resolveReservations?:boolean};
 type Weekday = "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun";
 type ReportKind = "manifest" | "cnic" | "terminal-a4" | "terminal-thermal";
 
 type RouteRecord = {
+  destinations?: {name:string;fare:number}[];
+  services?: RouteService[];
   deleted?: boolean;
   id: string;
   from: string;
@@ -116,6 +119,9 @@ type CrewRecord = {
   initials: string;
 };
 type BusRecord = {
+  layoutId?:string;
+  seatClasses?:SeatClass[];
+  commissionRate?:number;
   isTemplate?: boolean;
   deleted?: boolean;
   id: string;
@@ -174,13 +180,14 @@ type TripRun = {
   departedAt?: string;
 };
 type Booking = {
+  quotedFares?:number[];
   id: string;
   ticketNo: string;
   source: BookingSource;
   passenger: string;
   phone: string;
   cnic: string;
-  gender: "Male" | "Female";
+  gender: "Male" | "Female" | "Unspecified";
   route: string;
   destination: string;
   boardingPoint: string;
@@ -258,11 +265,12 @@ type AdminBootstrap = {
   paymentMode: string;
 };
 type PassengerForm = {
+  destination:string;
   passenger: string;
   phone: string;
   cnic: string;
   idType: "CNIC" | "Passport";
-  gender: "Male" | "Female";
+  gender: "Male" | "Female" | "Unspecified";
   boardingPoint: string;
   fare: number;
   discount: number;
@@ -563,9 +571,17 @@ const tripOnDate = (trip: TripRecord, date: string, runs: TripRun[]): TripRecord
   const run = runs.find((item) => item.tripId === trip.id && item.date === date);
   return run ? { ...trip, ...run.snapshot, status: run.status, salesPaused:run.salesPaused, salesOverride:run.salesOverride, runNumber: run.runNumber, busId: run.busId, driver: run.driver, attendant: run.attendant, platform: run.platform, snapshot: run.snapshot, departedAt: run.departedAt, returnedAt: run.returnedAt, notes: run.notes } : { ...trip, status: "Scheduled", runNumber: 1 };
 };
-const tripBus = (trip: TripRecord, fleet: BusRecord[]) => trip.snapshot?.bus ?? fleet.find((bus) => bus.id === trip.busId)!;
+const tripBus = (trip: TripRecord, fleet: BusRecord[]) => {
+  const saved=trip.snapshot?.bus;
+  if(!saved)return fleet.find(bus=>bus.id===trip.busId)!;
+  const managed=fleet.find(bus=>bus.id===(saved.layoutId||saved.id));
+  return {...saved,...(managed?{model:managed.model,seatClasses:managed.seatClasses,commissionRate:managed.commissionRate}:{})};
+};
 const vehicleLabel = (bus?:BusRecord)=>bus?.isTemplate?"Not assigned":presentationText(bus?.registration??"Not assigned");
-const tripRoute = (trip: TripRecord, routes: RouteRecord[]) => trip.snapshot?.route ?? routes.find((route) => route.id === trip.routeId)!;
+const tripRoute = (trip: TripRecord, routes: RouteRecord[]) => {
+  const current=routes.find(route=>route.id===trip.routeId);
+  return trip.snapshot?.route ? {...trip.snapshot.route,...(current?{destinations:current.destinations,services:current.services}: {})} : current!;
+};
 const serviceDayFor = (date: string) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${date}T12:00:00`).getDay()] as Weekday;
 const tripsOnDate = (trips: TripRecord[], date: string, runs: TripRun[]) =>
   trips.filter((trip) => !trip.deleted && (trip.days.includes(serviceDayFor(date)) || runs.some((run) => run.tripId === trip.id && run.date === date)))
@@ -711,6 +727,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     return () => { active = false; window.clearInterval(timer); };
   }, [date]);
   const [checkoutTrip, setCheckoutTrip] = useState<{
+    destination?:string;
     route: RouteRecord;
     bus: BusRecord;
     schedule: TripRecord;
@@ -731,20 +748,20 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     new Set(
       publicRoutes
         .filter((route) => route.status === "Active" && route.from === from)
-        .map((route) => route.to),
+        .flatMap((route) => routeDestinations(route).map(d=>d.name)),
     ),
   );
-  const matchingRoute = publicRoutes.find(
-    (route) => route.from === from && route.to === to,
+  const matchingRoutes = publicRoutes.filter(
+    (route) => route.from === from && routeDestinations(route).some(d=>d.name===to),
   );
   const travelDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
     new Date(`${date}T00:00:00`).getDay()
   ] as Weekday;
-  const departures = matchingRoute
+  const departures = matchingRoutes.length
     ? publicTrips.map((trip) => tripOnDate(trip, date, tripRuns))
         .filter(
           (schedule) =>
-            schedule.routeId === matchingRoute.id &&
+            matchingRoutes.some(route=>route.id===schedule.routeId) &&
             schedule.active && !schedule.salesPaused &&
             !["Departed", "Returned", "Cancelled"].includes(
               tripRuns.find((run) => run.tripId === schedule.id)?.status ?? "Scheduled",
@@ -768,11 +785,13 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                 item.tripRunId ===
                 tripRunKey(schedule, schedule.runNumber, date),
             )?.seats ?? [];
+          const route=matchingRoutes.find(route=>route.id===schedule.routeId)!;
           return {
+            route,
             schedule,
             time: schedule.departure,
             bus,
-            fare: schedule.snapshot?.route.fare ?? matchingRoute.fare,
+            fare: Math.min(...Array.from({length:bus.seats},(_,i)=>seatFare(route,bus,to,i+1))),
             seats: Math.max(0, bus.seats - occupiedSeats.length),
             occupiedSeats,
           };
@@ -924,7 +943,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                 })}
               </span>
             </div>
-            {matchingRoute && departures.length ? (
+            {matchingRoutes.length && departures.length ? (
               departures.map((trip) => (
                 <article className="public-trip" key={trip.schedule.id}>
                   <div className="trip-time">
@@ -937,17 +956,17 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                     <span />
                   </div>
                   <div className="trip-time arrival">
-                    <strong>{matchingRoute.duration}</strong>
-                    <small>{to}</small>
+                    <strong>{trip.route.duration||to}</strong>
+                    <small>{trip.route.to}</small>
                   </div>
                   <div className="public-trip-service">
-                    <strong>{trip.bus.service}</strong>
+                    <strong>{trip.bus.model||trip.bus.service}</strong>
                     <small>
                       {trip.bus.isTemplate?"Vehicle assigned at terminal":trip.bus.registration} · {trip.seats} seats available
                     </small>
                   </div>
                   <div className="public-trip-price">
-                    <small>One-way fare</small>
+                    <small>Fare from</small>
                     <strong>{money(trip.fare)}</strong>
                   </div>
                   <button
@@ -955,7 +974,8 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                     disabled={trip.seats === 0}
                     onClick={() =>
                       setCheckoutTrip({
-                        route: matchingRoute,
+                        route: trip.route,
+                        destination:to,
                         bus: trip.bus,
                         schedule: trip.schedule,
                         time: trip.time,
@@ -1061,6 +1081,7 @@ function PublicCheckout({
   onPaid,
 }: {
   trip: {
+    destination?:string;
     route: RouteRecord;
     bus: BusRecord;
     schedule: TripRecord;
@@ -1082,7 +1103,8 @@ function PublicCheckout({
     }),
     [processing, setProcessing] = useState(false),
     [error, setError] = useState("");
-  const total = selectedSeats.length * trip.fare;
+  const [destination,setDestination]=useState(trip.destination||routeDestinations(trip.route).at(-1)!.name);
+  const total = selectedSeats.reduce((sum,seat)=>sum+seatFare(trip.route,trip.bus,destination,seat),0);
   const occupied = useMemo(
     () => new Set(trip.occupiedSeats),
     [trip.occupiedSeats],
@@ -1117,10 +1139,12 @@ function PublicCheckout({
         phone: passenger.phone.trim(),
         cnic: passenger.cnic.trim(),
         gender: passenger.gender,
+        destination,
         boardingPoint: trip.route.boarding,
         tripId: trip.schedule.id,
         date,
         seats: selectedSeats,
+        quotedFares:selectedSeats.map(seat=>seatFare(trip.route,trip.bus,destination,seat)),
       });
       onPaid(result.booking,result.bookings);
     } catch (requestError) {
@@ -1169,6 +1193,7 @@ function PublicCheckout({
               suffix={String(selectedSeats.length)}
             />
             <SeatMap
+              seatClasses={trip.bus.seatClasses}
               seats={trip.bus.seats}
               service={trip.bus.service}
               selectedSeats={selectedSeats}
@@ -1185,6 +1210,7 @@ function PublicCheckout({
                 text="Bring the same ID when boarding."
               />
               <div className="checkout-form">
+                {routeDestinations(trip.route).length>1&&<label><span>Destination</span><select value={destination} onChange={e=>setDestination(e.target.value)}>{routeDestinations(trip.route).map(stop=><option key={stop.name}>{stop.name}</option>)}</select></label>}
                 <label>
                   <span>Full name</span>
                   <input
@@ -1538,7 +1564,7 @@ function ManagementApp({
     setRuns(current => [...current.filter(run => run.id !== result.trip.id), result.trip]);
     const updatedBus = result.trip.snapshot!.bus;
     setFleet(current => [...current.filter(bus => bus.id !== updatedBus.id), updatedBus]);
-    setBookings(current => current.map(booking => booking.tripRunId === result.trip.id && ["Confirmed","Reserved"].includes(booking.bookingStatus) ? {...booking, bus: updatedBus.registration, service: updatedBus.service, time: result.trip.snapshot!.departure, driver: result.trip.driver, attendant: result.trip.attendant} : booking));
+    setBookings(current => current.map(booking => booking.tripRunId === result.trip.id && ["Confirmed","Reserved"].includes(booking.bookingStatus) ? {...booking, bus: updatedBus.isTemplate?"To be assigned":updatedBus.registration, service: updatedBus.service, time: result.trip.snapshot!.departure, driver: result.trip.driver, attendant: result.trip.attendant} : booking));
     showToast(draft.voucher ? "Voucher saved. Expenses updated." : "Bus and departure time saved.");
     return result.trip;
   };
@@ -1591,9 +1617,9 @@ function ManagementApp({
       throw error;
     }
   };
-  const confirmReservation = async (id: string, method: PaymentMethod, reference: string) => {
+  const confirmReservation = async (id: string, method: PaymentMethod, reference: string, details?:Partial<Booking>) => {
     try {
-      const result = await api.confirmReservation<Booking>(id, method, reference);
+      const result = await api.confirmReservation<Booking>(id, method, reference, details);
       dataVersion.current++;
       setBookings((current) => current.map((item) => item.id === id ? result.booking : item));
       setReceiptBatch([]);
@@ -1666,6 +1692,7 @@ function ManagementApp({
       showToast(`${routeLabel(result.route)} saved.`);
     } catch (error) {
       failure(error);
+      throw error;
     }
   };
   const deleteRoute = async (id: string) => {
@@ -1709,7 +1736,7 @@ function ManagementApp({
       setRuns((current) => [...current.filter((run) => run.id !== result.trip.id), result.trip]);
       const fresh = await api.adminBootstrap<AdminBootstrap>();
       setTrips(fresh.trips); setFleet(fresh.fleet); setRuns(fresh.runs);setBookings(fresh.bookings);
-      showToast(action === "return" ? "Return recorded." : action === "depart" ? "Bus departed. Tickets closed." : action==="pause"?"Seat sales paused.":action==="resume"?"Seat sales resumed.":action==="reopen"?"Counter sales reopened. Override recorded.":"Counter sales closed.");
+      showToast(action === "depart" ? "Bus departed. Tickets closed." : action==="pause"?"Seat sales paused.":action==="resume"?"Seat sales resumed.":action==="reopen"?"Counter sales reopened. Override recorded.":"Counter sales closed.");
     } catch (error) { failure(error); throw error; }
   };
   const startSale = (tripId: string, date: string) => {
@@ -1915,6 +1942,7 @@ function ManagementApp({
           )}
           {activeView === "reservations" && (
             <ReservationsView
+              trips={trips} runs={runs} routes={routes} fleet={fleet}
               bookings={bookings}
               onConfirm={confirmReservation}
               onCancel={cancelBooking}
@@ -1943,7 +1971,7 @@ function ManagementApp({
             />
           )}
           {activeView === "routes" && (
-            <RoutesView routes={routes} onSave={saveRoute} onDelete={deleteRoute} />
+            <RoutesView fleet={fleet} routes={routes} onSave={saveRoute} onDelete={deleteRoute} />
           )}
           {activeView === "finance" && (
             <FinanceProtected
@@ -2130,7 +2158,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   onSave: (booking:Booking)=>Promise<void>; showToast:(message:string)=>void; paymentMode:string;
   onCounterSave:(id:string,date:string,changes:CounterChanges)=>Promise<TripRun>;
   onPrint:(booking:Booking)=>void; onCancel:(id:string)=>Promise<void>;
-  onConfirm:(id:string,method:PaymentMethod,reference:string)=>Promise<void>;
+  onConfirm:(id:string,method:PaymentMethod,reference:string,details?:Partial<Booking>)=>Promise<void>;
   onRefund:(id:string,refund:RefundTransaction)=>Promise<void>; onUpdate:(booking:Booking)=>Promise<void>;
   onReport:(kind:ReportKind,id:string,run:number,date?:string)=>void;
 }) {
@@ -2157,30 +2185,34 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const occupied = new Set(active.flatMap(b=>b.seats));
   const reserved = new Set(active.filter(b=>b.bookingStatus==="Reserved").flatMap(b=>b.seats));
   const focused = records.find(b=>b.id===focusedId);
-  const unavailable = readOnly || date < today || trip.deleted || trip.salesPaused || bus.isTemplate || (!trip.salesOverride && ["Departed","Returned","Cancelled"].includes(trip.status)) || !trip.active || !trip.days.includes(serviceDayFor(date)) || ["Maintenance","Retired"].includes(bus.status);
-  const blank = ():PassengerForm=>({passenger:"",phone:"",cnic:"",idType:"CNIC",gender:"Male",boardingPoint:route.boarding,fare:route.fare,discount:0,paymentMethod:"Cash",paymentReference:""});
+  const unavailable = readOnly || date < today || trip.deleted || trip.salesPaused || (!trip.salesOverride && ["Departed","Returned","Cancelled"].includes(trip.status)) || !trip.active || !trip.days.includes(serviceDayFor(date)) || ["Maintenance","Retired"].includes(bus.status);
+  const blank = ():PassengerForm=>({destination:routeDestinations(route).at(-1)!.name,passenger:"",phone:"",cnic:"",idType:"CNIC",gender:"Unspecified",boardingPoint:route.boarding,fare:route.fare,discount:0,paymentMethod:"Cash",paymentReference:""});
   const [passenger,setPassenger] = useState<PassengerForm>(blank);
   const update = <K extends keyof PassengerForm>(key:K,value:PassengerForm[K])=>setPassenger(p=>({...p,[key]:value}));
-  const total = Math.max(0,route.fare*chosenSeats.length-passenger.discount);
+  const destinations=routeDestinations(route);
+  const destination=destinations.some(d=>d.name===passenger.destination)?passenger.destination:destinations.at(-1)!.name;
+  const fareTotal=chosenSeats.reduce((sum,seat)=>sum+seatFare(route,bus,destination,seat),0);
+  const total = Math.max(0,fareTotal-(mode==='Reservation'?0:passenger.discount));
   const choices = trips.filter(t=>!t.deleted&&t.active && t.routeId===routeId && t.days.includes(serviceDayFor(date)));
   const choose = (id:string,newDate=date)=>{
     setTripId(id);setDate(newDate);setDepartureDirty(false);setSelected([]);setFocusedId(null);setAction(null);setError("");
     const next = trips.find(t=>t.id===id)!;
-    setPassenger(p=>({...p,boardingPoint:tripRoute(next,routes).boarding,discount:0}));
+    setPassenger(p=>({...p,destination:routeDestinations(tripRoute(next,routes)).at(-1)!.name,boardingPoint:tripRoute(next,routes).boarding,discount:0}));
     const url = new URL(location.href);url.searchParams.set("trip",id);url.searchParams.set("date",newDate);history.replaceState(null,"",url);
   };
   const reset = ()=>{setPassenger(blank());setSelected([]);setError("");};
   const submit = async (event:FormEvent)=>{
     event.preventDefault();if(busy)return;
-    if(departureDirty)return setError("Save the vehicle number and departure time first.");
+    if(departureDirty)return setError("Save the bus type and departure time first.");
     if(!chosenSeats.length)return setError("Select an available seat.");
     if(chosenSeats.some(s=>occupied.has(s)))return setError("A selected seat was just booked. Choose another seat.");
+    if(mode==="Ticket" && passenger.gender==="Unspecified")return setError("Select the passenger gender.");
     if(mode==="Ticket" && passenger.paymentMethod!=="Cash" && !passenger.paymentReference.trim())return setError("Enter the verified payment reference.");
     setBusy(true);setError("");
     try {
       await onSave({id:"",ticketNo:"",source:"Counter",passenger:passenger.passenger.trim(),phone:passenger.phone.trim(),cnic:passenger.cnic.trim(),gender:passenger.gender,
-        route:routeLabel(route),destination:route.to,boardingPoint:passenger.boardingPoint,bus:bus.registration,service:bus.service,seats:chosenSeats,
-        fare:route.fare,discount:passenger.discount,total,paid:mode==="Ticket"?total:0,balance:mode==="Ticket"?0:total,paymentMethod:passenger.paymentMethod,paymentReference:passenger.paymentReference,
+        quotedFares:chosenSeats.map(seat=>seatFare(route,bus,destination,seat)),route:routeLabel(route),destination,boardingPoint:passenger.boardingPoint,bus:bus.registration,service:bus.service,seats:chosenSeats,
+        fare:chosenSeats.length?fareTotal/chosenSeats.length:0,discount:mode==="Reservation"?0:passenger.discount,total,paid:mode==="Ticket"?total:0,balance:mode==="Ticket"?0:total,paymentMethod:passenger.paymentMethod,paymentReference:passenger.paymentReference,
         paymentStatus:mode==="Ticket"?"Paid":"Unpaid",bookingStatus:mode==="Ticket"?"Confirmed":"Reserved",date,time:trip.departure,driver:trip.driver,attendant:trip.attendant,createdAt:new Date().toISOString(),tripId:trip.id,tripRunId:runId});
       reset();
     } catch(e){setError(e instanceof Error?e.message:"Could not save. Your entries have been kept.");} finally{setBusy(false);}
@@ -2193,8 +2225,8 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
         <label><span>Route</span><select value={routeId} onChange={e=>{const next=trips.find(t=>!t.deleted&&t.active&&t.routeId===e.target.value);setRouteId(e.target.value);if(next)choose(next.id);}}>{routes.filter(r=>trips.some(t=>!t.deleted&&t.active&&t.routeId===r.id)).map(r=><option value={r.id} key={r.id}>{routeLabel(r)}</option>)}</select></label>
         <label><span>Travel date</span><input type="date" value={date} onChange={e=>{if(e.target.value)choose(tripId,e.target.value);}}/></label>
       </div>
-      <div className="departure-times" aria-label="Departure times">{choices.map(t=>{const dated=tripOnDate(t,date,runs);return <button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{dated.departure}</strong><small>{dated.status}</small></button>;})}{!choices.length&&<p>No departures for this route and date.</p>}</div>
-      <CounterDeparture key={`${runId}-${bus.id}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setFocusedId(null);return saved;}}/>
+      <div className="departure-times" aria-label="Departure times">{choices.map(t=>{const dated=tripOnDate(t,date,runs);return <button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{dated.departure}</strong><small>{tripBus(dated,fleet).model} · {dated.status}</small></button>;})}{!choices.length&&<p>No departures for this route and date.</p>}</div>
+      <CounterDeparture key={`${runId}-${bus.id}-${bus.layoutId}-${bus.registration}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} route={route} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setFocusedId(null);return saved;}}/>
     </section>
     <DepartureControls key={`departure-${runId}`} trip={trip} bus={bus} date={date} reservedCount={reserved.size} onTransition={(action,notes,options)=>onTransition(trip.id,action,date,notes,options)}/>
     <div className="counter-main">
@@ -2215,60 +2247,75 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
           <fieldset disabled={busy} className="counter-fields"><legend className="sr-only">Passenger details</legend><div className="form-grid">
             <label className="span-2"><span>Passenger name *</span><input required maxLength={160} value={passenger.passenger} onChange={e=>update("passenger",e.target.value)} autoComplete="off"/></label>
             <label><span>Mobile *</span><input required maxLength={30} value={passenger.phone} onChange={e=>update("phone",e.target.value)}/></label>
-            <label><span>CNIC / Passport *</span><input required maxLength={50} value={passenger.cnic} onChange={e=>update("cnic",e.target.value)}/></label>
-            <label><span>Gender</span><select value={passenger.gender} onChange={e=>update("gender",e.target.value as "Male"|"Female")}><option>Male</option><option>Female</option></select></label>
+            <label><span>CNIC / Passport{mode==="Ticket"?" *":" (optional)"}</span><input required={mode==="Ticket"} maxLength={50} value={passenger.cnic} onChange={e=>update("cnic",e.target.value)}/></label>
+            <label><span>Gender{mode==="Ticket"?" *":" (optional)"}</span><select required={mode==="Ticket"} value={passenger.gender==="Unspecified"?"":passenger.gender} onChange={e=>update("gender",(e.target.value||"Unspecified") as PassengerForm["gender"])}><option value="">Select gender</option><option>Male</option><option>Female</option></select></label>
             <label><span>Boarding point</span><input value={passenger.boardingPoint} onChange={e=>update("boardingPoint",e.target.value)}/></label>
-            <MoneyField label="Fare per seat" value={route.fare} readOnly/><MoneyField label="Total discount" value={passenger.discount} onChange={v=>update("discount",Math.min(v,route.fare*chosenSeats.length))}/>
+            {destinations.length>1&&<label className="span-2"><span>Destination</span><select value={destination} onChange={e=>update("destination",e.target.value)}>{destinations.map(d=><option key={d.name}>{d.name}</option>)}</select></label>}
+            {mode==="Ticket"&&<><label className="span-2"><span>Seat fare</span><output className="fare-breakdown">{chosenSeats.length?chosenSeats.map(seat=>`${seatLabel(seat,bus.service)} · ${seatClass(bus,seat)} · ${money(seatFare(route,bus,destination,seat))}`).join(" / "):"Select seats to see fares"}</output></label><MoneyField label="Total discount" value={passenger.discount} onChange={v=>update("discount",Math.min(v,fareTotal))}/></>}
             {mode==="Ticket"&&<><label><span>Payment</span><select value={passenger.paymentMethod} onChange={e=>update("paymentMethod",e.target.value as PaymentMethod)}><option>Cash</option><option>Card</option><option>Bank transfer</option>{paymentMode!=="disabled"&&<option>1Bill</option>}</select></label>{passenger.paymentMethod!=="Cash"&&<label><span>Payment reference *</span><input required value={passenger.paymentReference} onChange={e=>update("paymentReference",e.target.value)}/></label>}</>}
           </div></fieldset>
           <div className="counter-total"><span>{chosenSeats.length ? `Seat ${seatList(chosenSeats,bus.service)}`:"Select seats"}<small>{mode==="Ticket"?"One ticket + token per seat":"Hold only · no ticket issued"}</small></span><strong>{money(total)}</strong></div>
-          {departureDirty&&<p className="pending-departure" role="status">Save bus / time before issuing or reserving seats.</p>}{unavailable&&<p className="form-error">{bus.isTemplate?"Enter the vehicle number and save bus / time to begin booking.":trip.salesPaused?"Seat sales are paused. Resume sales above to continue.":"This departure is closed for booking."}</p>}{error&&<p className="form-error" role="alert">{error}</p>}
+          {departureDirty&&<p className="pending-departure" role="status">Save bus / time before issuing or reserving seats.</p>}{unavailable&&<p className="form-error">{trip.salesPaused?"Seat sales are paused. Resume sales above to continue.":"This departure is closed for booking."}</p>}{error&&<p className="form-error" role="alert">{error}</p>}
           <div className="form-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>Clear</button><button type="submit" className="primary-button" disabled={busy||unavailable||departureDirty||!choices.some(t=>t.id===tripId)}>{busy?"Saving…":mode==="Ticket"?`Collect & issue ${chosenSeats.length>1?chosenSeats.length+" tickets":"ticket"}`:"Reserve seats"}</button></div>
         </form>}
       </section>
     <div className="seat-statistics" aria-label="Seat totals"><span className="booked"><small>Booked</small><strong>{occupied.size-reserved.size}</strong></span><span className="reserved"><small>Reserved</small><strong>{reserved.size}</strong></span><span><small>Available / {bus.seats} total</small><strong>{bus.seats-occupied.size}</strong></span></div>
-      </div><section className="surface counter-seats"><div className="panel-heading"><h2>{bus.service}</h2><span>{vehicleLabel(bus)} · {trip.departure}</span></div>
-        <SeatMap locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
+      {destinations.length>1&&<div className="destination-statistics" aria-label="Passengers by destination">{destinations.map(d=><span key={d.name}>{d.name}<strong>{active.filter(b=>b.destination===d.name).reduce((sum,b)=>sum+b.seats.length,0)}</strong></span>)}</div>}
+      </div><section className="surface counter-seats"><div className="panel-heading"><h2>{bus.model||bus.service}</h2><span>{vehicleLabel(bus)} · {trip.departure}</span></div>
+        <SeatMap seatClasses={bus.seatClasses} locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
         <div className="seat-refresh"><button className="secondary-button" type="button" disabled={refreshing} onClick={()=>void onRefresh()}><RefreshCw size={15} className={refreshing?"spin":""}/> Refresh seats</button><small>{refreshError||`Auto-updates every 5s${lastUpdated?" · Updated "+lastUpdated:""}`}</small></div>
         <p className="counter-hint">Click any booked or reserved seat to edit, collect payment, remove a reservation or refund. W = online; R = reserved.</p>
       </section>
     </div>
-    <VoucherEditor readOnly={readOnly} key={`voucher-${runId}`} trip={trip} bus={bus} net={net} records={records} onSave={changes=>onCounterSave(trip.id,date,changes)} onReport={kind=>onReport(kind,trip.id,trip.runNumber,date)}/>
+    <VoucherEditor readOnly={readOnly} key={`voucher-${runId}-${bus.id}-${bus.registration}-${trip.departure}`} trip={trip} bus={bus} route={route} net={net} records={records} onSave={changes=>onCounterSave(trip.id,date,changes)} onReport={kind=>onReport(kind,trip.id,trip.runNumber,date)}/>
     <section className="surface counter-history"><div className="panel-heading"><h2>Passenger & ticket history</h2><input aria-label="Find passenger or ticket" placeholder="Name, phone, ticket…" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="table-wrap"><table><thead><tr><th>Seat</th><th>Passenger</th><th>Status</th><th>Collected</th><th>Action</th></tr></thead><tbody>{records.filter(b=>`${b.passenger} ${b.phone} ${b.ticketNo}`.toLowerCase().includes(search.toLowerCase())).map(b=><tr key={b.id}><td>{seatList(b.seats,b.service)}</td><td><strong>{b.passenger}</strong><small>{b.ticketNo}</small></td><td><span className="status-pill">{b.bookingStatus}</span></td><td>{money(netCollected(b))}</td><td><button type="button" className="text-button" onClick={()=>{setFocusedId(b.id);document.querySelector(".counter-main")?.scrollIntoView({behavior:"smooth",block:"start"});}}>Manage</button></td></tr>)}</tbody></table></div></section>
-    {focused&&action==="payment"&&<CollectPaymentModal booking={focused} paymentMode={paymentMode} onClose={()=>setAction(null)} onConfirm={async(method,reference)=>{await onConfirm(focused.id,method,reference);setAction(null);}}/>}
+    {focused&&action==="payment"&&<CollectPaymentModal booking={focused} route={route} bus={bus} paymentMode={paymentMode} onClose={()=>setAction(null)} onConfirm={async(method,reference,details)=>{await onConfirm(focused.id,method,reference,details);setAction(null);}}/>}
     {focused&&action==="refund"&&<RefundModal booking={focused} onClose={()=>setAction(null)} onRefund={onRefund}/>}
     {focused&&action==="edit"&&<BookingEditModal booking={focused} onClose={()=>setAction(null)} onSave={async b=>{await onUpdate(b);setAction(null);}}/>}
   </div>;
 }
 
-function CounterDeparture({trip,bus,fleet,disabled,onDirty,onSave}:{trip:TripRecord;bus:BusRecord;fleet:BusRecord[];disabled:boolean;onDirty:(dirty:boolean)=>void;onSave:(changes:CounterChanges)=>Promise<TripRun>}) {
-  const layouts=[bus,...fleet.filter(b=>!b.deleted&&b.isTemplate&&b.status!=="Retired")].filter((b,index,list)=>list.findIndex(other=>other.service===b.service&&other.seats===b.seats)===index);
-  const [layoutId,setLayoutId]=useState(bus.id),[registration,setRegistration]=useState(bus.isTemplate?"":bus.registration),[departure,setDeparture]=useState(trip.departure),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  const changed=layoutId!==bus.id||registration!==bus.registration||departure!==trip.departure;
-  return <form className="counter-manual" onSubmit={async e=>{e.preventDefault();if(busy||disabled)return;setBusy(true);setError("");try{await onSave({registration,departure,layoutBusId:layoutId,expected:{registration:bus.registration,departure:trip.departure,revision:trip.snapshot?.voucher?.revision??"",busId:bus.id}});}catch(e){setError(e instanceof Error?e.message:"Could not save departure.");}finally{setBusy(false);}}}>
-    <label><span>Bus type</span><select value={layoutId} disabled={disabled||busy} onChange={e=>{const next=layouts.find(b=>b.id===e.target.value)!;setLayoutId(next.id);setRegistration(next.isTemplate?"":next.registration);onDirty(next.id!==bus.id||next.registration!==bus.registration||departure!==trip.departure);setError("");}}>{layouts.map(b=><option key={b.id} value={b.id}>{b.service} · {b.seats} seats</option>)}</select></label>
-    <label><span>Vehicle number</span><input aria-label="Vehicle number" value={registration} maxLength={30} disabled={disabled||busy} onChange={e=>{setRegistration(e.target.value);onDirty(layoutId!==bus.id||e.target.value!==bus.registration||departure!==trip.departure);}} required/></label><label><span>Actual departure</span><input aria-label="Actual departure" type="time" value={departure} disabled={disabled||busy} onChange={e=>{setDeparture(e.target.value);onDirty(layoutId!==bus.id||registration!==bus.registration||e.target.value!==trip.departure);}} required/></label><button className="secondary-button" disabled={disabled||busy||!changed}>{busy?"Saving…":"Save bus / time"}</button>{error&&<p className="form-error" role="alert">{error}</p>}
+function CounterDeparture({trip,bus,route,fleet,disabled,onDirty,onSave}:{trip:TripRecord;bus:BusRecord;route:RouteRecord;fleet:BusRecord[];disabled:boolean;onDirty:(dirty:boolean)=>void;onSave:(changes:CounterChanges)=>Promise<TripRun>}) {
+  const layouts=fleet.filter(b=>!b.deleted&&b.isTemplate&&b.status!=="Retired");
+  const currentLayout=bus.layoutId||bus.id;
+  if(!layouts.some(b=>b.id===currentLayout))layouts.unshift(bus);
+  const [layoutId,setLayoutId]=useState(currentLayout),[registration,setRegistration]=useState(bus.isTemplate?"":bus.registration),[departure,setDeparture]=useState(trip.departure),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [custom,setCustom]=useState(false);
+  const changed=layoutId!==currentLayout||registration!==(bus.isTemplate?"":bus.registration)||departure!==trip.departure;
+  const selectedLayout=layouts.find(b=>b.id===layoutId)||bus;
+  const times=departureTimes(route,selectedLayout);
+  const markDirty=(id:string,reg:string,time:string)=>onDirty(id!==currentLayout||reg!==(bus.isTemplate?"":bus.registration)||time!==trip.departure);
+  return <form className="counter-manual" onSubmit={async e=>{e.preventDefault();if(busy||disabled)return;setBusy(true);setError("");try{await onSave({registration,departure,layoutBusId:layoutId,expected:{registration:bus.isTemplate?"":bus.registration,departure:trip.departure,revision:trip.snapshot?.voucher?.revision??"",busId:bus.id}});}catch(e){setError(e instanceof Error?e.message:"Could not save departure.");}finally{setBusy(false);}}}>
+    <label><span>Bus type</span><select value={layoutId} disabled={disabled||busy} onChange={e=>{setLayoutId(e.target.value);markDirty(e.target.value,registration,departure);setError("");}}>{layouts.map(b=><option key={b.id} value={b.id}>{b.model} · {b.seats} seats</option>)}</select></label>
+    <label><span>Vehicle number (optional)</span><input aria-label="Vehicle number" value={registration} maxLength={30} disabled={disabled||busy} onChange={e=>{setRegistration(e.target.value);markDirty(layoutId,e.target.value,departure);}}/></label>
+    <label><span>Actual departure · 24h</span><select aria-label="Departure time choices" disabled={disabled||busy} value={!custom&&times.includes(departure)?departure:"custom"} onChange={e=>{setCustom(e.target.value==="custom");if(e.target.value!=="custom"){setDeparture(e.target.value);markDirty(layoutId,registration,e.target.value);}}}>{times.map(time=><option key={time}>{time}</option>)}<option value="custom">Other time…</option></select>{(custom||!times.includes(departure))&&<input aria-label="Actual departure" pattern="([01][0-9]|2[0-3]):[0-5][0-9]" placeholder="HH:MM" value={departure} disabled={disabled||busy} onChange={e=>{setDeparture(e.target.value);markDirty(layoutId,registration,e.target.value);}} required/>}</label>
+    <button className="secondary-button" disabled={disabled||busy||!changed}>{busy?"Saving…":"Save bus / time"}</button>
+    {changed&&<p className="pending-departure" role="status">Save bus / time here to apply the seating plan and continue booking. Vehicle number can be added with the voucher.</p>}{error&&<p className="form-error" role="alert">{error}</p>}
   </form>;
 }
 
-function VoucherEditor({trip,bus,net,records,onSave,onReport,readOnly}:{readOnly:boolean;trip:TripRecord;bus:BusRecord;net:number;records:Booking[];onSave:(changes:CounterChanges)=>Promise<TripRun>;onReport:(kind:ReportKind)=>void}) {
+function VoucherEditor({trip,bus,route,net,records,onSave,onReport,readOnly}:{readOnly:boolean;trip:TripRecord;bus:BusRecord;route:RouteRecord;net:number;records:Booking[];onSave:(changes:CounterChanges)=>Promise<TripRun>;onReport:(kind:ReportKind)=>void}) {
   const saved=trip.snapshot?.voucher;
-  const [draft,setDraft]=useState<Voucher>(()=>saved??{commissionRate:0,manualCommission:0,refreshments:0,terminalExpense:0,toll:0,misc:0,paidToDriver:0,driver:trip.driver,attendant:trip.attendant});
-  const [revision,setRevision]=useState(saved?.revision??"");
-  const [busy,setBusy]=useState(false),[error,setError]=useState("");
+  const policy=commissionPolicy(route,bus);
+  const [draft,setDraft]=useState<Voucher>(()=>saved??{commissionRate:policy.rate,manualCommission:0,refreshments:0,terminalExpense:0,toll:0,misc:0,paidToDriver:0,driver:trip.driver,attendant:trip.attendant});
+  const [registration,setRegistration]=useState(bus.isTemplate?'':bus.registration);
+  const [revision,setRevision]=useState(saved?.revision??'');
+  const [busy,setBusy]=useState(false),[error,setError]=useState('');
+  const effective={...draft,...(policy.fixed?{commissionRate:policy.rate,manualCommission:0}:{})};
   const fields=[['commissionRate','Commission %'],['manualCommission','Additional commission'],['refreshments','Refreshments'],['terminalExpense','Terminal expense'],['toll','Toll / parchi'],['misc','Miscellaneous'],['paidToDriver','Paid to driver']] as const;
-  const commission=Math.round(net*draft.commissionRate)/100+draft.manualCommission;
+  const commission=Math.round(net*effective.commissionRate)/100+effective.manualCommission;
   const deductions=commission+draft.refreshments+draft.terminalExpense+draft.toll+draft.misc;
-  const dirty=!saved||fields.some(([key])=>saved[key]!==draft[key])||saved.driver!==draft.driver||saved.attendant!==draft.attendant||Math.abs((saved.basis??0)-net)>.005;
-  const stale=revision!==(saved?.revision??"");
-  const cash=records.reduce((sum,b)=>sum+(b.paymentMethod==="Cash"?b.paid:0)-(b.refunds??[]).filter(r=>r.method==="Cash").reduce((a,r)=>a+r.amount,0),0);
-  return <details className="surface counter-voucher"><summary><span>Voucher summary</span><small>Commission, crew, deductions & printing</small><ChevronRight size={18}/></summary><div className="voucher-content"><div className="panel-heading"><div><h2>Voucher summary</h2><p>{saved?`Saved by ${presentationText(saved.savedBy??"")} · ${formatPrintTime(saved.savedAt)}`:"Enter deductions and crew, then save to print."}</p></div><button type="button" className="secondary-button" onClick={()=>onReport("cnic")}><FileText size={16}/> Passenger / CNIC sheet</button></div>
-    <form onSubmit={async e=>{e.preventDefault();if(busy)return;setBusy(true);setError("");try{const updated=await onSave({registration:bus.registration,departure:trip.departure,voucher:draft,expected:{registration:bus.registration,departure:trip.departure,revision}});setRevision(updated.snapshot!.voucher!.revision!);setDraft(updated.snapshot!.voucher!);}catch(e){setError(e instanceof Error?e.message:"Voucher could not be saved.");}finally{setBusy(false);}}}>
-      <fieldset disabled={busy||readOnly} className="counter-fields"><div className="voucher-fields">{fields.map(([key,label])=><label key={key}><span>{label}</span><input type="number" min="0" max={key==="commissionRate"?100:10000000} step="0.01" value={draft[key]} onChange={e=>setDraft({...draft,[key]:Number(e.target.value)})}/></label>)}<label><span>Driver</span><input value={draft.driver} maxLength={120} onChange={e=>setDraft({...draft,driver:e.target.value})}/></label><label><span>Hostess</span><input value={draft.attendant} maxLength={120} onChange={e=>setDraft({...draft,attendant:e.target.value})}/></label></div></fieldset>
-      <div className="voucher-calculation"><span>Net collection <strong>{money(net)}</strong></span><span>Commission <strong>{money(commission)}</strong></span><span>Total deductions <strong>{money(deductions)}</strong></span><span>Cash remaining <strong>{money(cash-deductions-draft.paidToDriver)}</strong></span></div>
-      <p className="counter-hint">Commission is calculated on net collection after refunds. Driver payment is a cash handover, separate from operating expenses.</p>
-      {stale&&<p className="form-error">A newer voucher is saved. <button type="button" onClick={()=>{setDraft(saved!);setRevision(saved!.revision!);setError("");}}>Load saved voucher</button></p>}{error&&<p className="form-error">{error}</p>}
-      <div className="form-actions"><button className="primary-button" disabled={busy||stale||readOnly}>{busy?"Saving…":"Save voucher"}</button><button type="button" className="secondary-button" disabled={dirty||stale||busy} onClick={()=>onReport("terminal-a4")}><Printer size={16}/> Voucher / PDF</button><button type="button" className="secondary-button" disabled={dirty||stale||busy} onClick={()=>onReport("terminal-thermal")}>80mm voucher</button></div>
+  const remaining=Math.round((net-deductions)*100)/100;
+  const dirty=!saved||registration!==(bus.isTemplate?'':bus.registration)||fields.some(([key])=>saved[key]!==effective[key])||saved.driver!==draft.driver||saved.attendant!==draft.attendant||Math.abs((saved.basis??0)-net)>.005;
+  const stale=revision!==(saved?.revision??'');
+  const cash=records.reduce((sum,b)=>sum+(b.paymentMethod==='Cash'?b.paid:0)-(b.refunds??[]).filter(r=>r.method==='Cash').reduce((a,r)=>a+r.amount,0),0);
+  return <details className="surface counter-voucher"><summary><span>Voucher summary</span><small>Vehicle, commission, crew & printing</small><ChevronRight size={18}/></summary><div className="voucher-content"><div className="panel-heading"><div><h2>Voucher summary</h2><p>{saved?`Saved · ${formatPrintTime(saved.savedAt)}`:'Enter vehicle, deductions and crew, then save to print.'}</p></div><button type="button" className="secondary-button" onClick={()=>onReport('cnic')}><FileText size={16}/> Passenger / CNIC sheet</button></div>
+    <form onSubmit={async e=>{e.preventDefault();if(busy)return;setBusy(true);setError('');try{const updated=await onSave({registration,departure:trip.departure,layoutBusId:bus.layoutId||bus.id,voucher:effective,expected:{registration:bus.isTemplate?'':bus.registration,departure:trip.departure,revision,busId:bus.id}});setRevision(updated.snapshot!.voucher!.revision!);setDraft(updated.snapshot!.voucher!);}catch(e){setError(e instanceof Error?e.message:'Voucher could not be saved.');}finally{setBusy(false);}}}>
+      <fieldset disabled={busy||readOnly} className="counter-fields"><div className="voucher-fields"><label><span>Vehicle number *</span><input aria-label="Voucher vehicle number" required maxLength={30} value={registration} onChange={e=>setRegistration(e.target.value)}/></label>{fields.filter(([key])=>!(policy.fixed&&key==='manualCommission')).map(([key,label])=><label key={key}><span>{label}{key==='commissionRate'&&policy.fixed?' · fixed in management':''}</span><input type="number" min="0" max={key==='commissionRate'?100:10000000} step="0.01" value={effective[key]} readOnly={policy.fixed&&key==='commissionRate'} onChange={e=>setDraft({...draft,[key]:Number(e.target.value)})}/></label>)}<label><span>Driver</span><input value={draft.driver} maxLength={120} onChange={e=>setDraft({...draft,driver:e.target.value})}/></label><label><span>Hostess</span><input value={draft.attendant} maxLength={120} onChange={e=>setDraft({...draft,attendant:e.target.value})}/></label></div></fieldset>
+      <div className="voucher-calculation"><span>Collected after refunds <strong>{money(net)}</strong></span><span>Commission <strong>{money(commission)}</strong></span><span>Total deductions <strong>{money(deductions)}</strong></span><span>Total remaining <strong>{money(remaining)}</strong></span></div>
+      <p className="counter-hint">Total remaining includes all payment methods after refunds, commission and expenses.{(cash!==net||draft.paidToDriver>0)&&` Cash in hand: ${money(cash-deductions-draft.paidToDriver)} (cash receipts minus cash refunds, deductions and driver handover).`}</p>
+      {stale&&<p className="form-error">A newer voucher is saved. <button type="button" onClick={()=>{setDraft(saved!);setRevision(saved!.revision!);setError('');}}>Load saved voucher</button></p>}{error&&<p className="form-error" role="alert">{error}</p>}
+      <div className="form-actions"><button className="primary-button" disabled={busy||stale||readOnly}>{busy?'Saving…':'Save voucher'}</button><button type="button" className="secondary-button" disabled={dirty||stale||busy} onClick={()=>onReport('terminal-a4')}><Printer size={16}/> Voucher / PDF</button><button type="button" className="secondary-button" disabled={dirty||stale||busy} onClick={()=>onReport('terminal-thermal')}>80mm voucher</button></div>
     </form>
   </div></details>;
 }
@@ -2359,9 +2406,9 @@ function BookingEditModal({
             />
           </label>
           <label>
-            <span>CNIC / Passport *</span>
+            <span>CNIC / Passport{booking.bookingStatus==="Reserved"?" (optional)":" *"}</span>
             <input
-              required
+              required={booking.bookingStatus!=="Reserved"}
               value={draft.cnic}
               onChange={(event) =>
                 setDraft({ ...draft, cnic: event.target.value })
@@ -2379,6 +2426,7 @@ function BookingEditModal({
                 })
               }
             >
+              {booking.bookingStatus==="Reserved"&&<option>Unspecified</option>}
               <option>Male</option>
               <option>Female</option>
             </select>
@@ -2387,6 +2435,7 @@ function BookingEditModal({
             <span>Destination</span>
             <input
               value={draft.destination}
+              readOnly
               onChange={(event) =>
                 setDraft({ ...draft, destination: event.target.value })
               }
@@ -2717,14 +2766,16 @@ function BookingsView({
 }
 
 function ReservationsView({
+  trips,runs,routes,fleet,
   bookings,
   onConfirm,
   onCancel,
   onNew,
   paymentMode,
 }: {
+  trips:TripRecord[];runs:TripRun[];routes:RouteRecord[];fleet:BusRecord[];
   bookings: Booking[];
-  onConfirm: (id: string, method: PaymentMethod, reference: string) => Promise<void>;
+  onConfirm: (id: string, method: PaymentMethod, reference: string, details?: Partial<Booking>) => Promise<void>;
   onCancel: (id: string) => void;
   onNew: () => void;
   paymentMode: string;
@@ -2837,10 +2888,12 @@ function ReservationsView({
       {collecting && (
         <CollectPaymentModal
           booking={collecting}
+          route={routes.find(r=>r.id===trips.find(t=>t.id===collecting.tripId)?.routeId)}
+          bus={runs.find(r=>r.id===collecting.tripRunId)?.snapshot?.bus||fleet.find(b=>b.id===trips.find(t=>t.id===collecting.tripId)?.busId)}
           paymentMode={paymentMode}
           onClose={() => setCollecting(null)}
-          onConfirm={async (method, reference) => {
-            await onConfirm(collecting.id, method, reference);
+          onConfirm={async (method, reference, details) => {
+            await onConfirm(collecting.id, method, reference, details);
             setCollecting(null);
           }}
         />
@@ -2850,16 +2903,22 @@ function ReservationsView({
 }
 
 function CollectPaymentModal({
+  route, bus,
   booking,
   paymentMode,
   onClose,
   onConfirm,
 }: {
+  route?:RouteRecord; bus?:BusRecord;
   booking: Booking;
   paymentMode: string;
   onClose: () => void;
-  onConfirm: (method: PaymentMethod, reference: string) => Promise<void>;
+  onConfirm: (method: PaymentMethod, reference: string, details?: Partial<Booking>) => Promise<void>;
 }) {
+  const [details,setDetails]=useState({...booking,discount:0});
+  const stops=route?routeDestinations(route):[{name:booking.destination,fare:booking.fare}];
+  const fare=route&&bus?seatFare(route,bus,details.destination,booking.seats[0]):booking.fare;
+  const total=Math.max(0,fare-details.discount);
   const [method, setMethod] = useState<PaymentMethod>("Cash");
   const [reference, setReference] = useState("");
   const [error, setError] = useState("");
@@ -2874,18 +2933,26 @@ function CollectPaymentModal({
         }
         if (busy) return;
         setBusy(true);
-        try { await onConfirm(method, reference.trim()); }
+        try { await onConfirm(method, reference.trim(), details); }
         catch (error) { setError(error instanceof Error ? error.message : "Payment could not be recorded."); }
         finally { setBusy(false); }
       }}>
         <header>
           <div>
-            <h2>Collect {money(booking.balance)}</h2>
+            <h2>Collect {money(total)}</h2>
             <p>{booking.ticketNo} · {booking.passenger} · Seats {seatList(booking.seats, booking.service)}</p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose}><X size={19} /></button>
         </header>
         <div className="modal-form-grid">
+          <label><span>Passenger name *</span><input required maxLength={160} value={details.passenger} onChange={e=>setDetails({...details,passenger:e.target.value})}/></label>
+          <label><span>Mobile *</span><input required maxLength={30} value={details.phone} onChange={e=>setDetails({...details,phone:e.target.value})}/></label>
+          <label><span>CNIC / Passport *</span><input required maxLength={50} value={details.cnic} onChange={e=>setDetails({...details,cnic:e.target.value})}/></label>
+          <label><span>Gender *</span><select required value={details.gender==='Unspecified'?'':details.gender} onChange={e=>setDetails({...details,gender:e.target.value as Booking['gender']})}><option value="">Select gender</option><option>Male</option><option>Female</option></select></label>
+          {stops.length>1&&<label><span>Destination</span><select value={details.destination} onChange={e=>setDetails({...details,destination:e.target.value})}>{stops.map(stop=><option key={stop.name}>{stop.name}</option>)}</select></label>}
+          <label><span>Boarding point</span><input value={details.boardingPoint} onChange={e=>setDetails({...details,boardingPoint:e.target.value})}/></label>
+          <MoneyField label="Fare" value={fare} readOnly/><MoneyField label="Discount" value={details.discount} onChange={value=>setDetails({...details,discount:Math.min(value,fare)})}/>
+
           <label className="span-2">
             <span>Payment method</span>
             <select value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>
@@ -2928,7 +2995,7 @@ function TripsView({
   const [filter, setFilter] = useState("This date");
   const visible = filter === "This date"
     ? tripsOnDate(trips, serviceDate, runs).map((trip) => ({ trip, date: serviceDate }))
-    : runs.filter((run) => (filter === "On route" ? run.status === "Departed" : ["Departed", "Returned"].includes(run.status)) && inDateRange(run.date,range))
+    : runs.filter((run) => (filter === "Departed" ? run.status === "Departed" : ["Departed", "Returned"].includes(run.status)) && inDateRange(run.date,range))
       .flatMap((run) => { const trip = trips.find((item) => item.id === run.tripId); return trip ? [{ trip: tripOnDate(trip, run.date, runs), date: run.date }] : []; });
   const modalTrip = openTrip && trips.find((trip) => trip.id === openTrip.id);
   return (
@@ -2938,7 +3005,7 @@ function TripsView({
       <section className="surface data-surface">
         <div className="data-toolbar">
           <div className="date-switcher"><label><CalendarDays size={17}/><span>Service date</span><input type="date" value={serviceDate} onChange={(event) => { setServiceDate(event.target.value); setFilter("This date"); }}/></label></div>
-          <div className="filter-tabs">{["This date", "On route", "History"].map((label) => <button type="button" key={label} className={filter === label ? "active" : ""} onClick={() => setFilter(label)}>{label}</button>)}</div>
+          <div className="filter-tabs">{["This date", "Departed", "History"].map((label) => <button type="button" key={label} className={filter === label ? "active" : ""} onClick={() => setFilter(label)}>{label}</button>)}</div>
         </div>
         {filter!=="This date"&&<DateRangeFilter value={range} onChange={setRange}/>}
         <div className="trip-cards" role="table" aria-label="Departures">
@@ -2955,7 +3022,7 @@ function TripsView({
               <div><strong>{bus.isTemplate?bus.model:bus.registration}</strong><small>{bus.service} · {bus.seats} seats</small></div>
               <div><strong>{trip.driver}</strong><small>{trip.attendant}</small></div>
               <div><strong>{paid} paid · {held} held</strong><small>{bus.seats - paid - held} available</small></div>
-              <div><b className={`plain-status ${trip.status.toLowerCase()}`}>{trip.status}</b>{trip.departedAt && <small>Left {formatPrintTime(trip.departedAt)}</small>}{trip.returnedAt && <small>Returned {formatPrintTime(trip.returnedAt)}</small>}</div>
+              <div><b className={`plain-status ${trip.status.toLowerCase()}`}>{trip.status}</b>{trip.departedAt && <small>Left {formatPrintTime(trip.departedAt)}</small>}</div>
               <div className="trip-actions">
                 <button className="text-action" type="button" onClick={() => setOpenTrip({id: trip.id, date})}>Passengers</button>
                 <button className="text-action" type="button" onClick={() => onSell(trip.id, date)}>Ticket page</button>
@@ -2964,7 +3031,7 @@ function TripsView({
               </div>
             </article>;
           })}
-          {!visible.length && <EmptyState title="No departures" text={filter === "On route" ? "All recorded departures have returned." : "Select another date or add a schedule."}/>}
+          {!visible.length && <EmptyState title="No departures" text={filter === "Departed" ? "No departed services in this date range." : "Select another date or add a schedule."}/>}
         </div>
       </section>
       {editing && <TripFormModal trip={editing === "new" ? undefined : editing} fleet={fleet} routes={routes} onClose={() => setEditing(null)} onSave={async (trip) => { await onSave(trip); setEditing(null); }}/>}
@@ -2974,19 +3041,19 @@ function TripsView({
   );
 }
 
-function DepartureControls({trip,bus,date,reservedCount,onTransition}:{trip:TripRecord;bus:BusRecord;date:string;reservedCount:number;onTransition:(action:DepartureAction,notes?:string,options?:DepartureOptions)=>Promise<void>}) {
+function DepartureControls({trip,date,reservedCount,onTransition}:{trip:TripRecord;bus:BusRecord;date:string;reservedCount:number;onTransition:(action:DepartureAction,notes?:string,options?:DepartureOptions)=>Promise<void>}) {
   const [action,setAction]=useState<DepartureAction|null>(null),[notes,setNotes]=useState(""),[resolve,setResolve]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  const labels:Record<DepartureAction,string>={pause:"Pause seat sales",resume:"Resume seat sales",depart:"Bus gone · close tickets",return:"Record bus return",reopen:"Reopen counter sales",'close-sales':"Close counter sales"};
+  const labels:Record<DepartureAction,string>={pause:"Pause seat sales",resume:"Resume seat sales",depart:"Bus gone · close tickets",reopen:"Reopen counter sales",'close-sales':"Close counter sales"};
   const open=(next:DepartureAction)=>{setAction(next);setNotes("");setResolve(false);setError("");};
   const closed=["Departed","Returned","Cancelled"].includes(trip.status);
   return <section className="departure-controls surface"><div><strong>{trip.salesPaused?"Seat sales paused":trip.salesOverride?"Counter sales override active":closed?"Tickets closed":"Seat sales open"}</strong><small>{trip.status} · {date}</small></div><div className="departure-buttons">
-    {!closed&&!trip.deleted&&<><button className="secondary-button" disabled={date<today} onClick={()=>open(trip.salesPaused?"resume":"pause")}>{trip.salesPaused?"Resume seats":"Pause seats"}</button><button className="primary-button" disabled={date!==today||bus.isTemplate} onClick={()=>open("depart")}>Bus gone · close tickets</button></>}
-    {trip.status==="Departed"&&<><button className="secondary-button" disabled={date!==today||trip.deleted} onClick={()=>open(trip.salesOverride?"close-sales":"reopen")}>{trip.salesOverride?"Close counter sales":"Reopen counter sales"}</button><button className="secondary-button" onClick={()=>open("return")}>Record return</button></>}
+    {!closed&&!trip.deleted&&<><button className="secondary-button" disabled={date<today} onClick={()=>open(trip.salesPaused?"resume":"pause")}>{trip.salesPaused?"Resume seats":"Pause seats"}</button><button className="primary-button" disabled={date!==today} onClick={()=>open("depart")}>Bus gone · close tickets</button></>}
+    {trip.status==="Departed"&&<><button className="secondary-button" disabled={date!==today||trip.deleted} onClick={()=>open(trip.salesOverride?"close-sales":"reopen")}>{trip.salesOverride?"Close counter sales":"Reopen counter sales"}</button></>}
   </div>{action&&<div className="form-modal-overlay" role="dialog" aria-modal="true" aria-label={labels[action]}><form className="form-modal compact-modal" onSubmit={async e=>{e.preventDefault();if(busy)return;setBusy(true);try{await onTransition(action,notes,{confirm:true,resolveReservations:resolve});setAction(null);}catch(e){setError(e instanceof Error?e.message:"Could not update departure.");}finally{setBusy(false);}}}>
     <header><h2>{labels[action]}</h2><button type="button" disabled={busy} aria-label="Close" onClick={()=>setAction(null)}><X size={18}/></button></header>
-    <div className="modal-form-grid"><p className="span-2">{action==="depart"?"This records the departure and closes its seat map to new sales.":action==="reopen"?"Allow counter staff to issue additional tickets after departure. The public website stays closed. This override and your reason are recorded.":action==="pause"?"Temporarily stop new bookings from the counter and website. Existing passenger records remain available.":action==="return"?"Record the bus return and close any sales override.":"Confirm this change for the selected departure."}</p>
+    <div className="modal-form-grid"><p className="span-2">{action==="depart"?"This records the departure and closes its seat map to new sales.":action==="reopen"?"Allow counter staff to issue additional tickets after departure. The public website stays closed. This override and your reason are recorded.":action==="pause"?"Temporarily stop new bookings from the counter and website. Existing passenger records remain available.":"Confirm this change for the selected departure."}</p>
     {action==="depart"&&reservedCount>0&&<label className="span-2 checkbox-label"><input type="checkbox" checked={resolve} onChange={e=>setResolve(e.target.checked)}/><span>Release {reservedCount} unpaid reserved seat(s) and close tickets</span></label>}
-    {(action==="reopen"||action==="return"||action==="depart")&&<label className="span-2"><span>{action==="reopen"?"Reason for reopening *":"Note (optional)"}</span><textarea required={action==="reopen"} minLength={action==="reopen"?5:undefined} maxLength={2000} value={notes} onChange={e=>setNotes(e.target.value)}/></label>}</div>
+    {(action==="reopen"||action==="depart")&&<label className="span-2"><span>{action==="reopen"?"Reason for reopening *":"Note (optional)"}</span><textarea required={action==="reopen"} minLength={action==="reopen"?5:undefined} maxLength={2000} value={notes} onChange={e=>setNotes(e.target.value)}/></label>}</div>
     {error&&<p className="form-error" role="alert">{error}</p>}<footer><button type="button" className="secondary-button" disabled={busy} onClick={()=>setAction(null)}>Cancel</button><button className="primary-button" disabled={busy}>{busy?"Saving…":"Confirm"}</button></footer>
   </form></div>}</section>;
 }
@@ -3180,8 +3247,10 @@ function BusFormModal({bus,onClose,onSave}:{bus?:BusRecord;onClose:()=>void;onSa
   return <div className="form-modal-overlay" role="dialog" aria-modal="true" aria-label={bus?"Edit bus layout":"Add bus layout"}><form className="form-modal compact-modal" onSubmit={async e=>{e.preventDefault();setBusy(true);try{await onSave({...draft,isTemplate:true});}catch(e){setError(e instanceof Error?e.message:"Could not save layout.");}finally{setBusy(false);}}}>
     <header><div><h2>{bus?"Edit bus layout":"Add bus layout"}</h2><p>Vehicle registration is entered on the ticket page.</p></div><button type="button" aria-label="Close" onClick={onClose}><X size={18}/></button></header><div className="modal-form-grid">
     <label className="span-2"><span>Bus name *</span><input required maxLength={120} value={draft.model} onChange={e=>setDraft({...draft,model:e.target.value})} placeholder="Standard Plus 49"/></label>
-    <label><span>Bus type</span><select value={draft.service} onChange={e=>setDraft({...draft,service:e.target.value,seats:e.target.value==="Sleeper Bus"?35:draft.seats})}>{["Standard Plus","Executive","Sleeper Bus","Business Class"].map(t=><option key={t}>{t}</option>)}</select></label>
-    <label><span>Seats</span><select value={draft.seats} onChange={e=>setDraft({...draft,seats:Number(e.target.value)})}>{[35,41,44,49].map(n=><option value={n} key={n}>{n} seats</option>)}</select></label></div>
+    <label><span>Bus type</span><select value={draft.service} onChange={e=>setDraft({...draft,service:e.target.value,seats:e.target.value==="Sleeper Bus"?35:draft.seats})}>{["Standard Plus","Executive","Sleeper Bus","Business Class","Premium Plus"].map(t=><option key={t}>{t}</option>)}</select></label>
+    <label><span>Seats</span><input type="number" min="1" max="100" step="1" required value={draft.seats} onChange={e=>setDraft({...draft,seats:Number(e.target.value)})}/></label>
+    <label className="span-2"><span>Fixed commission % (0 = enter on voucher)</span><input type="number" min="0" max="100" step="0.01" value={draft.commissionRate??0} onChange={e=>setDraft({...draft,commissionRate:Number(e.target.value)})}/></label>
+    <div className="span-2 management-repeater"><strong>Seat classes</strong>{(draft.seatClasses||[]).map((group,index)=><div className="class-row" key={index}><label><span>Class name</span><input required value={group.name} onChange={e=>setDraft({...draft,seatClasses:draft.seatClasses!.map((g,i)=>i===index?{...g,name:e.target.value}:g)})}/></label><label><span>Seats (comma separated)</span><input required defaultValue={group.seats.join(',')} onBlur={e=>setDraft({...draft,seatClasses:draft.seatClasses!.map((g,i)=>i===index?{...g,seats:e.target.value.split(',').map(v=>Number(v.trim()))}:g)})}/></label><button type="button" aria-label={`Remove ${group.name} class`} onClick={()=>setDraft({...draft,seatClasses:draft.seatClasses!.filter((_,i)=>i!==index)})}><X size={16}/></button></div>)}<button type="button" className="text-action" onClick={()=>setDraft({...draft,seatClasses:[...(draft.seatClasses||[]),{name:'',seats:[]}]})}>+ Add seat class</button><small>Seats without a class use the Standard fare. Example: Business seats 1–12; Executive seats 13–41.</small></div></div>
     {error&&<p className="form-error">{error}</p>}<footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy?"Saving…":"Save layout"}</button></footer>
   </form></div>;
 }
@@ -3428,6 +3497,14 @@ function ReportModal({
   routes: RouteRecord[];
   onClose: () => void;
 }) {
+  const documentRef=useRef<HTMLElement>(null);
+  const [thermalHeight,setThermalHeight]=useState(297);
+  useEffect(()=>{
+    if(report.kind!=='terminal-thermal')return;
+    let active=true;
+    void document.fonts.ready.then(()=>{if(active&&documentRef.current)setThermalHeight(Math.ceil(documentRef.current.scrollHeight/3.7795275591)+8);});
+    return()=>{active=false;};
+  },[report.kind,bookings,runs]);
   const [printedAt, setPrintedAt] = useState(() => new Date());
   const [printing, setPrinting] = useState(false);
   const baseTrip = trips.find((item) => item.id === report.tripId);
@@ -3448,14 +3525,15 @@ function ReportModal({
   const gross = records.reduce((sum, booking) => sum + booking.paid, 0);
   const refunds = records.reduce((sum, booking) => sum + refundedTotal(booking), 0);
   const methodTotal = (method: PaymentMethod) => records.reduce((sum, booking) => sum + (booking.paymentMethod === method ? booking.paid : 0) - (booking.refunds ?? []).filter((refund) => refund.method === method).reduce((amount, refund) => amount + refund.amount, 0), 0);
-  const ledgerRecords = records.filter(booking=>booking.paid>0);
+  const ledgerRecords = records.filter(booking=>booking.paid>0||booking.bookingStatus==="Confirmed").sort((a,b)=>a.seats[0]-b.seats[0]);
   const printedBookings = voucher ? ledgerRecords : report.kind === "cnic" ? runBookings : [...runBookings, ...records.filter((booking) => booking.bookingStatus === "Reserved")];
   const rows = printedBookings.flatMap((booking) =>
     booking.seats.map((seat) => ({ booking, seat })),
   );
   const total = gross - refunds;
   const savedVoucher = trip.snapshot?.voucher;
-  const voucherStale = voucher && (!savedVoucher || Math.abs((savedVoucher.basis ?? 0) - total) > .005);
+  const policy=commissionPolicy(route,bus);
+  const voucherStale = voucher && (!savedVoucher || bus.isTemplate || (policy.fixed && (savedVoucher.commissionRate!==policy.rate||savedVoucher.manualCommission!==0)) || Math.abs((savedVoucher.basis ?? 0) - total) > .005);
   const totals: (string | number)[][] = [["Tickets issued", ledgerRecords.length], ["Payments received",money(gross)]];
   if (refunds) totals.push(["Refunds",money(refunds)]);
   totals.push(["Net collected",money(total)]);
@@ -3464,7 +3542,9 @@ function ReportModal({
     for (const [label,value] of [["Terminal expense",savedVoucher.terminalExpense],["Refreshments",savedVoucher.refreshments],["Toll / parchi",savedVoucher.toll],["Miscellaneous",savedVoucher.misc]] as const) if(value) totals.push([label,money(value)]);
     totals.push(["Total deductions",money(savedVoucher.deductions??0)]);
     if(savedVoucher.paidToDriver) totals.push(["Paid to driver",money(savedVoucher.paidToDriver)]);
-    totals.push(["Balance cash",money(methodTotal("Cash")-(savedVoucher.deductions??0)-savedVoucher.paidToDriver)]);
+    totals.push(["Total remaining",money(total-(savedVoucher.deductions??0))]);
+    if(savedVoucher.paidToDriver) totals.push(["After driver handover",money(total-(savedVoucher.deductions??0)-savedVoucher.paidToDriver)]);
+    if(report.kind!=="terminal-thermal" && Math.abs(methodTotal('Cash')-total)>.005) totals.push(["Cash in hand only",money(methodTotal('Cash')-(savedVoucher.deductions??0)-savedVoucher.paidToDriver)]);
   }
 
   const title = {
@@ -3502,7 +3582,7 @@ function ReportModal({
           <div>
             <strong>{title}</strong>
             <small>
-              {thermal ? "80mm thermal printer" : "A4 landscape"} ·{" "}
+              {thermal ? "80mm thermal printer" : voucher?"A4 portrait":"A4 landscape"} ·{" "}
               {rows.length} passenger seats
             </small>
           </div>
@@ -3525,8 +3605,9 @@ function ReportModal({
           </div>
         </div>
         {voucherStale && <p className="form-error">Save the current voucher summary on the ticketing page before printing. Collections may have changed.</p>}
-        <article
-          className={`print-document operations-document document-${report.kind} ${thermal ? "report-thermal" : "report-a4 report-landscape"}`}
+        {thermal&&<style>{`@page madina-operations-thermal { size:80mm ${thermalHeight}mm; margin:5mm 3mm; }`}</style>}
+        <article ref={documentRef}
+          className={`print-document operations-document document-${report.kind} ${rows.length>50?"document-dense":""} ${thermal ? "report-thermal" : "report-a4 report-landscape"}`}
         >
           <header className="document-header">
             <div>
@@ -3558,12 +3639,12 @@ function ReportModal({
                 {vehicleLabel(bus)} · {bus.service}
               </strong>
             </span>
-            <span>
+            {!voucher&&<span>
               <small>Status / Platform</small>
               <strong>
                 {trip.status} · {trip.platform}
               </strong>
-            </span>
+            </span>}
             <span>
               <small>Driver</small>
               <strong>{trip.driver}</strong>
@@ -3575,45 +3656,23 @@ function ReportModal({
           </div>
           {thermal ? (
             <>
-              <h3 className="document-section-title">Passenger &amp; ticket register</h3>
-              {rows.map(({ booking, seat }) => (
-                <div
-                  className="thermal-passenger"
-                  key={`${booking.id}-${seat}`}
-                >
-                  <span>
-                    <b>Seat {seatLabel(seat, booking.service)}</b>
-                    <strong>{booking.passenger}</strong>
-                  </span>
-                  <span>
-                    <small>
-                      {booking.destination} · {booking.ticketNo}
-                    </small>
-                    <b>{money(netCollected(booking) / booking.seats.length)}</b>
-                  </span>
-                  <small>
-                    {booking.bookingStatus} ·{" "}
-                    {formatPrintTime(
-                      booking.seatPrintedAt ?? booking.createdAt,
-                    )}
-                  </small>
-                </div>
-              ))}
+              <h3 className="document-section-title">Seat · Passenger · Net PKR</h3>
+              {rows.map(({booking,seat})=><div className="thermal-passenger" key={`${booking.id}-${seat}`}><span><b>{seatLabel(seat,booking.service)}</b><strong>{booking.passenger}{routeDestinations(route).length>1&&<small> · {booking.destination}</small>}</strong><b>{Math.round(netCollected(booking)/booking.seats.length).toLocaleString('en-PK')}{refundedTotal(booking)>0?' R':''}</b></span></div>)}
               {!rows.length && (
                 <p className="document-empty">No passengers in this run.</p>
               )}
               <h3 className="document-section-title">Collection summary</h3>
-              <div className="thermal-total">{totals.map(([label, value]) => <span className={label === "Net collected" ? "document-grand-total" : undefined} key={label}>{label}<b>{value}</b></span>)}</div>
+              <div className="thermal-total">{totals.map(([label, value]) => <span className={label === "Total remaining" ? "document-grand-total" : undefined} key={label}>{label}<b>{value}</b></span>)}</div>
             </>
           ) : report.kind === "terminal-a4" ? (
             <>
               <h3 className="document-section-title">Ticket &amp; payment register</h3>
               <table className="document-table">
-                <colgroup>{[14, 16, 20, 10, 6, 10, 24].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
+                <colgroup>{[17, 8, 25, 14, 6, 10, 20].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
                 <thead>
                   <tr>
                     <th>Ticket</th>
-                    <th>Issued by / time</th>
+                    <th>Time</th>
                     <th>Passenger</th>
                     <th>Destination</th>
                     <th>Seats</th>
@@ -3624,14 +3683,9 @@ function ReportModal({
                 <tbody>
                   {ledgerRecords.map((booking) => (
                     <tr key={booking.id}>
-                      <td>{booking.ticketNo}<small>{booking.bookingStatus}</small></td>
+                      <td>{booking.ticketNo}{refundedTotal(booking)>0&&<small>Refund</small>}</td>
                       <td>
-                        {presentationText(booking.issuedBy ?? "Web / Counter")}
-                        <small>
-                          {formatPrintTime(
-                            booking.seatPrintedAt ?? booking.createdAt,
-                          )}
-                        </small>
+                        {ticketTime(new Date(booking.seatPrintedAt ?? booking.createdAt))}
                       </td>
                       <td>{booking.passenger}</td>
                       <td>{booking.destination}</td>
@@ -3644,7 +3698,7 @@ function ReportModal({
               </table>
               {!ledgerRecords.length && <p className="document-empty">No tickets recorded for this departure.</p>}
               <h3 className="document-section-title">Collection summary</h3>
-              <div className="voucher-summary-grid">{totals.map(([label,value]) => <span className={label === "Net collected" ? "document-grand-total" : undefined} key={label}><small>{label}</small><strong>{value}</strong></span>)}</div>
+              <div className="voucher-summary-grid">{totals.map(([label,value]) => <span className={label === "Total remaining" ? "document-grand-total" : undefined} key={label}><small>{label}</small><strong>{value}</strong></span>)}</div>
             </>
           ) : (
             <table className="document-table">
@@ -3711,7 +3765,7 @@ function ReportModal({
               </tbody>
             </table>
           )}
-          {!voucher && <p className="document-empty">Passengers: {rows.length} · {trip.departedAt ? `Departed ${formatPrintTime(trip.departedAt)}` : "Before departure"}{trip.returnedAt ? ` · Returned ${formatPrintTime(trip.returnedAt)}` : ""}</p>}
+          {!voucher && <p className="document-empty">Passengers: {rows.length} · {trip.departedAt ? `Departed ${formatPrintTime(trip.departedAt)}` : "Before departure"}</p>}
           {voucher && <div className="document-signatures"><span>Prepared by</span><span>Checked by</span></div>}
           <footer className="document-footer">
             <span>Printed {ticketDate(dateInPakistan(printedAt))} · {ticketTime(printedAt)}</span>
@@ -3723,140 +3777,35 @@ function ReportModal({
   );
 }
 
-function RouteFormModal({
-  route,
-  onClose,
-  onSave,
-}: {
-  route?: RouteRecord;
-  onClose: () => void;
-  onSave: (route: RouteRecord) => void;
-}) {
-  const [draft, setDraft] = useState<RouteRecord>(
-    route ?? {
-      id: "new-route",
-      from: "Peshawar",
-      to: "",
-      distance: "",
-      duration: "",
-      fare: 0,
-      boarding: "Madina Terminal, Peshawar",
-      status: "Active",
-    },
-  );
-  const update = <K extends keyof RouteRecord>(key: K, value: RouteRecord[K]) =>
-    setDraft((current) => ({ ...current, [key]: value }));
-  return (
-    <div
-      className="form-modal-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label={route ? "Edit route" : "Add route"}
-    >
-      <form
-        className="form-modal compact-modal"
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSave({ ...draft, id: route ? draft.id : `route-${Date.now()}` });
-        }}
-      >
-        <header>
-          <div>
-            <h2>{route ? "Edit route & fare" : "Add route"}</h2>
-            <p>City pair, boarding terminal and per-seat fare.</p>
-          </div>
-          <button type="button" aria-label="Close" onClick={onClose}>
-            <X size={19} />
-          </button>
-        </header>
-        <div className="modal-form-grid">
-          <label>
-            <span>Leaving from *</span>
-            <input
-              required
-              value={draft.from}
-              onChange={(event) => update("from", event.target.value)}
-            />
-          </label>
-          <label>
-            <span>Going to *</span>
-            <input
-              required
-              value={draft.to}
-              onChange={(event) => update("to", event.target.value)}
-              placeholder="Destination city"
-            />
-          </label>
-          <label>
-            <span>Distance</span>
-            <input
-              required
-              value={draft.distance}
-              onChange={(event) => update("distance", event.target.value)}
-              placeholder="520 km"
-            />
-          </label>
-          <label>
-            <span>Travel time</span>
-            <input
-              required
-              value={draft.duration}
-              onChange={(event) => update("duration", event.target.value)}
-              placeholder="5h 45m"
-            />
-          </label>
-          <label>
-            <span>Base fare (PKR)</span>
-            <input
-              required
-              type="number"
-              min="0"
-              step="50"
-              value={draft.fare}
-              onChange={(event) => update("fare", Number(event.target.value))}
-            />
-          </label>
-          <label>
-            <span>Status</span>
-            <select
-              value={draft.status}
-              onChange={(event) =>
-                update("status", event.target.value as RouteRecord["status"])
-              }
-            >
-              <option>Active</option>
-              <option>Paused</option>
-            </select>
-          </label>
-          <label className="span-2">
-            <span>Boarding terminal *</span>
-            <input
-              required
-              value={draft.boarding}
-              onChange={(event) => update("boarding", event.target.value)}
-            />
-          </label>
-        </div>
-        <footer>
-          <button className="secondary-button" type="button" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="primary-button" type="submit">
-            <Check size={16} /> Save route
-          </button>
-        </footer>
-      </form>
-    </div>
-  );
+function RouteFormModal({route,fleet,onClose,onSave}:{route?:RouteRecord;fleet:BusRecord[];onClose:()=>void;onSave:(route:RouteRecord)=>Promise<void>}) {
+  const [draft,setDraft]=useState<RouteRecord>(route??{id:'new-route',from:'Peshawar',to:'',distance:'',duration:'',fare:0,boarding:'Madina Terminal, Peshawar',status:'Active',destinations:[],services:[]});
+  const [busy,setBusy]=useState(false),[error,setError]=useState('');
+  const update=<K extends keyof RouteRecord>(key:K,value:RouteRecord[K])=>setDraft(current=>({...current,[key]:value}));
+  const updateService=(index:number,changes:Partial<RouteService>)=>update('services',(draft.services||[]).map((item,i)=>i===index?{...item,...changes}:item));
+  const stops=routeDestinations(draft);
+  const layouts=fleet.filter(b=>!b.deleted&&b.isTemplate);
+  return <div className="form-modal-overlay" role="dialog" aria-modal="true" aria-label={route?'Edit route':'Add route'}><form className="form-modal route-config-modal" onSubmit={async e=>{e.preventDefault();if(busy)return;setBusy(true);setError('');try{await onSave({...draft,id:route?draft.id:`route-${Date.now()}`});}catch(e){setError(e instanceof Error?e.message:'Could not save route.');}finally{setBusy(false);}}}>
+    <header><div><h2>{route?'Edit route & services':'Add route'}</h2><p>Destinations, fares, departure choices and commissions.</p></div><button type="button" aria-label="Close" onClick={onClose}><X size={19}/></button></header>
+    <div className="modal-form-grid">
+      <label><span>Leaving from *</span><input required maxLength={120} value={draft.from} onChange={e=>update('from',e.target.value)}/></label><label><span>Route name / endpoint *</span><input required maxLength={120} value={draft.to} onChange={e=>update('to',e.target.value)}/></label>
+      <label><span>Distance</span><input value={draft.distance} onChange={e=>update('distance',e.target.value)}/></label><label><span>Travel time</span><input value={draft.duration} onChange={e=>update('duration',e.target.value)}/></label>
+      <MoneyField label="Default fare" value={draft.fare} onChange={v=>update('fare',v)}/><label><span>Status</span><select value={draft.status} onChange={e=>update('status',e.target.value as RouteRecord['status'])}><option>Active</option><option>Paused</option></select></label>
+      <label className="span-2"><span>Boarding terminal *</span><input required value={draft.boarding} onChange={e=>update('boarding',e.target.value)}/></label>
+      <div className="span-2 management-repeater"><strong>Destinations</strong>{(draft.destinations||[]).map((stop,index)=><div className="class-row" key={index}><label><span>Destination</span><input required maxLength={120} value={stop.name} onChange={e=>update('destinations',draft.destinations!.map((s,i)=>i===index?{...s,name:e.target.value}:s))}/></label><MoneyField label="Default fare" value={stop.fare} onChange={fare=>update('destinations',draft.destinations!.map((s,i)=>i===index?{...s,fare}:s))}/><button type="button" aria-label="Remove destination" onClick={()=>update('destinations',draft.destinations!.filter((_,i)=>i!==index))}><X size={16}/></button></div>)}<button type="button" className="text-action" onClick={()=>update('destinations',[...(draft.destinations||[]),{name:'',fare:draft.fare}])}>+ Add destination</button><small>A single destination stays hidden on the ticket page.</small></div>
+      <div className="span-2 management-repeater"><strong>Bus services & fares</strong>{(draft.services||[]).map((service,index)=>{const bus=layouts.find(b=>b.id===service.busId);const classes=bus?.seatClasses?.length?[...new Set(bus.seatClasses.map(g=>g.name).concat(bus.seatClasses.flatMap(g=>g.seats).length<bus.seats?['Standard']:[]))]:['Standard'];return <fieldset className="route-service" key={index}><div className="class-row"><label><span>Bus name</span><select required value={service.busId} onChange={e=>updateService(index,{busId:e.target.value})}><option value="">Choose bus</option>{layouts.map(b=><option key={b.id} value={b.id}>{b.model}</option>)}</select></label><label><span>Fixed commission % (blank = bus setting)</span><input type="number" min="0" max="100" step="0.01" value={service.commissionRate??''} onChange={e=>updateService(index,{commissionRate:e.target.value===''?undefined:Number(e.target.value)})}/></label><button type="button" aria-label="Remove service" onClick={()=>update('services',draft.services!.filter((_,i)=>i!==index))}><X size={16}/></button></div><label><span>Departure choices · HH:MM, comma separated</span><input defaultValue={service.times.join(', ')} placeholder="09:00, 10:00, 12:00" onBlur={e=>updateService(index,{times:e.target.value.split(',').map(t=>t.trim()).filter(Boolean)})}/></label><div className="service-fares">{stops.map(stop=>classes.map(name=><label key={`${stop.name}-${name}`}><span>{stop.name} · {name}</span><input aria-label={`${stop.name} ${name} fare`} type="number" min="0" step="0.01" value={service.fares[stop.name]?.[name]??stop.fare} onChange={e=>updateService(index,{fares:{...service.fares,[stop.name]:{...service.fares[stop.name],[name]:Number(e.target.value)}}})}/></label>))}</div></fieldset>;})}<button type="button" className="text-action" onClick={()=>update('services',[...(draft.services||[]),{busId:layouts.find(b=>!draft.services?.some(s=>s.busId===b.id))?.id||'',times:[],fares:{}}])}>+ Add bus service</button></div>
+    </div>{error&&<p className="form-error" role="alert">{error}</p>}<footer><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={busy}>{busy?'Saving…':'Save route'}</button></footer>
+  </form></div>;
 }
 
 function RoutesView({
+  fleet,
   routes,
   onSave,
   onDelete,
 }: {
   routes: RouteRecord[];
-  onSave: (route: RouteRecord) => void;
+  fleet: BusRecord[];
+  onSave: (route: RouteRecord) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<RouteRecord | "new" | null>(null);
@@ -3963,10 +3912,11 @@ function RoutesView({
       </section>
       {editing && (
         <RouteFormModal
+          fleet={fleet}
           route={editing === "new" ? undefined : editing}
           onClose={() => setEditing(null)}
-          onSave={(route) => {
-            onSave(route);
+          onSave={async(route) => {
+            await onSave(route);
             setEditing(null);
           }}
         />
@@ -5286,6 +5236,7 @@ function BookingTable({
 }
 
 function SeatMap({
+  seatClasses,
   seats,
   service,
   selectedSeats,
@@ -5298,6 +5249,7 @@ function SeatMap({
   large = false,
   locked = false,
 }: {
+  seatClasses?:SeatClass[];
   seats: number;
   service: string;
   selectedSeats: number[];
@@ -5313,7 +5265,7 @@ function SeatMap({
   const sleeper = isSleeper(service);
   const renderSeat = (seat: number | null) => seat === null
     ? <span className="seat-space" aria-hidden="true" />
-    : <SeatButton locked={locked} seat={seat} label={seatLabel(seat, service)}
+    : <SeatButton className={seatClasses?.find(g=>g.seats.includes(seat))?.name} locked={locked} seat={seat} label={seatLabel(seat, service)}
         selected={selectedSeats.includes(seat)} occupied={occupied.has(seat)}
         female={Boolean(female?.has(seat))} online={Boolean(online?.has(seat))} reserved={reserved.has(seat)} interactive={Boolean(onOccupied)} onSelect={occupied.has(seat) && onOccupied ? onOccupied : onSelect} />;
   return (
@@ -5324,6 +5276,7 @@ function SeatMap({
         <span><i className="reserved" />Reserved</span><span><i className="booked" />Booked</span>
         {female&&<span><i className="female"/>Female</span>}{online&&<span><i className="online"/>Online · W</span>}
       </div>
+      {seatClasses?.length? <div className="seat-class-key">{seatClasses.map(group=><span key={group.name}>{group.name}: {group.seats[0]}–{group.seats.at(-1)}</span>)}</div>:null}
       <div className="bus-shell">
         <div className="bus-front">
           <span><BusFront size={17} /> FRONT</span>
@@ -5368,6 +5321,7 @@ function SeatMap({
   );
 }
 function SeatButton({
+  className,
   seat,
   locked,
   label,
@@ -5379,6 +5333,7 @@ function SeatButton({
   interactive,
   onSelect,
 }: {
+  className?:string;
   seat: number;
   locked:boolean;
   label: string;
@@ -5396,7 +5351,8 @@ function SeatButton({
       type="button"
       disabled={(occupied && !interactive)||(!occupied&&locked)}
       className={`seat seat--${status}${female?" seat--female":""}${online?" seat--online":""}`}
-      aria-label={`Seat ${label}, ${status}${female?", female":""}${online?", online":""}`}
+      title={className?`${className} · Seat ${label}`:undefined}
+      aria-label={`Seat ${label}, ${status}${className?", "+className:""}${female?", female":""}${online?", online":""}`}
       aria-pressed={selected && !occupied}
       onClick={() => onSelect(seat)}
     >

@@ -1,0 +1,10 @@
+export type SeatClass = {name:string;seats:number[]};
+export type RouteService = {busId:string;times:string[];fares:Record<string,Record<string,number>>;commissionRate?:number};
+type PricedRoute = {to:string;fare:number;destinations?:{name:string;fare:number}[];services?:RouteService[]};
+type PricedBus = {id:string;layoutId?:string;seatClasses?:SeatClass[];commissionRate?:number};
+export function routeDestinations(route:PricedRoute):{name:string;fare:number}[];
+export function serviceSettings(route:PricedRoute,bus:PricedBus):RouteService|undefined;
+export function seatClass(bus:PricedBus,seat:number):string;
+export function seatFare(route:PricedRoute,bus:PricedBus,destination:string,seat:number):number;
+export function departureTimes(route:PricedRoute,bus:PricedBus):string[];
+export function commissionPolicy(route:PricedRoute,bus:PricedBus):{rate:number;fixed:boolean};

@@ -6232,3 +6232,18 @@ td small {
   .route-revenue-row i { grid-column:1/-1; grid-row:2; }
 }
 .counter-workspace .seat--booked, .counter-workspace .seat--reserved { cursor:pointer; }
+/* Compact counter controls and editable route services. */
+.counter-manual .pending-departure,.counter-manual .form-error { grid-column:1/-1; margin:0; padding:8px 10px; }
+.counter-manual label>input+input,.counter-manual label>select+input { margin-top:4px; }
+.destination-statistics { display:flex;flex-wrap:wrap;gap:6px;margin-top:7px; }
+.destination-statistics>span { flex:1;display:flex;justify-content:space-between;gap:10px;background:#e8f1ff;border:1px solid #c5d9f5;border-radius:7px;padding:8px 10px;color:#174a80;font-size:12px; }
+.fare-breakdown { display:block;font-size:12px;background:#f3f7fc;border:1px solid #dbe5f1;padding:8px;border-radius:6px; }
+.route-config-modal { max-width:800px; }
+.management-repeater { display:grid;gap:10px;border-top:1px solid #dbe5f1;padding-top:14px; }
+.management-repeater>small { color:#5c6f87; }
+.class-row { display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end; }
+.class-row>button { padding:10px;border:0;background:#f0f4fa;border-radius:6px;color:#47617d; }
+.route-service { min-width:0;display:grid;gap:10px;border:1px solid #dbe5f1;border-radius:8px;padding:12px; }
+.service-fares { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px; }
+@media(max-width:600px) { .class-row { grid-template-columns:minmax(0,1fr) auto; }.class-row label:nth-child(2){grid-row:2;grid-column:1;}.class-row>button{grid-column:2;grid-row:1;}.service-fares{grid-template-columns:1fr;} }
+.seat-class-key{display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin:5px 0 10px;font-size:11px;color:#355b86;}
