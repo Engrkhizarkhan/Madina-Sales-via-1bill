@@ -5,7 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { presentationText } from "./presentation-text";
 import { inDateRange, type DateRange } from "./booking-filters";
 import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
-import { printDocument, printTicketSlip } from "./print-document";
+import { printDocument, printTicketBatch, type TicketPaper } from "./print-document";
 import {
   ArrowLeft,
   ArrowRight,
@@ -1476,6 +1476,7 @@ const defaultAdminView = (user: StaffUser): AdminView => {
   return roleViews[user.role][0];
 };
 const autoPrintPreference = "madina.autoPrintTickets";
+const ticketPaperPreference = "madina.ticketPaper";
 function autoPrintEnabled() {
   try {
     return localStorage.getItem(autoPrintPreference) === "true";
@@ -1483,6 +1484,15 @@ function autoPrintEnabled() {
     return false;
   }
 }
+function getTicketPaper(): TicketPaper {
+  try {
+    return localStorage.getItem(ticketPaperPreference) === "a4" ? "a4" : "thermal";
+  } catch {
+    return "thermal";
+  }
+}
+
+type AutomaticPrintRequest = { bookingId: string; entries: Booking[]; paper: TicketPaper };
 
 function ManagementApp({
   user,
@@ -1509,7 +1519,7 @@ function ManagementApp({
     [financeUnlocked, setFinanceUnlocked] = useState(false),
     [receipt, setReceipt] = useState<Booking | null>(null),
     [receiptBatch, setReceiptBatch] = useState<Booking[]>([]),
-    [autoPrintTicketId, setAutoPrintTicketId] = useState<string | null>(null),
+    [automaticPrints, setAutomaticPrints] = useState<AutomaticPrintRequest[]>([]),
     [report, setReport] = useState<{
       kind: ReportKind;
       tripId: string;
@@ -1562,10 +1572,10 @@ function ManagementApp({
     window.addEventListener("focus",refresh);
     return()=>{window.clearInterval(timer);window.removeEventListener("focus",refresh);};
   },[refreshData]);
-  const showToast = (message: string) => {
+  const showToast = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
-  };
+  }, []);
   const failure = (error: unknown) =>
     showToast(error instanceof Error ? error.message : "The request failed.");
   const saveCounter = async (tripId: string, date: string, draft: CounterChanges) => {
@@ -1579,10 +1589,18 @@ function ManagementApp({
     return result.trip;
   };
   const openIssuedReceipt = (booking: Booking, batch: Booking[] = []) => {
-    setAutoPrintTicketId(autoPrintEnabled() ? booking.id : null);
+    if (autoPrintEnabled() && booking.bookingStatus === "Confirmed") {
+      const request = { bookingId: booking.id, entries: batch.length ? batch : [booking], paper: getTicketPaper() };
+      setAutomaticPrints(current => [...current, request]);
+      return;
+    }
     setReceiptBatch(batch);
     setReceipt(booking);
   };
+  const finishAutomaticPrint = useCallback((bookingId: string, failed: boolean) => {
+    setAutomaticPrints(current => current.filter(request => request.bookingId !== bookingId));
+    if (failed) showToast("Ticket issued. Automatic printing stopped. Reprint from the booked seat.");
+  }, [showToast]);
   const saveBooking = async (booking: Booking) => {
     try {
       const result = await api.createBooking<Booking>(booking);
@@ -2037,14 +2055,16 @@ function ManagementApp({
           key={receipt.id}
           booking={receipt}
           batch={receiptBatch}
-          autoPrint={autoPrintTicketId === receipt.id}
+          paper={getTicketPaper()}
           onClose={() => {
             setReceipt(null);
             setReceiptBatch([]);
-            setAutoPrintTicketId(null);
           }}
         />
       )}
+      {automaticPrints.map(request => (
+        <AutomaticTicketPrint key={request.bookingId} request={request} onFinish={finishAutomaticPrint} />
+      ))}
       {report && (
         <ReportModal
           runs={runs}
@@ -4821,6 +4841,7 @@ function SettingsView({
   showToast: (message: string) => void;
 }) {
   const [autoPrint, setAutoPrint] = useState(autoPrintEnabled);
+  const [ticketPaper, setTicketPaper] = useState(getTicketPaper);
   const [sampleReceipt, setSampleReceipt] = useState(false),
     [currentPassword, setCurrentPassword] = useState(""),
     [newPassword, setNewPassword] = useState(""),
@@ -5074,9 +5095,26 @@ function SettingsView({
             />
             <span>
               <strong>Auto-print after collecting payment</strong>
-              <small>Send the receipt and boarding pass to print automatically on this browser.</small>
+              <small>Print the receipt and boarding pass in order without opening the ticket preview.</small>
             </span>
           </label>
+          <div className="settings-fields">
+            <label className="span-2">
+              <span>Ticket paper</span>
+              <select value={ticketPaper} onChange={event => {
+                const paper = event.target.value === "a4" ? "a4" : "thermal";
+                try {
+                  localStorage.setItem(ticketPaperPreference, paper);
+                  setTicketPaper(paper);
+                } catch {
+                  showToast("This browser could not save the paper setting.");
+                }
+              }}>
+                <option value="thermal">80 mm thermal portrait</option>
+                <option value="a4">A4 portrait (Epson)</option>
+              </select>
+            </label>
+          </div>
           <div className="view-actions">
             <button className="secondary-button" type="button" onClick={() => setSampleReceipt(true)}>
               <Printer size={15} /> Print sample
@@ -5120,6 +5158,7 @@ function SettingsView({
       {sampleReceipt && (
         <ReceiptModal
           booking={initialBookings[0]}
+          paper={ticketPaper}
           onClose={() => setSampleReceipt(false)}
         />
       )}
@@ -5489,10 +5528,28 @@ function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
-function ReceiptModal({ booking, batch = [], autoPrint = false, onClose }: {
+function AutomaticTicketPrint({ request, onFinish }: {
+  request: AutomaticPrintRequest;
+  onFinish: (bookingId: string, failed: boolean) => void;
+}) {
+  const source = useRef<HTMLDivElement>(null);
+  const [printedAt] = useState(() => new Date());
+  useEffect(() => {
+    if (!source.current) return;
+    const run = new AbortController();
+    void printTicketBatch(source.current, request.paper, run.signal).then(
+      () => { if (!run.signal.aborted) onFinish(request.bookingId, false); },
+      () => { if (!run.signal.aborted) onFinish(request.bookingId, true); },
+    );
+    return () => run.abort();
+  }, [request, onFinish]);
+  return <div ref={source} hidden><TicketPrintPairs entries={request.entries} printedAt={printedAt} /></div>;
+}
+
+function ReceiptModal({ booking, batch = [], paper = "thermal", onClose }: {
   booking: Booking;
   batch?: Booking[];
-  autoPrint?: boolean;
+  paper?: TicketPaper;
   onClose: () => void;
 }) {
   const [printing,setPrinting]=useState(false);
@@ -5507,41 +5564,22 @@ function ReceiptModal({ booking, batch = [], autoPrint = false, onClose }: {
     setPrinting(true);
     setPrintError("");
     try {
-      await document.fonts.load('12px "Noto Nastaliq Urdu"').catch(() => undefined);
-      await document.fonts.ready;
-      run.signal.throwIfAborted();
-      const area = printArea.current;
-      if (!area) return;
       flushSync(() => setPrintedAt(new Date()));
-      const slips = area.querySelectorAll<HTMLElement>(".passenger-receipt, .conductor-token");
-      for (const slip of slips) {
-        await printTicketSlip(slip, run.signal);
-      }
+      if (printArea.current) await printTicketBatch(printArea.current, paper, run.signal);
     } catch {
       if (!run.signal.aborted) setPrintError("The browser could not open a print job. Check your print settings and try again.");
     } finally {
       printRun.current = null;
       if (!run.signal.aborted) setPrinting(false);
     }
-  }, []);
+  }, [paper]);
   useEffect(() => () => printRun.current?.abort(), []);
-  useEffect(() => {
-    if (!autoPrint || booking.bookingStatus !== "Confirmed") return;
-    const timer = window.setTimeout(() => void print(), 0);
-    return () => window.clearTimeout(timer);
-  }, [autoPrint, booking.bookingStatus, print]);
   const entries=batch.length?batch:[booking];
   const hasBoardingPass = entries.some(entry => ticketPresentation(entry).canBoard);
   if(booking.bookingStatus==="Reserved")return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation saved"><div className="receipt-modal reservation-confirmation"><h2>Seats reserved</h2><p>{booking.passenger} · Seat {seatList(booking.seats,booking.service)}</p><p>{booking.route} · {ticketDate(booking.date)} · {booking.time}</p><p>Book and pay online to receive your ticket and boarding token.</p><button className="primary-button" onClick={onClose}>Done</button></div></div>;
   return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}><div className="receipt-modal ticket-print-modal">
-    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>80 mm thermal print · one job per slip</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
-    <div ref={printArea} className="receipt thermal-ticket">{entries.filter(b=>b.bookingStatus!=="Reserved").flatMap(b=>b.seats.map((seat,index)=>{
-      // Legacy multi-seat records remain intact; reprints apportion totals in cents.
-      const share=(amount:number)=>{const cents=Math.round(amount*100);return (Math.floor(cents/b.seats.length)+(index<cents%b.seats.length?1:0))/100;};
-      return <div className="ticket-print-pair" key={`${b.id}-${seat}`}>
-        <TicketSlips booking={{...b,seats:[seat],total:share(b.total),paid:share(b.paid),discount:share(b.discount),refunds:(b.refunds??[]).map(r=>({...r,amount:share(r.amount)}))}} printedAt={printedAt}/>
-      </div>;
-    }))}</div>
+    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>{paper === "a4" ? "A4 portrait" : "80 mm thermal portrait"} · one job per slip</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
+    <div ref={printArea} className="receipt thermal-ticket"><TicketPrintPairs entries={entries} printedAt={printedAt} /></div>
     {printError && <p className="form-error" role="alert">{printError}</p>}
     <div className="receipt-actions">
       <button type="button" className="secondary-button" onClick={onClose}>Close</button>
@@ -5551,6 +5589,17 @@ function ReceiptModal({ booking, batch = [], autoPrint = false, onClose }: {
     </div>
   </div></div>;
 }
+
+function TicketPrintPairs({ entries, printedAt }: { entries: Booking[]; printedAt: Date }) {
+  return entries.filter(b=>b.bookingStatus!=="Reserved").flatMap(b=>b.seats.map((seat,index)=>{
+    // Legacy multi-seat records remain intact; reprints apportion totals in cents.
+    const share=(amount:number)=>{const cents=Math.round(amount*100);return (Math.floor(cents/b.seats.length)+(index<cents%b.seats.length?1:0))/100;};
+    return <div className="ticket-print-pair" key={`${b.id}-${seat}`}>
+      <TicketSlips booking={{...b,seats:[seat],total:share(b.total),paid:share(b.paid),discount:share(b.discount),refunds:(b.refunds??[]).map(r=>({...r,amount:share(r.amount)}))}} printedAt={printedAt}/>
+    </div>;
+  }));
+}
+
 function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
   const ticket=ticketPresentation(booking),seats=seatList(booking.seats,booking.service);
   return <>

@@ -1,13 +1,38 @@
-export function printTicketSlip(slip: HTMLElement, signal: AbortSignal) {
-  const heightMm = Math.ceil(slip.getBoundingClientRect().height * 25.4 / 96) + 2;
-  const pageName = slip.classList.contains("conductor-token") ? "madina-boarding-pass" : "madina-passenger-ticket";
+export type TicketPaper = "thermal" | "a4";
+
+let ticketPrintQueue = Promise.resolve();
+
+export function printTicketBatch(source: HTMLElement, paper: TicketPaper, signal: AbortSignal) {
+  const slips = Array.from(source.querySelectorAll(".passenger-receipt, .conductor-token"), slip => slip.cloneNode(true) as Element);
+  const batch = ticketPrintQueue.then(async () => {
+    for (const slip of slips) {
+      signal.throwIfAborted();
+      await printTicketSlip(slip, paper, signal);
+    }
+  });
+  ticketPrintQueue = batch.catch(() => undefined);
+  return batch;
+}
+
+function printTicketSlip(slip: Element, paper: TicketPaper, signal: AbortSignal) {
   const printArea = document.createElement("div");
   printArea.className = "receipt thermal-ticket";
-  printArea.append(slip.cloneNode(true));
+  printArea.style.maxWidth = "none";
+  printArea.append(slip);
+  const singleSlip = `@media print {
+    body > .receipt.thermal-ticket > article { page: auto; break-after: auto; }
+  }`;
   return printDocument(printArea, {
     title: slip.getAttribute("aria-label") ?? "Madina Express ticket",
-    width: "80mm",
-    pageCss: `@page ${pageName} { size: 80mm ${heightMm}mm; margin: 0; }`,
+    width: paper === "a4" ? "210mm" : "80mm",
+    pageCss: paper === "a4"
+      ? `@page { size: A4 portrait; margin: 10mm; }
+         @media print { body > .receipt.thermal-ticket { margin-inline: auto !important; } }
+         ${singleSlip}`
+      : body => {
+        const heightMm = Math.max(81, Math.ceil(body.firstElementChild!.scrollHeight * 25.4 / 96) + 2);
+        return `@page { size: 80mm ${heightMm}mm; margin: 0; } ${singleSlip}`;
+      },
     signal,
   });
 }
@@ -56,21 +81,32 @@ export async function printDocument(content: HTMLElement, { title, width, pageCs
     printWindow.document.head.append(pageStyle);
 
     await new Promise<void>((resolve, reject) => {
-      const onAfterPrint = () => {
+      const clearStartTimer = () => window.clearTimeout(startTimer);
+      const cleanup = () => {
+        clearStartTimer();
+        printWindow.removeEventListener("beforeprint", clearStartTimer);
+        printWindow.removeEventListener("afterprint", onAfterPrint);
         signal.removeEventListener("abort", onAbort);
+      };
+      const onAfterPrint = () => {
+        cleanup();
         resolve();
       };
       const onAbort = () => {
-        printWindow.removeEventListener("afterprint", onAfterPrint);
+        cleanup();
         reject(signal.reason);
       };
+      const startTimer = window.setTimeout(() => {
+        cleanup();
+        reject(new Error("The browser did not start printing."));
+      }, 10000);
+      printWindow.addEventListener("beforeprint", clearStartTimer, { once: true });
       printWindow.addEventListener("afterprint", onAfterPrint, { once: true });
       signal.addEventListener("abort", onAbort, { once: true });
       try {
         printWindow.print();
       } catch (error) {
-        printWindow.removeEventListener("afterprint", onAfterPrint);
-        signal.removeEventListener("abort", onAbort);
+        cleanup();
         reject(error);
       }
     });
