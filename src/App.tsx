@@ -2197,6 +2197,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const [action,setAction] = useState<"payment"|"refund"|"edit"|null>(null);
   const [search,setSearch] = useState("");
   const [departureDirty,setDepartureDirty] = useState(false);
+  const passengerForm = useRef<HTMLFormElement>(null);
   const trip = tripOnDate(trips.find(t=>t.id===tripId) ?? defaultTrip,date,runs);
   const bus = tripBus(trip,fleet), route = tripRoute(trip,routes);
   const [selectionBasis,setSelectionBasis]=useState("");
@@ -2222,6 +2223,19 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const discount = mode === "Ticket" ? Math.min(passenger.discount, fareTotal) : 0;
   const total = Math.round((fareTotal - discount) * 100) / 100;
   const choices = trips.filter(t=>!t.deleted&&t.active && t.routeId===routeId && t.days.includes(serviceDayFor(date)));
+  const paymentBlocked = busy || unavailable || departureDirty || !choices.some(item => item.id === tripId);
+  const collectFromSeat = (seat: number) => {
+    if (paymentBlocked || document.querySelector('[role="dialog"][aria-modal="true"]')) return false;
+    if (focused?.bookingStatus === "Reserved" && focused.seats.includes(seat)) {
+      setAction("payment");
+      return true;
+    }
+    if (!focused && mode === "Ticket" && chosenSeats.includes(seat) && passengerForm.current) {
+      passengerForm.current.requestSubmit();
+      return true;
+    }
+    return false;
+  };
   const choose = (id:string,newDate=date)=>{
     setTripId(id);setDate(newDate);setDepartureDirty(false);setSelected([]);setFocusedId(null);setAction(null);setError("");
     setFareEdits({});
@@ -2231,8 +2245,8 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   };
   const reset = ()=>{setPassenger(blank());setSelected([]);setFareEdits({});setError("");};
   const submit = async (event:FormEvent)=>{
-    event.preventDefault();if(busy)return;
-    if(departureDirty)return setError("Save the bus type and departure time first.");
+    event.preventDefault();
+    if (paymentBlocked) return;
     if(!chosenSeats.length)return setError("Select an available seat.");
     if(chosenSeats.some(s=>occupied.has(s)))return setError("A selected seat was just booked. Choose another seat.");
     if(mode==="Ticket" && passenger.gender==="Unspecified")return setError("Select the passenger gender.");
@@ -2265,13 +2279,13 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
           <span className="status-pill">{focused.bookingStatus} · {focused.source} · {focused.gender}</span><h3>{focused.passenger}</h3><p>{focused.phone} · {focused.cnic}</p><p>{focused.ticketNo}</p>
           <div className="inspector-amount"><small>{focused.bookingStatus==="Reserved"?"To collect":"Net collected"}</small><strong>{money(focused.bookingStatus==="Reserved"?focused.balance:netCollected(focused))}</strong></div>
           <div className="counter-actions">
-            {!readOnly&&focused.bookingStatus==="Reserved"&&<><button type="button" className="primary-button" disabled={unavailable||departureDirty} onClick={()=>setAction("payment")}>Collect payment & issue ticket</button><button type="button" className="danger-button" disabled={busy} onClick={async()=>{setBusy(true);try{await onCancel(focused.id);setFocusedId(null);}catch(e){showToast(e instanceof Error?e.message:"Could not remove reservation.");}finally{setBusy(false);}}}>Remove reservation</button><small>Reserved seats have no ticket or boarding token.</small></>}
+            {!readOnly&&focused.bookingStatus==="Reserved"&&<><button type="button" className="primary-button" disabled={paymentBlocked} aria-keyshortcuts="Enter" onClick={()=>setAction("payment")}>Collect payment & issue ticket</button><button type="button" className="danger-button" disabled={busy} onClick={async()=>{setBusy(true);try{await onCancel(focused.id);setFocusedId(null);}catch(e){showToast(e instanceof Error?e.message:"Could not remove reservation.");}finally{setBusy(false);}}}>Remove reservation</button><small>Reserved seats have no ticket or boarding token.</small></>}
             {focused.bookingStatus!=="Reserved"&&<button type="button" className="primary-button" onClick={()=>onPrint(focused)}><Printer size={16}/> {focused.bookingStatus==="Confirmed"?"Print receipt & token":"Print refund record"}</button>}
             {!readOnly&&focused.bookingStatus==="Confirmed"&&focused.paid===0&&<button type="button" className="danger-button" disabled={busy} onClick={async()=>{setBusy(true);try{await onCancel(focused.id);setFocusedId(null);}catch(e){showToast(e instanceof Error?e.message:"Could not cancel ticket.");}finally{setBusy(false);}}}>Cancel ticket & release seat</button>}
             {!readOnly&&refundableBalance(focused)>0&&<button type="button" className="danger-button" onClick={()=>setAction("refund")}>Cancel / refund ticket</button>}
             {!readOnly&&["Reserved","Confirmed"].includes(focused.bookingStatus)&&<button type="button" className="secondary-button" onClick={()=>setAction("edit")}>Edit passenger</button>}
           </div>
-        </div> : readOnly?<p>Choose an occupied seat to view passenger details. Manage departure and seat availability using the controls above.</p>: <form onSubmit={submit}>
+        </div> : readOnly?<p>Choose an occupied seat to view passenger details. Manage departure and seat availability using the controls above.</p>: <form ref={passengerForm} onSubmit={submit}>
           <div className="mode-tabs"><button type="button" className={mode==="Ticket"?"active":""} onClick={()=>setMode("Ticket")}>Paid ticket</button><button type="button" className={mode==="Reservation"?"active":""} onClick={()=>setMode("Reservation")}>Reserve</button></div>
           <fieldset disabled={busy} className="counter-fields"><legend className="sr-only">Passenger details</legend><div className="form-grid">
             <label className="span-2"><span>Passenger name *</span><input required maxLength={160} value={passenger.passenger} onChange={e=>update("passenger",e.target.value)} autoComplete="off"/></label>
@@ -2297,13 +2311,13 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
           </div></fieldset>
           <div className="counter-total"><span>{chosenSeats.length ? `Seat ${seatList(chosenSeats,bus.service)}`:"Select seats"}<small>{mode==="Ticket"?"One ticket + token per seat":"Hold only · no ticket issued"}</small></span><strong>{money(total)}</strong></div>
           {departureDirty&&<p className="pending-departure" role="status">Save bus / time before issuing or reserving seats.</p>}{unavailable&&<p className="form-error">{trip.salesPaused?"Seat sales are paused. Resume sales above to continue.":"This departure is closed for booking."}</p>}{error&&<p className="form-error" role="alert">{error}</p>}
-          <div className="form-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>Clear</button><button type="submit" className="primary-button" disabled={busy||unavailable||departureDirty||!choices.some(t=>t.id===tripId)}>{busy?"Saving…":mode==="Ticket"?`Collect & issue ${chosenSeats.length>1?chosenSeats.length+" tickets":"ticket"}`:"Reserve seats"}</button></div>
+          <div className="form-actions"><button type="button" className="secondary-button" disabled={busy} onClick={reset}>Clear</button><button type="submit" className="primary-button" disabled={paymentBlocked} aria-keyshortcuts={mode === "Ticket" ? "Enter" : undefined}>{busy?"Saving…":mode==="Ticket"?`Collect & issue ${chosenSeats.length>1?chosenSeats.length+" tickets":"ticket"}`:"Reserve seats"}</button></div>
         </form>}
       </section>
     <div className="seat-statistics" aria-label="Seat totals"><span className="booked"><small>Booked</small><strong>{occupied.size-reserved.size}</strong></span><span className="reserved"><small>Reserved</small><strong>{reserved.size}</strong></span><span><small>Available / {bus.seats} total</small><strong>{bus.seats-occupied.size}</strong></span></div>
       {destinations.length>1&&<div className="destination-statistics" aria-label="Passengers by destination">{destinations.map(d=><span key={d.name}>{d.name}<strong>{active.filter(b=>b.destination===d.name).reduce((sum,b)=>sum+b.seats.length,0)}</strong></span>)}</div>}
       </div><section className="surface counter-seats"><div className="panel-heading"><h2>{bus.model||bus.service}</h2><span>{vehicleLabel(bus)} · {trip.departure}</span></div>
-        <SeatMap seatClasses={bus.seatClasses} locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);if(selectionBasis!==selectionContext)setFareEdits({});setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
+        <SeatMap seatClasses={bus.seatClasses} locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onEnter={collectFromSeat} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);if(selectionBasis!==selectionContext)setFareEdits({});setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
         <div className="seat-refresh"><button className="secondary-button" type="button" disabled={refreshing} onClick={()=>void onRefresh()}><RefreshCw size={15} className={refreshing?"spin":""}/> Refresh seats</button><small>{refreshError||`Auto-updates every 5s${lastUpdated?" · Updated "+lastUpdated:""}`}</small></div>
         <p className="counter-hint">Click any booked or reserved seat to edit, collect payment, remove a reservation or refund. W = online; R = reserved.</p>
       </section>
@@ -2973,9 +2987,16 @@ function CollectPaymentModal({
   const [reference, setReference] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
+  useEffect(() => {
+    const field = form.current?.querySelector<HTMLElement>("input:invalid, select:invalid, button[type=submit]");
+    field?.focus();
+  }, []);
   return (
     <div className="form-modal-overlay" role="dialog" aria-modal="true" aria-label="Collect reservation payment">
-      <form className="form-modal compact-modal" onSubmit={async (event) => {
+      <form ref={form} className="form-modal compact-modal" onKeyDown={event => {
+        if (event.key === "Enter" && event.repeat) event.preventDefault();
+      }} onSubmit={async (event) => {
         event.preventDefault();
         if (method !== "Cash" && !reference.trim()) {
           setError("Enter the verified payment reference.");
@@ -3034,7 +3055,7 @@ function CollectPaymentModal({
         {error && <p className="form-error">{error}</p>}
         <footer>
           <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
-          <button className="primary-button" type="submit" disabled={busy}><ReceiptText size={16} /> Issue paid ticket</button>
+          <button className="primary-button" type="submit" disabled={busy} aria-keyshortcuts="Enter"><ReceiptText size={16} /> Issue paid ticket</button>
         </footer>
       </form>
     </div>
@@ -5327,6 +5348,7 @@ function SeatMap({
   female,
   online,
   onOccupied,
+  onEnter,
   onSelect,
   large = false,
   locked = false,
@@ -5340,6 +5362,7 @@ function SeatMap({
   female?: Set<number>;
   online?: Set<number>;
   onOccupied?: (seat:number)=>void;
+  onEnter?: (seat: number) => boolean;
   onSelect: (seat: number) => void;
   large?: boolean;
   locked?: boolean;
@@ -5349,7 +5372,7 @@ function SeatMap({
     ? <span className="seat-space" aria-hidden="true" />
     : <SeatButton className={seatClasses?.find(g=>g.seats.includes(seat))?.name} locked={locked} seat={seat} label={seatLabel(seat, service)}
         selected={selectedSeats.includes(seat)} occupied={occupied.has(seat)}
-        female={Boolean(female?.has(seat))} online={Boolean(online?.has(seat))} reserved={reserved.has(seat)} interactive={Boolean(onOccupied)} onSelect={occupied.has(seat) && onOccupied ? onOccupied : onSelect} />;
+        female={Boolean(female?.has(seat))} online={Boolean(online?.has(seat))} reserved={reserved.has(seat)} interactive={Boolean(onOccupied)} onEnter={onEnter} onSelect={occupied.has(seat) && onOccupied ? onOccupied : onSelect} />;
   return (
     <div className={`seat-map-wrap reference-seat-map ${sleeper ? "sleeper-map" : "coach-map"} ${large ? "large" : ""}`}>
       <div className="legend">
@@ -5413,6 +5436,7 @@ function SeatButton({
   female,
   online,
   interactive,
+  onEnter,
   onSelect,
 }: {
   className?:string;
@@ -5425,6 +5449,7 @@ function SeatButton({
   female: boolean;
   online: boolean;
   interactive: boolean;
+  onEnter?: (seat: number) => boolean;
   onSelect: (seat: number) => void;
 }) {
   const status = reserved ? "reserved" : occupied ? "booked" : selected ? "selected" : "available";
@@ -5436,6 +5461,11 @@ function SeatButton({
       title={className?`${className} · Seat ${label}`:undefined}
       aria-label={`Seat ${label}, ${status}${className?", "+className:""}${female?", female":""}${online?", online":""}`}
       aria-pressed={selected && !occupied}
+      onKeyDown={event => {
+        if (!onEnter || event.key !== "Enter" || event.nativeEvent.isComposing ||
+          event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+        if (event.repeat || onEnter(seat)) event.preventDefault();
+      }}
       onClick={() => onSelect(seat)}
     >
       <b>{label}</b>{(online||reserved)&&<small className="seat-marker" aria-hidden="true">{online?"W":""}{reserved?"R":""}</small>}
