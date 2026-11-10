@@ -181,6 +181,7 @@ type TripRun = {
 };
 type Booking = {
   quotedFares?:number[];
+  fareOverrides?: (number | null)[];
   id: string;
   ticketNo: string;
   source: BookingSource;
@@ -272,7 +273,6 @@ type PassengerForm = {
   idType: "CNIC" | "Passport";
   gender: "Male" | "Female" | "Unspecified";
   boardingPoint: string;
-  fare: number;
   discount: number;
   paymentMethod: PaymentMethod;
   paymentReference: string;
@@ -1474,6 +1474,14 @@ const defaultAdminView = (user: StaffUser): AdminView => {
   if (["admin", "manager", "counter"].includes(user.role)) return "dashboard";
   return roleViews[user.role][0];
 };
+const autoPrintPreference = "madina.autoPrintTickets";
+function autoPrintEnabled() {
+  try {
+    return localStorage.getItem(autoPrintPreference) === "true";
+  } catch {
+    return false;
+  }
+}
 
 function ManagementApp({
   user,
@@ -1500,6 +1508,7 @@ function ManagementApp({
     [financeUnlocked, setFinanceUnlocked] = useState(false),
     [receipt, setReceipt] = useState<Booking | null>(null),
     [receiptBatch, setReceiptBatch] = useState<Booking[]>([]),
+    [autoPrintTicketId, setAutoPrintTicketId] = useState<string | null>(null),
     [report, setReport] = useState<{
       kind: ReportKind;
       tripId: string;
@@ -1568,12 +1577,17 @@ function ManagementApp({
     showToast(draft.voucher ? "Voucher saved. Expenses updated." : "Bus and departure time saved.");
     return result.trip;
   };
+  const openIssuedReceipt = (booking: Booking, batch: Booking[] = []) => {
+    setAutoPrintTicketId(autoPrintEnabled() ? booking.id : null);
+    setReceiptBatch(batch);
+    setReceipt(booking);
+  };
   const saveBooking = async (booking: Booking) => {
     try {
       const result = await api.createBooking<Booking>(booking);
       dataVersion.current++;
       setBookings((current) => [...result.bookings, ...current]);
-      if (result.booking.bookingStatus !== "Reserved") { setReceiptBatch(result.bookings); setReceipt(result.booking); }
+      if (result.booking.bookingStatus === "Confirmed") openIssuedReceipt(result.booking, result.bookings);
       showToast(
         result.booking.bookingStatus === "Reserved"
           ? `${result.bookings.length} seat reservation(s) saved. No ticket issued.`
@@ -1622,8 +1636,7 @@ function ManagementApp({
       const result = await api.confirmReservation<Booking>(id, method, reference, details);
       dataVersion.current++;
       setBookings((current) => current.map((item) => item.id === id ? result.booking : item));
-      setReceiptBatch([]);
-      setReceipt(result.booking);
+      openIssuedReceipt(result.booking);
       showToast("Payment collected. Confirmed ticket issued.");
     } catch (error) {
       failure(error);
@@ -2019,7 +2032,17 @@ function ManagementApp({
         </main>
       </div>
       {receipt && (
-        <ReceiptModal booking={receipt} batch={receiptBatch} onClose={() => {setReceipt(null);setReceiptBatch([]);}} />
+        <ReceiptModal
+          key={receipt.id}
+          booking={receipt}
+          batch={receiptBatch}
+          autoPrint={autoPrintTicketId === receipt.id}
+          onClose={() => {
+            setReceipt(null);
+            setReceiptBatch([]);
+            setAutoPrintTicketId(null);
+          }}
+        />
       )}
       {report && (
         <ReportModal
@@ -2186,21 +2209,27 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const reserved = new Set(active.filter(b=>b.bookingStatus==="Reserved").flatMap(b=>b.seats));
   const focused = records.find(b=>b.id===focusedId);
   const unavailable = readOnly || date < today || trip.deleted || trip.salesPaused || (!trip.salesOverride && ["Departed","Returned","Cancelled"].includes(trip.status)) || !trip.active || !trip.days.includes(serviceDayFor(date)) || ["Maintenance","Retired"].includes(bus.status);
-  const blank = ():PassengerForm=>({destination:routeDestinations(route).at(-1)!.name,passenger:"",phone:"",cnic:"",idType:"CNIC",gender:"Unspecified",boardingPoint:route.boarding,fare:route.fare,discount:0,paymentMethod:"Cash",paymentReference:""});
+  const blank = ():PassengerForm=>({destination:routeDestinations(route).at(-1)!.name,passenger:"",phone:"",cnic:"",idType:"CNIC",gender:"Unspecified",boardingPoint:route.boarding,discount:0,paymentMethod:"Cash",paymentReference:""});
   const [passenger,setPassenger] = useState<PassengerForm>(blank);
   const update = <K extends keyof PassengerForm>(key:K,value:PassengerForm[K])=>setPassenger(p=>({...p,[key]:value}));
   const destinations=routeDestinations(route);
   const destination=destinations.some(d=>d.name===passenger.destination)?passenger.destination:destinations.at(-1)!.name;
-  const fareTotal=chosenSeats.reduce((sum,seat)=>sum+seatFare(route,bus,destination,seat),0);
-  const total = Math.max(0,fareTotal-(mode==='Reservation'?0:passenger.discount));
+  const [fareEdits, setFareEdits] = useState<Partial<Record<number, number>>>({});
+  const baseFares = chosenSeats.map(seat => seatFare(route, bus, destination, seat));
+  const fareOverrides = mode === "Ticket" ? chosenSeats.map(seat => fareEdits[seat] ?? null) : [];
+  const fares = baseFares.map((fare, index) => fareOverrides[index] ?? fare);
+  const fareTotal = fares.reduce((sum, fare) => sum + fare, 0);
+  const discount = mode === "Ticket" ? Math.min(passenger.discount, fareTotal) : 0;
+  const total = Math.round((fareTotal - discount) * 100) / 100;
   const choices = trips.filter(t=>!t.deleted&&t.active && t.routeId===routeId && t.days.includes(serviceDayFor(date)));
   const choose = (id:string,newDate=date)=>{
     setTripId(id);setDate(newDate);setDepartureDirty(false);setSelected([]);setFocusedId(null);setAction(null);setError("");
+    setFareEdits({});
     const next = trips.find(t=>t.id===id)!;
     setPassenger(p=>({...p,destination:routeDestinations(tripRoute(next,routes)).at(-1)!.name,boardingPoint:tripRoute(next,routes).boarding,discount:0}));
     const url = new URL(location.href);url.searchParams.set("trip",id);url.searchParams.set("date",newDate);history.replaceState(null,"",url);
   };
-  const reset = ()=>{setPassenger(blank());setSelected([]);setError("");};
+  const reset = ()=>{setPassenger(blank());setSelected([]);setFareEdits({});setError("");};
   const submit = async (event:FormEvent)=>{
     event.preventDefault();if(busy)return;
     if(departureDirty)return setError("Save the bus type and departure time first.");
@@ -2211,8 +2240,8 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
     setBusy(true);setError("");
     try {
       await onSave({id:"",ticketNo:"",source:"Counter",passenger:passenger.passenger.trim(),phone:passenger.phone.trim(),cnic:passenger.cnic.trim(),gender:passenger.gender,
-        quotedFares:chosenSeats.map(seat=>seatFare(route,bus,destination,seat)),route:routeLabel(route),destination,boardingPoint:passenger.boardingPoint,bus:bus.registration,service:bus.service,seats:chosenSeats,
-        fare:chosenSeats.length?fareTotal/chosenSeats.length:0,discount:mode==="Reservation"?0:passenger.discount,total,paid:mode==="Ticket"?total:0,balance:mode==="Ticket"?0:total,paymentMethod:passenger.paymentMethod,paymentReference:passenger.paymentReference,
+        quotedFares:baseFares,fareOverrides:mode==="Ticket"?fareOverrides:undefined,route:routeLabel(route),destination,boardingPoint:passenger.boardingPoint,bus:bus.registration,service:bus.service,seats:chosenSeats,
+        fare:fareTotal/chosenSeats.length,discount,total,paid:mode==="Ticket"?total:0,balance:mode==="Ticket"?0:total,paymentMethod:passenger.paymentMethod,paymentReference:passenger.paymentReference,
         paymentStatus:mode==="Ticket"?"Paid":"Unpaid",bookingStatus:mode==="Ticket"?"Confirmed":"Reserved",date,time:trip.departure,driver:trip.driver,attendant:trip.attendant,createdAt:new Date().toISOString(),tripId:trip.id,tripRunId:runId});
       reset();
     } catch(e){setError(e instanceof Error?e.message:"Could not save. Your entries have been kept.");} finally{setBusy(false);}
@@ -2226,7 +2255,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
         <label><span>Travel date</span><input type="date" value={date} onChange={e=>{if(e.target.value)choose(tripId,e.target.value);}}/></label>
       </div>
       <div className="departure-times" aria-label="Departure times">{choices.map(t=>{const dated=tripOnDate(t,date,runs);return <button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{dated.departure}</strong><small>{tripBus(dated,fleet).model} · {dated.status}</small></button>;})}{!choices.length&&<p>No departures for this route and date.</p>}</div>
-      <CounterDeparture key={`${runId}-${bus.id}-${bus.layoutId}-${bus.registration}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} route={route} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setFocusedId(null);return saved;}}/>
+      <CounterDeparture key={`${runId}-${bus.id}-${bus.layoutId}-${bus.registration}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} route={route} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setFareEdits({});setFocusedId(null);return saved;}}/>
     </section>
     <DepartureControls key={`departure-${runId}`} trip={trip} bus={bus} date={date} reservedCount={reserved.size} onTransition={(action,notes,options)=>onTransition(trip.id,action,date,notes,options)}/>
     <div className="counter-main">
@@ -2250,8 +2279,20 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
             <label><span>CNIC / Passport{mode==="Ticket"?" *":" (optional)"}</span><input required={mode==="Ticket"} maxLength={50} value={passenger.cnic} onChange={e=>update("cnic",e.target.value)}/></label>
             <label><span>Gender{mode==="Ticket"?" *":" (optional)"}</span><select required={mode==="Ticket"} value={passenger.gender==="Unspecified"?"":passenger.gender} onChange={e=>update("gender",(e.target.value||"Unspecified") as PassengerForm["gender"])}><option value="">Select gender</option><option>Male</option><option>Female</option></select></label>
             <label><span>Boarding point</span><input value={passenger.boardingPoint} onChange={e=>update("boardingPoint",e.target.value)}/></label>
-            {destinations.length>1&&<label className="span-2"><span>Destination</span><select value={destination} onChange={e=>update("destination",e.target.value)}>{destinations.map(d=><option key={d.name}>{d.name}</option>)}</select></label>}
-            {mode==="Ticket"&&<><label className="span-2"><span>Seat fare</span><output className="fare-breakdown">{chosenSeats.length?chosenSeats.map(seat=>`${seatLabel(seat,bus.service)} · ${seatClass(bus,seat)} · ${money(seatFare(route,bus,destination,seat))}`).join(" / "):"Select seats to see fares"}</output></label><MoneyField label="Total discount" value={passenger.discount} onChange={v=>update("discount",Math.min(v,fareTotal))}/></>}
+            {destinations.length>1&&<label className="span-2"><span>Destination</span><select value={destination} onChange={e=>{update("destination",e.target.value);setFareEdits({});}}>{destinations.map(d=><option key={d.name}>{d.name}</option>)}</select></label>}
+            {mode === "Ticket" && <>
+              {chosenSeats.length === 0 && <p className="span-2 fare-breakdown">Select seats to edit their fares.</p>}
+              {chosenSeats.map((seat, index) => (
+                <MoneyField
+                  key={seat}
+                  label={`Fare · Seat ${seatLabel(seat, bus.service)} · ${seatClass(bus, seat)}`}
+                  value={fares[index]}
+                  onChange={value => setFareEdits(current => ({ ...current, [seat]: value }))}
+                  onClear={() => setFareEdits(current => ({ ...current, [seat]: undefined }))}
+                />
+              ))}
+              <MoneyField label="Total discount" value={discount} onChange={value => update("discount", Math.min(value, fareTotal))} />
+            </>}
             {mode==="Ticket"&&<><label><span>Payment</span><select value={passenger.paymentMethod} onChange={e=>update("paymentMethod",e.target.value as PaymentMethod)}><option>Cash</option><option>Card</option><option>Bank transfer</option>{paymentMode!=="disabled"&&<option>1Bill</option>}</select></label>{passenger.paymentMethod!=="Cash"&&<label><span>Payment reference *</span><input required value={passenger.paymentReference} onChange={e=>update("paymentReference",e.target.value)}/></label>}</>}
           </div></fieldset>
           <div className="counter-total"><span>{chosenSeats.length ? `Seat ${seatList(chosenSeats,bus.service)}`:"Select seats"}<small>{mode==="Ticket"?"One ticket + token per seat":"Hold only · no ticket issued"}</small></span><strong>{money(total)}</strong></div>
@@ -2262,7 +2303,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
     <div className="seat-statistics" aria-label="Seat totals"><span className="booked"><small>Booked</small><strong>{occupied.size-reserved.size}</strong></span><span className="reserved"><small>Reserved</small><strong>{reserved.size}</strong></span><span><small>Available / {bus.seats} total</small><strong>{bus.seats-occupied.size}</strong></span></div>
       {destinations.length>1&&<div className="destination-statistics" aria-label="Passengers by destination">{destinations.map(d=><span key={d.name}>{d.name}<strong>{active.filter(b=>b.destination===d.name).reduce((sum,b)=>sum+b.seats.length,0)}</strong></span>)}</div>}
       </div><section className="surface counter-seats"><div className="panel-heading"><h2>{bus.model||bus.service}</h2><span>{vehicleLabel(bus)} · {trip.departure}</span></div>
-        <SeatMap seatClasses={bus.seatClasses} locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
+        <SeatMap seatClasses={bus.seatClasses} locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);if(selectionBasis!==selectionContext)setFareEdits({});setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
         <div className="seat-refresh"><button className="secondary-button" type="button" disabled={refreshing} onClick={()=>void onRefresh()}><RefreshCw size={15} className={refreshing?"spin":""}/> Refresh seats</button><small>{refreshError||`Auto-updates every 5s${lastUpdated?" · Updated "+lastUpdated:""}`}</small></div>
         <p className="counter-hint">Click any booked or reserved seat to edit, collect payment, remove a reservation or refund. W = online; R = reserved.</p>
       </section>
@@ -2324,12 +2365,12 @@ function MoneyField({
   label,
   value,
   onChange,
-  readOnly = false,
+  onClear,
 }: {
   label: string;
   value: number;
   onChange?: (value: number) => void;
-  readOnly?: boolean;
+  onClear?: () => void;
 }) {
   return (
     <label>
@@ -2339,9 +2380,12 @@ function MoneyField({
         <input
           type="number"
           min="0"
+          step="0.01"
           value={value}
-          readOnly={readOnly}
-          onChange={(e) => onChange?.(Number(e.target.value))}
+          onChange={event => {
+            if (event.target.value === "" && onClear) onClear();
+            else onChange?.(Number(event.target.value));
+          }}
         />
       </div>
     </label>
@@ -2916,9 +2960,15 @@ function CollectPaymentModal({
   onConfirm: (method: PaymentMethod, reference: string, details?: Partial<Booking>) => Promise<void>;
 }) {
   const [details,setDetails]=useState({...booking,discount:0});
+  const [fareOverride, setFareOverride] = useState<number>();
   const stops=route?routeDestinations(route):[{name:booking.destination,fare:booking.fare}];
-  const fare=route&&bus?seatFare(route,bus,details.destination,booking.seats[0]):booking.fare;
-  const total=Math.max(0,fare-details.discount);
+  const baseFares = booking.seats.map(seat =>
+    route && bus ? seatFare(route, bus, details.destination, seat) : booking.fare,
+  );
+  const fares = baseFares.map(fare => fareOverride ?? fare);
+  const fareTotal = fares.reduce((sum, fare) => sum + fare, 0);
+  const discount = Math.min(details.discount, fareTotal);
+  const total = Math.round((fareTotal - discount) * 100) / 100;
   const [method, setMethod] = useState<PaymentMethod>("Cash");
   const [reference, setReference] = useState("");
   const [error, setError] = useState("");
@@ -2933,7 +2983,13 @@ function CollectPaymentModal({
         }
         if (busy) return;
         setBusy(true);
-        try { await onConfirm(method, reference.trim(), details); }
+        try {
+          await onConfirm(method, reference.trim(), {
+            ...details,
+            discount,
+            fareOverrides: fareOverride === undefined ? undefined : booking.seats.map(() => fareOverride),
+          });
+        }
         catch (error) { setError(error instanceof Error ? error.message : "Payment could not be recorded."); }
         finally { setBusy(false); }
       }}>
@@ -2949,9 +3005,15 @@ function CollectPaymentModal({
           <label><span>Mobile *</span><input required maxLength={30} value={details.phone} onChange={e=>setDetails({...details,phone:e.target.value})}/></label>
           <label><span>CNIC / Passport *</span><input required maxLength={50} value={details.cnic} onChange={e=>setDetails({...details,cnic:e.target.value})}/></label>
           <label><span>Gender *</span><select required value={details.gender==='Unspecified'?'':details.gender} onChange={e=>setDetails({...details,gender:e.target.value as Booking['gender']})}><option value="">Select gender</option><option>Male</option><option>Female</option></select></label>
-          {stops.length>1&&<label><span>Destination</span><select value={details.destination} onChange={e=>setDetails({...details,destination:e.target.value})}>{stops.map(stop=><option key={stop.name}>{stop.name}</option>)}</select></label>}
+          {stops.length>1&&<label><span>Destination</span><select value={details.destination} onChange={e=>{setDetails({...details,destination:e.target.value});setFareOverride(undefined);}}>{stops.map(stop=><option key={stop.name}>{stop.name}</option>)}</select></label>}
           <label><span>Boarding point</span><input value={details.boardingPoint} onChange={e=>setDetails({...details,boardingPoint:e.target.value})}/></label>
-          <MoneyField label="Fare" value={fare} readOnly/><MoneyField label="Discount" value={details.discount} onChange={value=>setDetails({...details,discount:Math.min(value,fare)})}/>
+          <MoneyField
+            label="Fare per seat"
+            value={Math.round(fareTotal * 100 / booking.seats.length) / 100}
+            onChange={setFareOverride}
+            onClear={() => setFareOverride(undefined)}
+          />
+          <MoneyField label="Discount" value={discount} onChange={value => setDetails({ ...details, discount: Math.min(value, fareTotal) })} />
 
           <label className="span-2">
             <span>Payment method</span>
@@ -3710,7 +3772,7 @@ function ReportModal({
                       <th>Seat #</th>
                       <th>Terminal</th>
                       <th>Destination</th>
-                      <th>Issued by</th>
+                      <th>Phone number</th>
                       <th>Status</th>
                       <th>Type</th>
                       <th>Seat print time</th>
@@ -3738,7 +3800,7 @@ function ReportModal({
                       <td>{seatLabel(seat, booking.service)}</td>
                       <td>{booking.terminal ?? "Peshawar"}</td>
                       <td>{booking.destination}</td>
-                      <td>{presentationText(booking.issuedBy ?? "Online")}</td>
+                      <td>{booking.phone}</td>
                       <td>{booking.bookingStatus}</td>
                       <td>{booking.source}</td>
                       <td>
@@ -4731,6 +4793,7 @@ function SettingsView({
   onUserCreated: (user: StaffUser) => void;
   showToast: (message: string) => void;
 }) {
+  const [autoPrint, setAutoPrint] = useState(autoPrintEnabled);
   const [sampleReceipt, setSampleReceipt] = useState(false),
     [currentPassword, setCurrentPassword] = useState(""),
     [newPassword, setNewPassword] = useState(""),
@@ -4968,6 +5031,25 @@ function SettingsView({
               <input value="Madina Terminal, Peshawar" readOnly />
             </label>
           </div>
+          <label className="auto-print-setting">
+            <input
+              type="checkbox"
+              checked={autoPrint}
+              onChange={event => {
+                const enabled = event.target.checked;
+                try {
+                  localStorage.setItem(autoPrintPreference, String(enabled));
+                  setAutoPrint(enabled);
+                } catch {
+                  showToast("This browser could not save the print setting.");
+                }
+              }}
+            />
+            <span>
+              <strong>Auto-print after collecting payment</strong>
+              <small>Open the print dialog automatically on this browser.</small>
+            </span>
+          </label>
           <button
             className="secondary-button"
             type="button"
@@ -5370,18 +5452,49 @@ function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
-function ReceiptModal({booking,batch=[],onClose}:{booking:Booking;batch?:Booking[];onClose:()=>void}) {
+function ReceiptModal({ booking, batch = [], autoPrint = false, onClose }: {
+  booking: Booking;
+  batch?: Booking[];
+  autoPrint?: boolean;
+  onClose: () => void;
+}) {
   const [printing,setPrinting]=useState(false);
   const [printedAt,setPrintedAt]=useState(()=>new Date());
+  const [paperHeight, setPaperHeight] = useState(220);
+  const printArea = useRef<HTMLDivElement>(null);
+  const print = useCallback(async () => {
+    setPrinting(true);
+    try {
+      await document.fonts.load('12px "Noto Nastaliq Urdu"').catch(() => undefined);
+      await document.fonts.ready;
+      if (!printArea.current) return;
+      const heights = Array.from(printArea.current.children, pair => pair.getBoundingClientRect().height);
+      const heightMm = Math.ceil(Math.max(...heights) * 25.4 / 96) + 2;
+      flushSync(() => {
+        setPrintedAt(new Date());
+        if (heightMm > 2) setPaperHeight(heightMm);
+      });
+      window.print();
+    } finally {
+      setPrinting(false);
+    }
+  }, []);
+  useEffect(() => {
+    if (!autoPrint || booking.bookingStatus !== "Confirmed") return;
+    const timer = window.setTimeout(() => void print(), 0);
+    return () => window.clearTimeout(timer);
+  }, [autoPrint, booking.bookingStatus, print]);
   const entries=batch.length?batch:[booking];
   if(booking.bookingStatus==="Reserved")return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation saved"><div className="receipt-modal reservation-confirmation"><h2>Seats reserved</h2><p>{booking.passenger} · Seat {seatList(booking.seats,booking.service)}</p><p>{booking.route} · {ticketDate(booking.date)} · {booking.time}</p><p>Book and pay online to receive your ticket and boarding token.</p><button className="primary-button" onClick={onClose}>Done</button></div></div>;
-  const print = async()=>{setPrinting(true);try{await document.fonts.load('12px "Noto Nastaliq Urdu"');await document.fonts.ready;flushSync(()=>setPrintedAt(new Date()));window.print();}finally{setPrinting(false);}};
   return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}><div className="receipt-modal ticket-print-modal">
-    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>Receipt and boarding token print on separate slips · 80mm</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
-    <div className="receipt thermal-ticket">{entries.filter(b=>b.bookingStatus!=="Reserved").flatMap(b=>b.seats.map((seat,index)=>{
+    <style>{`@page madina-passenger-ticket { size: 80mm ${paperHeight}mm; margin: 0; }`}</style>
+    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>80mm thermal slip with a cut line for the boarding token</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
+    <div ref={printArea} className="receipt thermal-ticket">{entries.filter(b=>b.bookingStatus!=="Reserved").flatMap(b=>b.seats.map((seat,index)=>{
       // Legacy multi-seat records remain intact; reprints apportion totals in cents.
       const share=(amount:number)=>{const cents=Math.round(amount*100);return (Math.floor(cents/b.seats.length)+(index<cents%b.seats.length?1:0))/100;};
-      return <TicketSlips key={`${b.id}-${seat}`} booking={{...b,seats:[seat],total:share(b.total),paid:share(b.paid),discount:share(b.discount),refunds:(b.refunds??[]).map(r=>({...r,amount:share(r.amount)}))}} printedAt={printedAt}/>;
+      return <div className="ticket-print-pair" key={`${b.id}-${seat}`}>
+        <TicketSlips booking={{...b,seats:[seat],total:share(b.total),paid:share(b.paid),discount:share(b.discount),refunds:(b.refunds??[]).map(r=>({...r,amount:share(r.amount)}))}} printedAt={printedAt}/>
+      </div>;
     }))}</div>
     <div className="receipt-actions"><button className="secondary-button" onClick={onClose}>Close</button><button className="primary-button" disabled={printing} onClick={()=>void print()}><Printer size={16}/>{printing?"Preparing…":ticketPresentation(booking).canBoard?"Print receipt & token":"Print refund record"}</button></div>
   </div></div>;
@@ -5402,7 +5515,7 @@ function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
       {!ticket.canBoard&&<div className="thermal-payment-status"><strong>{ticket.status}</strong></div>}
       <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>روانگی سے دس منٹ پہلے پہنچیں۔ ٹکٹ کی تاریخ، وقت اور سیٹ نمبر چیک کریں۔ اصل شناختی کارڈ ہمراہ رکھیں۔</p></div>
     </article>
-    {ticket.canBoard&&<><div className="ticket-cut-line"><span>SEPARATE BOARDING TOKEN</span></div><article className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
+    {ticket.canBoard&&<><div className="ticket-cut-line"><span>CUT HERE</span></div><article className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
       <header><strong>MADINA EXPRESS</strong><span>BOARDING TOKEN</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
       <table className="token-table"><tbody><tr><th>Bus No.</th><th>Destination</th></tr><tr><td>{booking.bus}</td><td>{booking.destination}</td></tr><tr><th>Travel date</th><th>Departure</th></tr><tr><td>{ticketDate(booking.date)}</td><td className="token-time">{booking.time}</td></tr><tr><th>Ticket No.</th><th>Paid</th></tr><tr><td>{booking.ticketNo}</td><td>{money(netCollected(booking))}</td></tr></tbody></table>
       <p className="ticket-urdu" lang="ur" dir="rtl">یہ ٹوکن کنڈکٹر کے حوالے کریں۔</p>

@@ -4721,6 +4721,7 @@ td small {
   font: inherit;
   font-size: 14px;
 }
+.modal-form-grid .money-input input { padding-left: 41px; }
 .weekday-field {
   margin: 0;
   padding: 0;
@@ -6004,8 +6005,10 @@ td small {
 .ticket-terms { border: 1px solid #555; padding: 4px 7px 7px; margin-top: 7px; }
 .ticket-terms p { margin: 0 0 4px; }
 .ticket-terms p:last-child { margin: 0; }
-.ticket-cut-line { margin: 6mm 0 2mm; border-top: 1px dashed #555; text-align: center; }
-.ticket-cut-line span { display: inline-block; padding: 3px 5px; background: #fff; font: 8px Arial, sans-serif; letter-spacing: .7px; }
+.ticket-print-pair { display: flow-root; }
+.ticket-cut-line { display: flex; align-items: center; gap: 5px; margin: 0 3mm; }
+.ticket-cut-line::before, .ticket-cut-line::after { content: ""; flex: 1; border-top: 1px dotted #000; }
+.ticket-cut-line span { font: 8px Arial, sans-serif; letter-spacing: .7px; }
 .conductor-token header { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; text-align: left; }
 .conductor-token header span { font-size: 10px; }
 .conductor-token header strong { font-size: 14px; }
@@ -6027,14 +6030,12 @@ td small {
 .token-payment strong { font-size: 14px; }
 .token-payment span { font-size: 9px; letter-spacing: .5px; }
 .conductor-token .ticket-urdu { text-align: center; margin: 3px 0 0; }
-@page madina-passenger-ticket { size: 80mm 280mm; margin: 0; }
-@page madina-conductor-token { size: 80mm 115mm; margin: 0; }
 @media print {
   body:has(.thermal-ticket) .receipt-modal { display: block !important; width: 80mm !important; max-width: none !important; max-height: none !important; overflow: visible !important; border-radius: 0 !important; background: #fff !important; box-shadow: none !important; }
-  .receipt-toolbar, .ticket-cut-line { display: none !important; }
+  .receipt-toolbar { display: none !important; }
   .receipt.thermal-ticket { width: 80mm !important; max-width: none !important; padding: 0 !important; page: auto; }
-  .passenger-receipt { page: madina-passenger-ticket; }
-  .conductor-token { page: madina-conductor-token; break-before: page; }
+  .ticket-print-pair { page: madina-passenger-ticket; break-inside: avoid; }
+  .ticket-print-pair + .ticket-print-pair { break-before: page; }
   .thermal-ticket table tr, .ticket-departure, .thermal-payment-status, .ticket-terms, .token-payment { break-inside: avoid; }
 }
 /* Isolate thermal tables from the wide staff-register table rules. */
@@ -6091,14 +6092,12 @@ td small {
 .reservation-confirmation { padding:28px; }.reservation-confirmation p { line-height:1.7; }
 @media(max-width:1050px) { .counter-main { grid-template-columns:1fr 1fr; }.counter-workspace .surface { padding:14px; }.counter-filters { grid-template-columns:1.5fr 1fr 1fr; } }
 @media(max-width:760px) { .counter-main,.counter-filters { grid-template-columns:1fr; }.counter-heading { align-items:start; flex-direction:column; }.voucher-fields { grid-template-columns:1fr 1fr; }.seat-statistics { gap:5px; }.seat-statistics>span { padding:12px 9px; flex-direction:column; gap:7px; }.counter-workspace .form-grid { grid-template-columns:1fr 1fr; }.counter-voucher .panel-heading { flex-wrap:wrap; } }
-/* Compact receipt and separate conductor slip. */
-@page madina-passenger-ticket { size:80mm 155mm; margin:0; }
-@page madina-conductor-token { size:80mm 75mm; margin:0; }
+/* Compact receipt and detachable conductor token. */
 .thermal-ticket .passenger-receipt,.thermal-ticket .conductor-token { padding:4mm 3mm; }
 .thermal-ticket .ticket-terms { border:0; padding:3px 0; margin-top:6px; }
 .thermal-ticket .ticket-terms p { font-size:10px; line-height:2.1; }
 .thermal-ticket .ticket-seat-number dd { font-size:26px; }.thermal-ticket .conductor-token header { padding-bottom:8px; }
-@media print { .thermal-ticket .passenger-receipt { break-before:page; }.thermal-ticket .passenger-receipt:first-child { break-before:auto; }.reservation-confirmation { display:none!important; } }
+@media print { .reservation-confirmation { display:none!important; } }
 .finance-cost-summary { display:flex; gap:30px; padding:22px; margin:18px 0; }.finance-cost-summary>div { flex:1; }.finance-cost-summary small { display:block; color:#64748b; margin-bottom:8px; }.finance-cost-summary strong { font-size:25px; }
 .counter-workspace .money-input input { padding-left:42px; }
 .counter-workspace .counter-selector { padding:16px 20px; }
@@ -6110,7 +6109,6 @@ td small {
 .counter-workspace .reference-seat-map .seat-pair { gap:3px; }
 .counter-workspace .reference-seat-map .seat { height:31px; }
 .counter-workspace .reference-seat-map .seat-layout { padding-top:10px; }
-@page madina-passenger-ticket { size:80mm 140mm; margin:0; }
 @media (max-width:920px) {
   .admin-sidebar:not(.open) { visibility:hidden; pointer-events:none; }
   .admin-sidebar.open { visibility:visible; width:236px; padding:18px 12px 14px; }
@@ -6238,6 +6236,9 @@ td small {
 .destination-statistics { display:flex;flex-wrap:wrap;gap:6px;margin-top:7px; }
 .destination-statistics>span { flex:1;display:flex;justify-content:space-between;gap:10px;background:#e8f1ff;border:1px solid #c5d9f5;border-radius:7px;padding:8px 10px;color:#174a80;font-size:12px; }
 .fare-breakdown { display:block;font-size:12px;background:#f3f7fc;border:1px solid #dbe5f1;padding:8px;border-radius:6px; }
+.auto-print-setting { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 16px; cursor: pointer; }
+.auto-print-setting input { width: 16px; height: 16px; margin: 2px 0 0; }
+.auto-print-setting small { display: block; margin-top: 3px; color: #64748b; }
 .route-config-modal { max-width:800px; }
 .management-repeater { display:grid;gap:10px;border-top:1px solid #dbe5f1;padding-top:14px; }
 .management-repeater>small { color:#5c6f87; }

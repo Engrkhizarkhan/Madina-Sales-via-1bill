@@ -66,6 +66,26 @@ try{
  const race=await Promise.all([req('POST','/bookings',{...paidDraft,seats:[40]}),req('POST','/bookings',{...paidDraft,seats:[40]})]);
  check(race.filter(r=>r.status===201).length===1&&race.filter(r=>r.status===409).length===1,'simultaneous users cannot double book a destination seat');
  check((await req('PUT',`/trips/${tripId}/counter`,payload)).status===409,'stale vouchers cannot overwrite another operator’s save');
+ const overrideSale = await req('POST', '/bookings', {
+   ...paidDraft, seats: [7, 14], destination: 'Multan', quotedFares: [5100, 4000], fareOverrides: [5150.50, null],
+ });
+ check(overrideSale.status === 201 && overrideSale.bookings.map(booking => booking.paid).join(',') === '5150.5,4000',
+   'counter fare edits apply only to the selected ticket');
+ const [overrideLedger] = await pool.execute('SELECT amount FROM financial_transactions WHERE booking_id=?', [overrideSale.booking.id]);
+ check(Number(overrideLedger[0]?.amount) === 5150.50, 'edited fare reaches the sales ledger');
+ check((await req('POST', '/bookings', { ...paidDraft, seats: [8], fareOverrides: [-50] })).status === 422,
+   'invalid manual fare is rejected');
+ const webOverride = await req('POST', '/public/bookings', {
+   ...paidDraft, seats: [8], destination: 'Multan', fareOverrides: [1],
+ });
+ check(webOverride.status === 201 && webOverride.booking.paid === 5100, 'public checkout uses the managed fare');
+ const held = await req('POST', '/bookings', { ...holdDraft, seats: [9], fareOverrides: [1] });
+ check(held.status === 201 && held.booking.total === 5100 && held.booking.paid === 0,
+   'a reservation retains the managed fare and stays unpaid');
+ const collected = await req('POST', `/bookings/${held.booking.id}/confirm`, {
+   cnic: paidDraft.cnic, gender: paidDraft.gender, paymentMethod: 'Cash', fareOverrides: [5150],
+ });
+ check(collected.status === 200 && collected.booking.paid === 5150, 'reservation payment uses the edited fare');
  console.log(`\n${count} route service checks passed.`);
 }finally{
  await pool.execute('DELETE FROM financial_transactions WHERE booking_id IN (SELECT id FROM bookings WHERE trip_id=?) OR created_by=?',[tripId,user.insertId]);

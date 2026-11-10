@@ -34,6 +34,22 @@ function passengerDetails(data,reserved) {
   if(!reserved) allowed(data.gender,['Male','Female'],'gender');
   return {passenger:String(data.passenger).trim(),phone:String(data.phone).trim(),cnic:String(data.cnic||'').trim(),gender:['Male','Female'].includes(data.gender)?data.gender:'Unspecified'};
 }
+
+function counterFares(fares, overrides) {
+  if (overrides === undefined) return fares;
+  if (!Array.isArray(overrides) || overrides.length !== fares.length) {
+    fail("Enter a fare for each selected seat.", 422, "validation_error");
+  }
+  return fares.map((fare, index) => {
+    const override = overrides[index];
+    if (override === null) return fare;
+    if (typeof override !== "number" || override < 0 || override > 9999999999.99) {
+      fail("Enter a valid fare for the selected seat.", 422, "validation_error");
+    }
+    return decimal(override, "Fare");
+  });
+}
+
 export async function createBooking(data, user, isPublic, req) {
   const reserved = !isPublic && data.bookingStatus === "Reserved";
   const details=passengerDetails(data,reserved);
@@ -76,9 +92,10 @@ export async function createBooking(data, user, isPublic, req) {
     const destination=String(data.destination || routeDestinations(route).at(-1).name);
     const managed=(await fetchBuses(false,connection)).find(b=>b.id===(run.snapshot.bus.layoutId||run.snapshot.bus.id));
     const pricingBus={...run.snapshot.bus,...(managed?{seatClasses:managed.seatClasses}:{})};
-    const fares=seats.map(seat=>seatFare(route,pricingBus,destination,seat));
-    if(fares.some(f=>!Number.isFinite(f))) fail('Choose a destination on this route.',422,'validation_error');
-    if(data.quotedFares && (!Array.isArray(data.quotedFares)||data.quotedFares.length!==fares.length||fares.some((fare,index)=>Number(data.quotedFares[index])!==fare))) fail('Fares changed while you were booking. Refresh and review the current fares.',409,'fare_changed');
+    const baseFares = seats.map(seat => seatFare(route, pricingBus, destination, seat));
+    if(baseFares.some(f=>!Number.isFinite(f))) fail('Choose a destination on this route.',422,'validation_error');
+    if(data.quotedFares && (!Array.isArray(data.quotedFares)||data.quotedFares.length!==baseFares.length||baseFares.some((fare,index)=>Number(data.quotedFares[index])!==fare))) fail('Fares changed while you were booking. Refresh and review the current fares.',409,'fare_changed');
+    const fares = isPublic || reserved ? baseFares : counterFares(baseFares, data.fareOverrides);
     const batchDiscount = reserved || isPublic ? 0 : Math.min(decimal(data.discount ?? 0, "discount"), fares.reduce((sum,fare)=>sum+fare,0));
     let discountCents = Math.round(batchDiscount * 100);
     let fareCents=fares.reduce((sum,fare)=>sum+Math.round(fare*100),0);
@@ -175,12 +192,18 @@ export async function confirmReservation(id, data, user, req) {
     const details=passengerDetails({...row,...data},false);
     const route=(await fetchRoutes(false,connection)).find(r=>r.id===trip.route_id)||run.snapshot.route;
     const destination=String(data.destination||row.destination||routeDestinations(route).at(-1).name);
-    const seats=await query(connection,'SELECT seat_number FROM booking_seats WHERE booking_id=?',[id]);
+    const seats = await query(connection, 'SELECT seat_number FROM booking_seats WHERE booking_id=? ORDER BY seat_number', [id]);
+    if (!seats.length) fail('This reservation has no seats.', 409, 'reservation_empty');
     const managed=(await fetchBuses(false,connection)).find(b=>b.id===(run.snapshot.bus.layoutId||run.snapshot.bus.id));
-    const fare=seatFare(route,{...run.snapshot.bus,...(managed?{seatClasses:managed.seatClasses}:{})},destination,Number(seats[0].seat_number));
-    if(!Number.isFinite(fare)) fail('Choose a destination on this route.',422,'validation_error');
-    const discount=Math.min(decimal(data.discount??0,'discount'),fare);
-    const total=Math.round((fare-discount)*100)/100;
+    const pricingBus = { ...run.snapshot.bus, ...(managed ? { seatClasses: managed.seatClasses } : {}) };
+    const baseFares = seats.map(seat => seatFare(route, pricingBus, destination, Number(seat.seat_number)));
+    if (baseFares.some(fare => !Number.isFinite(fare))) fail('Choose a destination on this route.', 422, 'validation_error');
+    const fares = counterFares(baseFares, data.fareOverrides);
+    const fareTotal = decimal(fares.reduce((sum, fare) => sum + fare, 0), 'Fare');
+    if (fareTotal > 9999999999.99) fail('The total fare is too large.', 422, 'validation_error');
+    const fare = decimal(fareTotal / seats.length, 'Fare');
+    const discount = Math.min(decimal(data.discount ?? 0, 'discount'), fareTotal);
+    const total = decimal(fareTotal - discount, 'Total');
     const ticketNo = await nextTicketNumber(connection);
     const before = await fetchBooking(id, connection);
     await query(connection,
