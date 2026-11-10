@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { limitAttempts, sessionHash, terminalDevice, verifyAdminCode } from "./access.js";
 import { config } from "./config.js";
 import { pool, transaction } from "./db.js";
-import { ApiError, fail, isoDateTime, pakistanDate, randomToken, requireFields, tokenHash } from "./helpers.js";
+import { ApiError, fail, isoDateTime, pakistanDate, randomToken, requireFields } from "./helpers.js";
 import {
   fetchBookings, fetchBuses, fetchCrew,
   fetchExpenses, fetchRoutes, fetchTripRuns, fetchTrips, fetchUsers, lookupJourney, normalizeBookingPhone, publicOccupancy,
@@ -74,7 +74,7 @@ async function loadSession(req) {
      FROM api_sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash IN (?, ?) AND s.expires_at > NOW()
        AND s.created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR) LIMIT 1`,
-    [tokenHash(token), sessionHash(token, "counter", device)],
+    [sessionHash(token, "admin", device), sessionHash(token, "counter", device)],
   );
   const session = records[0];
   if (!session || !session.active ||

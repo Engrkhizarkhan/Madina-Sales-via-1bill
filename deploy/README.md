@@ -92,6 +92,8 @@ The main administrator signs in with username `admin`, a password, and a six-dig
 ssh root@62.171.173.11 'cat /root/madina-express-admin-enrollment.txt /root/madina-express-initial-login.txt'
 ```
 
+Set `ADMIN_TOTP_PAUSED=true` in the backend environment and reload the service to pause the main administrator’s code prompt. Set it back to `false` and reload to require the code again. Password-only administrator sessions expire when the prompt is re-enabled.
+
 The main administrator can create staff accounts under **Settings**. Staff require a certificate from one of the three enrolled terminal PCs for login and subsequent authenticated requests.
 
 ### Enroll a terminal PC

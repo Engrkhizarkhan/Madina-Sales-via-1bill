@@ -25,13 +25,14 @@ export function terminalDevice(req) {
 }
 
 export function sessionHash(token, role, device) {
+  if (role === "admin" && config.adminTotpPaused) return tokenHash(`${token}:admin-totp-paused`);
   return tokenHash(config.restrictStaffDevices && role !== "admin" ? `${token}:${device}` : token);
 }
 
 let lastAdminStep = -1;
 
 export function verifyAdminCode(input) {
-  if (!config.adminOtpKey) return true;
+  if (config.adminTotpPaused || !config.adminOtpKey) return true;
   if (typeof input !== "string" || !/^\d{6}$/.test(input)) return false;
   const currentStep = Math.floor(Date.now() / 30_000);
   const counter = Buffer.alloc(8);

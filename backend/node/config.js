@@ -10,13 +10,15 @@ const required = (key, fallback) => {
 };
 
 const adminOtp = process.env.ADMIN_TOTP_HEX || "";
+const adminTotpPaused = process.env.ADMIN_TOTP_PAUSED === "true";
 const restrictStaffDevices = process.env.RESTRICT_STAFF_DEVICES === "true";
-if ((adminOtp || restrictStaffDevices) && !/^[0-9a-f]{40}$/i.test(adminOtp)) {
+if ((adminOtp || restrictStaffDevices || adminTotpPaused) && !/^[0-9a-f]{40}$/i.test(adminOtp)) {
   throw new Error("ADMIN_TOTP_HEX must be a 20-byte hexadecimal key when production staff access is enabled.");
 }
 
 export const config = {
   restrictStaffDevices,
+  adminTotpPaused,
   adminOtpKey: adminOtp ? Buffer.from(adminOtp, "hex") : null,
   env: process.env.APP_ENV || "production",
   port: Number(process.env.NODE_API_PORT || 3101),
