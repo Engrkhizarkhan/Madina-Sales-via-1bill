@@ -4428,6 +4428,11 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
   const refunds = settled.flatMap((booking) =>
     (booking.refunds ?? []).map((refund) => ({ booking, refund })),
   );
+  const methods: PaymentMethod[] = ["Cash", "1Bill", "Bank transfer"];
+  if (settled.some(booking => booking.paymentMethod === "Card") || refunds.some(({ refund }) => refund.method === "Card")) {
+    methods.push("Card");
+  }
+  const methodColors: Record<PaymentMethod, string> = { Cash: "#1454a0", "1Bill": "#e9b23f", "Bank transfer": "#23a18b", Card: "#a768ba" };
   const gross = settled.reduce((sum, booking) => sum + booking.paid, 0);
   const refundTotal = refunds.reduce(
     (sum, item) => sum + item.refund.amount,
@@ -4586,7 +4591,11 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
       {expenseError && <p className="form-error">{expenseError}</p>}
       <section className="surface finance-cost-summary"><div><small>Operating expenses (includes saved vouchers)</small><strong>{expensesLoaded?money(expenseTotal):"Loading…"}</strong></div><div><small>Net after refunds & expenses</small><strong>{expensesLoaded?money(total-expenseTotal):"Loading…"}</strong></div></section>
       <div className="finance-visuals">
-        <DonutChart title="Sales by payment method" formatValue={money} items={[{label:"Cash",color:"#1454a0"},{label:"1Bill",color:"#e9b23f"},{label:"Card",color:"#a768ba"},{label:"Bank transfer",color:"#23a18b"}].map(item=>({...item,value:settled.filter(b=>b.paymentMethod===item.label).reduce((sum,b)=>sum+b.paid,0)}))}/>
+        <DonutChart title="Sales by payment method" formatValue={money} items={methods.map(method => ({
+          label: method,
+          color: methodColors[method],
+          value: settled.filter(booking => booking.paymentMethod === method).reduce((sum, booking) => sum + booking.paid, 0),
+        }))} />
         <DonutChart title="Ticket status" items={[{label:"Booked",status:"Confirmed",color:"#1454a0"},{label:"Reserved",status:"Reserved",color:"#8cb9ed"},{label:"Refunded",status:"Refunded",color:"#dd8264"},{label:"Cancelled",status:"Cancelled",color:"#9aa8b5"}].map(item=>({...item,value:bookings.filter(b=>inDateRange(b.date,range)&&b.bookingStatus===item.status).reduce((sum,b)=>sum+b.seats.length,0)}))}/>
       </div>
       <section className="surface route-revenue"><SurfaceHeader title="Net sales by route" text="Collected fares less recorded refunds"/><div>{[...new Set(settled.map(b=>b.route))].map(route=>{const value=settled.filter(b=>b.route===route).reduce((sum,b)=>sum+netCollected(b),0);return <div className="route-revenue-row" key={route}><span>{route}</span><i><em style={{width:`${total?value/total*100:0}%`}}/></i><strong>{money(value)}</strong></div>;})}{!settled.length&&<p>No sales in this date range.</p>}</div></section>
@@ -4635,8 +4644,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
             title="Payment breakdown"
             text="Share of collected revenue"
           />
-          {(["Cash", "1Bill", "Card", "Bank transfer"] as PaymentMethod[])
-            .filter(method => method !== "Card" || settled.some(booking => booking.paymentMethod === "Card")).map(
+          {methods.map(
             (m) => {
               const amount = byMethod(m),
                 pct = total
