@@ -6240,6 +6240,7 @@ td small {
 .auto-print-setting { display: flex; align-items: flex-start; gap: 9px; margin: 0 0 16px; cursor: pointer; }
 .auto-print-setting input { width: 16px; height: 16px; margin: 2px 0 0; }
 .auto-print-setting small { display: block; margin-top: 3px; color: #64748b; }
+.receipt-print-help { margin: 8px 0 0; color: #64748b; font-size: 12px; }
 .route-config-modal { max-width:800px; }
 .management-repeater { display:grid;gap:10px;border-top:1px solid #dbe5f1;padding-top:14px; }
 .management-repeater>small { color:#5c6f87; }

@@ -5148,7 +5148,7 @@ function SettingsView({
             />
             <span>
               <strong>Auto-print after collecting payment</strong>
-              <small>Print the receipt and boarding pass without opening the ticket preview.</small>
+              <small>Send the receipt and boarding pass to print as soon as payment is collected.</small>
             </span>
           </label>
           <div className="settings-fields">
@@ -5184,10 +5184,13 @@ function SettingsView({
             <button className="secondary-button" type="button" onClick={() => setSampleReceipt(true)}>
               <Printer size={15} /> Print sample
             </button>
-            <a className="secondary-button" href={`${appBase}/Madina-Express-Print-Setup.cmd`} download>
-              Windows print setup
+            <a className="secondary-button" href={`${appBase}/Madina-Express-Counter.cmd`} download>
+              Download silent ticket launcher
             </a>
           </div>
+          <p className="receipt-print-help">
+            On Windows, set the 80 mm printer as the default and open the downloaded launcher to print tickets silently in Chrome. Use Firefox for the A4 CNIC and voucher print dialog.
+          </p>
         </section>
         <section className="surface settings-card">
           <SettingsTitle

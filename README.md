@@ -29,11 +29,12 @@ Never commit `backend/.env`; it contains database and payment secrets.
 
 ## Counter printing without confirmation
 
-1. Set the counter computer's default printer to the printer you use for tickets. For an Epson TM-T88IV using its Windows driver, select 80 mm roll paper and **Printing preferences → Document Settings → Paper Source → Document [Feed, Cut]**. This cuts at the end of each slip's print job.
-2. On the counter PC, download and run **Windows print setup** from **System Settings → Receipt configuration**. It enables silent printing in Chrome and Edge 144 or later for the current Windows account. Printing from those browsers goes to the Windows default printer across sites.
-3. Fully close and reopen the browser. Under **System Settings → Receipt configuration**, select **80 mm thermal portrait** and enable **Auto-print after collecting payment**. Each slip goes to the thermal driver as a separate one-page job while the booking screen stays open. **A4 portrait** sends the slips together, one per page. Use **Print sample** to verify the printer and paper before collecting payment.
+1. In Windows **Printers & scanners**, turn off **Let Windows manage my default printer** and set the thermal printer as default. For an Epson TM-T88IV using its Windows driver, select 80 mm roll paper and **Printing preferences → Document Settings → Paper Source → Document [Feed, Cut]**. This cuts at the end of each slip's print job.
+2. On the counter PC, go to **System Settings → Receipt configuration** and select **Download silent ticket launcher**. Open `Madina-Express-Counter.cmd` to start the dedicated Chrome counter window with silent printing enabled. Use this file each time you open the ticket counter.
+3. Sign in in the counter window. Under **Receipt configuration**, use **80 mm thermal portrait · separate jobs**, enable **Auto-print after collecting payment**, and use **Print sample** to verify that both slips print and cut. These preferences are saved in the counter window's Chrome profile.
+4. Open CNIC sheets and A4 vouchers in regular Firefox. Use the print dialog to select the A4 printer. Keep Firefox's `print.always_print_silent` at its default setting.
 
-If a prompt persists, open `chrome://policy` or `edge://policy` and check that `SilentPrintingEnabled` is `true`. If an organization manages the counter browser, its machine policy can take precedence over the current account's settings.
+The legacy `Madina-Express-Print-Setup.cmd` sets `SilentPrintingEnabled` across regular Chrome and Edge 144 or later for the current Windows account. Use the dedicated counter launcher for a separate ticket window with silent printing.
 
 For a TM-T88IV that Chrome or Edge can claim directly over USB, select **Epson TM-T88IV · 80 mm USB** under **Ticket paper**. Click **Connect USB printer** once and select the TM-T88IV in the browser's device picker. This mode sends each slip and its own cut command straight to the printer. The printer's partial cutter leaves a small tear-off tab.
 
