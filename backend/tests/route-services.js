@@ -5,7 +5,7 @@ import {pool,closePool} from '../node/db.js';
 import {pakistanDate} from '../node/helpers.js';
 if(!/test|qa/i.test(config.db.database)) throw new Error('Use an isolated test database.');
 const suffix=Date.now(), username=`services-${suffix}`,password='ServiceQA!2026';
-const base=process.env.TEST_API_URL||'http://127.0.0.1:3108';
+const base=process.env.TEST_API_URL||`http://${config.host}:${config.port}`;
 const [user]=await pool.execute("INSERT INTO users(name,email,username,password_hash,role,force_password_change) VALUES (?,?,?,?,'admin',0)",['Service QA',`${username}@example.invalid`,username,await bcrypt.hash(password,10)]);
 let cookie='',csrf='',count=0,busId,routeId;
 const tripId=`services-trip-${suffix}`;
@@ -39,7 +39,7 @@ try{
  check(result.status===201&&result.bookings.length===2&&result.bookings[0].fare===5300&&result.bookings[1].fare===4300,'one selection prices each Business and Executive seat separately');
  check(result.bookings.reduce((sum,b)=>sum+b.total,0)===8600,'mixed-class discount totals reconcile exactly');
  check((await req('POST','/bookings',{...paidDraft,seats:[3],destination:'Unknown'})).status===422,'passengers cannot select destinations outside the route');
- check((await req('POST','/public/bookings',{...paidDraft,seats:[3],destination:'Multan',fare:1,total:1})).booking.paid===5000,'public ticket pricing uses managed destination and class fares');
+ check((await req('POST','/public/bookings',{...paidDraft,seats:[3],destination:'Multan',fare:1,total:1})).bookings[0].total===5000,'public reservation pricing uses managed destination and class fares');
  check((await req('POST','/bookings',{...paidDraft,seats:[4],gender:'Unspecified'})).status===422,'paid tickets require a selected gender');
  const run=(await req('GET',`/trip-runs?date=${tomorrow}`)).runs.find(r=>r.tripId===tripId);
  const voucher={commissionRate:13,manualCommission:0,refreshments:100,terminalExpense:0,toll:0,misc:0,paidToDriver:0,driver:'Driver',attendant:''};
@@ -49,7 +49,7 @@ try{
  check((await req('PUT',`/trips/${tripId}/counter`,{...payload,voucher:{...voucher,commissionRate:0}})).error.code==='commission_fixed','counter cannot override managed fixed commission');
  check((await req('PUT',`/trips/${tripId}/counter`,{...payload,voucher:{...voucher,manualCommission:50}})).error.code==='commission_fixed','additional commission cannot bypass a fixed rate');
  result=await req('PUT',`/trips/${tripId}/counter`,payload);const saved=result.trip?.snapshot?.voucher;
- check(result.status===200&&saved.basis===18600&&saved.commission===2418&&saved.totalRemaining===16082,'voucher totals include all payment methods after commission and refreshments');
+ check(result.status===200&&saved.basis===13600&&saved.commission===1768&&saved.totalRemaining===11732,'voucher totals exclude unpaid reservations and deduct commission and refreshments');
  const [ledger]=await pool.execute('SELECT SUM(amount) total FROM financial_transactions WHERE booking_id IN (SELECT id FROM bookings WHERE trip_run_id=?)',[run.id]);
  check(Number(ledger[0].total)===saved.basis,'voucher collections reconcile with the immutable sales ledger');
  const changed=structuredClone(route);changed.services[0].fares.Multan.Business=5100;
@@ -78,7 +78,7 @@ try{
  const webOverride = await req('POST', '/public/bookings', {
    ...paidDraft, seats: [8], destination: 'Multan', fareOverrides: [1],
  });
- check(webOverride.status === 201 && webOverride.booking.paid === 5100, 'public checkout uses the managed fare');
+ check(webOverride.status === 201 && webOverride.bookings[0].total === 5100, 'public reservation uses the managed fare');
  const held = await req('POST', '/bookings', { ...holdDraft, seats: [9], fareOverrides: [1] });
  check(held.status === 201 && held.booking.total === 5100 && held.booking.paid === 0,
    'a reservation retains the managed fare and stays unpaid');
