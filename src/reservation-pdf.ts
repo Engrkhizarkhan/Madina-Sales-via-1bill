@@ -3,7 +3,16 @@ export async function downloadReservationPdf(card: HTMLElement, reference: strin
     import("html-to-image"), import("pdf-lib"),
   ]);
   await document.fonts.ready;
-  const canvas = await toCanvas(card, { backgroundColor: "#ffffff", pixelRatio: 2, skipFonts: true });
+  const printArea = document.createElement("div");
+  printArea.style.cssText = "position:fixed;top:0;left:-10000px;width:640px;";
+  printArea.setAttribute("aria-hidden", "true");
+  const copy = card.cloneNode(true) as HTMLElement;
+  copy.classList.add("reservation-pdf-card");
+  printArea.append(copy);
+  document.body.append(printArea);
+
+  const canvas = await toCanvas(copy, { backgroundColor: "#ffffff", pixelRatio: 2, skipFonts: true })
+    .finally(() => printArea.remove());
   const documentPdf = await PDFDocument.create();
   documentPdf.setTitle("Madina Express Reservation Confirmation");
   const image = await documentPdf.embedPng(canvas.toDataURL("image/png"));

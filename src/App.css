@@ -6261,6 +6261,8 @@ td small {
 .reservation-card dd span { display: block; }
 .reservation-card > p:last-child { margin: 0; line-height: 1.5; }
 .reservation-confirmation .receipt-actions { flex-wrap: wrap; gap: 8px; }
+.reservation-pdf-card { padding: 24px; font: 16px/1.5 Arial, sans-serif; }
+.reservation-pdf-card h2 { font-size: 27px; }
 
 @media (max-width: 760px) {
   .public-trip { grid-template-columns: minmax(0, 1fr) minmax(0, .55fr) minmax(0, 1fr); }
@@ -6273,4 +6275,5 @@ td small {
   .receipt-modal .thermal-heading h2 { font-size: clamp(16px, 5vw, 23px); white-space: normal; }
   .receipt-modal .ticket-departure { grid-template-columns: minmax(0, 1fr) minmax(0, 23mm); }
   .receipt-modal .ticket-departure svg { max-width: 100%; height: auto; }
+  .reservation-card:not(.reservation-pdf-card) dt { font-size: 14px; }
 }
