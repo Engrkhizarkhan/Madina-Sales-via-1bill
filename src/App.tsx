@@ -587,7 +587,8 @@ const tripRoute = (trip: TripRecord, routes: RouteRecord[]) => {
 const serviceDayFor = (date: string) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${date}T12:00:00`).getDay()] as Weekday;
 const tripsOnDate = (trips: TripRecord[], date: string, runs: TripRun[]) =>
   trips.filter((trip) => !trip.deleted && (trip.days.includes(serviceDayFor(date)) || runs.some((run) => run.tripId === trip.id && run.date === date)))
-    .map((trip) => tripOnDate(trip, date, runs));
+    .map((trip) => tripOnDate(trip, date, runs))
+    .sort((left, right) => left.departure.localeCompare(right.departure));
 const refundedTotal = (booking: Booking) =>
   (booking.refunds ?? []).reduce((sum, refund) => sum + refund.amount, 0);
 const refundableBalance = (booking: Booking) =>
@@ -756,11 +757,9 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
   const matchingRoutes = publicRoutes.filter(
     (route) => route.from === from && routeDestinations(route).some(d=>d.name===to),
   );
-  const travelDay = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][
-    new Date(`${date}T00:00:00`).getDay()
-  ] as Weekday;
+  const travelDay = serviceDayFor(date);
   const departures = matchingRoutes.length
-    ? publicTrips.map((trip) => tripOnDate(trip, date, tripRuns))
+    ? tripsOnDate(publicTrips, date, tripRuns)
         .filter(
           (schedule) =>
             matchingRoutes.some(route=>route.id===schedule.routeId) &&
@@ -2209,9 +2208,12 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   onReport:(kind:ReportKind,id:string,run:number,date?:string)=>void;
 }) {
   const params = new URLSearchParams(location.search);
-  const defaultTrip = trips.find(t=>t.id===(initialSelection?.tripId ?? params.get("trip"))) ?? trips.find(t=>t.active&&!t.deleted) ?? trips[0];
+  const initialDate = initialSelection?.date ?? params.get("date") ?? today;
+  const requestedTrip = trips.find(t=>t.id===(initialSelection?.tripId ?? params.get("trip")));
+  const defaultTrip = requestedTrip && (!requestedTrip.deleted || initialDate < today) ? requestedTrip :
+    trips.find(t=>t.active&&!t.deleted&&t.routeId===requestedTrip?.routeId) ?? trips.find(t=>t.active&&!t.deleted) ?? trips[0];
   const [tripId,setTripId] = useState(defaultTrip.id);
-  const [date,setDate] = useState(initialSelection?.date ?? params.get("date") ?? today);
+  const [date,setDate] = useState(initialDate);
   const [routeId,setRouteId] = useState(defaultTrip.routeId);
   const [mode,setMode] = useState<"Ticket"|"Reservation">(initialSelection?.mode ?? "Ticket");
   const [selected,setSelected] = useState<number[]>([]);
@@ -2245,7 +2247,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const fareTotal = fares.reduce((sum, fare) => sum + fare, 0);
   const discount = mode === "Ticket" ? Math.min(passenger.discount, fareTotal) : 0;
   const total = Math.round((fareTotal - discount) * 100) / 100;
-  const choices = trips.filter(t=>!t.deleted&&t.active && t.routeId===routeId && t.days.includes(serviceDayFor(date)));
+  const choices = tripsOnDate(trips, date, runs).filter(t=>t.active && t.routeId===routeId && t.days.includes(serviceDayFor(date)));
   const paymentBlocked = busy || unavailable || departureDirty || !choices.some(item => item.id === tripId);
   const collectFromSeat = (seat: number) => {
     if (paymentBlocked || document.querySelector('[role="dialog"][aria-modal="true"]')) return false;
@@ -2291,7 +2293,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
         <label><span>Route</span><select value={routeId} onChange={e=>{const next=trips.find(t=>!t.deleted&&t.active&&t.routeId===e.target.value);setRouteId(e.target.value);if(next)choose(next.id);}}>{routes.filter(r=>trips.some(t=>!t.deleted&&t.active&&t.routeId===r.id)).map(r=><option value={r.id} key={r.id}>{routeLabel(r)}</option>)}</select></label>
         <label><span>Travel date</span><input type="date" value={date} onChange={e=>{if(e.target.value)choose(tripId,e.target.value);}}/></label>
       </div>
-      <div className="departure-times" aria-label="Departure times">{choices.map(t=>{const dated=tripOnDate(t,date,runs);return <button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{dated.departure}</strong><small>{tripBus(dated,fleet).model} · {dated.status}</small></button>;})}{!choices.length&&<p>No departures for this route and date.</p>}</div>
+      <div className="departure-times" aria-label="Departure times">{choices.map(t=><button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{t.departure}</strong><small>{tripBus(t,fleet).model} · {t.status}</small></button>)}{!choices.length&&<p>No departures for this route and date.</p>}</div>
       <CounterDeparture key={`${runId}-${bus.id}-${bus.layoutId}-${bus.registration}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} route={route} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setFareEdits({});setFocusedId(null);return saved;}}/>
     </section>
     <DepartureControls key={`departure-${runId}`} trip={trip} bus={bus} date={date} reservedCount={reserved.size} onTransition={(action,notes,options)=>onTransition(trip.id,action,date,notes,options)}/>
@@ -2361,7 +2363,7 @@ function CounterDeparture({trip,bus,route,fleet,disabled,onDirty,onSave}:{trip:T
   const [custom,setCustom]=useState(false);
   const changed=layoutId!==currentLayout||registration!==(bus.isTemplate?"":bus.registration)||departure!==trip.departure;
   const selectedLayout=layouts.find(b=>b.id===layoutId)||bus;
-  const times=departureTimes(route,selectedLayout);
+  const times=[...new Set([...departureTimes(route,selectedLayout), trip.departure])].sort();
   const markDirty=(id:string,reg:string,time:string)=>onDirty(id!==currentLayout||reg!==(bus.isTemplate?"":bus.registration)||time!==trip.departure);
   return <form className="counter-manual" onSubmit={async e=>{e.preventDefault();if(busy||disabled)return;setBusy(true);setError("");try{await onSave({registration,departure,layoutBusId:layoutId,expected:{registration:bus.isTemplate?"":bus.registration,departure:trip.departure,revision:trip.snapshot?.voucher?.revision??"",busId:bus.id}});}catch(e){setError(e instanceof Error?e.message:"Could not save departure.");}finally{setBusy(false);}}}>
     <label><span>Bus type</span><select value={layoutId} disabled={disabled||busy} onChange={e=>{setLayoutId(e.target.value);markDirty(e.target.value,registration,departure);setError("");}}>{layouts.map(b=><option key={b.id} value={b.id}>{b.model} · {b.seats} seats</option>)}</select></label>
