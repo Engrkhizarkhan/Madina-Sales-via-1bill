@@ -5069,16 +5069,17 @@ function SettingsView({
             />
             <span>
               <strong>Auto-print after collecting payment</strong>
-              <small>Open the print dialog automatically on this browser.</small>
+              <small>Send the receipt and boarding pass to print automatically on this browser.</small>
             </span>
           </label>
-          <button
-            className="secondary-button"
-            type="button"
-            onClick={() => setSampleReceipt(true)}
-          >
-            <Printer size={15} /> Print sample
-          </button>
+          <div className="view-actions">
+            <button className="secondary-button" type="button" onClick={() => setSampleReceipt(true)}>
+              <Printer size={15} /> Print sample
+            </button>
+            <a className="secondary-button" href={`${appBase}/Madina-Express-Counter.cmd`} download>
+              Windows counter launcher
+            </a>
+          </div>
         </section>
         <section className="surface settings-card">
           <SettingsTitle

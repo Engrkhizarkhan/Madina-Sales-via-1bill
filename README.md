@@ -27,6 +27,12 @@ npm run build
 
 Never commit `backend/.env`; it contains database and payment secrets.
 
+## Counter printing without confirmation
+
+1. Set the 80 mm thermal printer as the counter computer's default printer. Use 80 mm roll paper and enable cutting after each job in the printer's preferences if the driver offers that setting.
+2. On Windows, download **Windows counter launcher** from **System Settings → Receipt configuration**, save it to the desktop, and use it to open the staff workspace. It starts Chrome with a dedicated counter profile and sends jobs to the system default printer without a prompt.
+3. Sign in and enable **Auto-print after collecting payment** in **System Settings → Receipt configuration**. Reprint an existing paid ticket to check that the passenger receipt and boarding pass print as two slips.
+
 ## Verification
 
 ```powershell
