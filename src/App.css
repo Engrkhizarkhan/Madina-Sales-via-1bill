@@ -5964,7 +5964,7 @@ td small {
   font-variant-numeric: tabular-nums;
 }
 .passenger-receipt, .conductor-token { padding: 5mm 3mm; }
-.thermal-heading .ticket-brand-mark { width: max-content; margin: 0 auto 4px; border: 1.5px solid #000; border-radius: 3px; padding: 3px 6px 3px 8px; color: #000; font: 900 14px/1 Arial, sans-serif; letter-spacing: .14em; }
+.thermal-heading .ticket-brand-mark { width: max-content; margin: 0 auto 4px; border: 2px solid #000; border-radius: 3px; padding: 3px 6px 3px 8px; color: #000; font: 900 16px/1 "Arial Black", Arial, sans-serif; letter-spacing: .1em; }
 .thermal-ticket .thermal-heading h2 { font: 700 23px/1.15 Arial, sans-serif; letter-spacing: .3px; white-space: nowrap; }
 .thermal-ticket .thermal-heading > p { margin: 3px 0; font-size: 11px; }
 .thermal-heading > strong { font-size: 15px; font-weight: 600; }

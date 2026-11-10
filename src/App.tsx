@@ -5676,7 +5676,7 @@ function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
   const ticket=ticketPresentation(booking),seats=seatList(booking.seats,booking.service);
   return <>
     <article className="passenger-receipt" aria-label={`Passenger receipt seat ${seats}`}>
-      <header className="thermal-heading"><div className="ticket-brand-mark">SKD</div><h2>MADINA EXPRESS</h2><p className="ticket-contact">0311-777-2299 / 0315-777-2299</p></header>
+      <header className="thermal-heading"><div className="ticket-brand-mark">SDK</div><h2>MADINA EXPRESS</h2><p className="ticket-contact">0311-777-2299 / 0315-777-2299</p></header>
       <div className="ticket-bus-type"><span>BUS Type</span><strong>{booking.service}</strong></div>
       <div className="ticket-departure"><dl><div className="ticket-seat-number"><dt>SEAT NO #</dt><dd>{seats}</dd></div><div><dt>Departure</dt><dd>{booking.time}</dd></div><div><dt>Travel date</dt><dd>{ticketDate(booking.date)}</dd></div></dl><QRCodeSVG value={`MADINA EXPRESS\nTicket: ${booking.ticketNo}\nSeat: ${seats}`} size={76} level="M" marginSize={2} title="Ticket reference"/></div>
       <table className="thermal-details"><tbody>
