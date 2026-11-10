@@ -1,5 +1,6 @@
 import express from "express";
 import bcrypt from "bcryptjs";
+import { limitAttempts, sessionHash, terminalDevice, verifyAdminCode } from "./access.js";
 import { config } from "./config.js";
 import { pool, transaction } from "./db.js";
 import { ApiError, fail, isoDateTime, pakistanDate, randomToken, requireFields, tokenHash } from "./helpers.js";
@@ -33,10 +34,13 @@ app.use((req, res, next) => {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cache-Control": "no-store, max-age=0",
   });
+  if (origin && !config.allowedOrigins.includes(origin) && !["GET", "HEAD"].includes(req.method)) {
+    return res.status(403).json({ error: { code: "origin_denied", message: "This request origin is not allowed." } });
+  }
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
-app.use(express.json({ limit: "1mb", strict: true }));
+app.use(express.json({ limit: "128kb", strict: true, inflate: false }));
 app.use((req, _res, next) => {
   if (req.url === "/index.php") req.url = "/";
   else if (req.url.startsWith("/index.php/")) req.url = req.url.slice(10);
@@ -44,10 +48,10 @@ app.use((req, _res, next) => {
 });
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
-const cookies = (req) => Object.fromEntries((req.get("cookie") || "").split(";").map((item) => item.trim()).filter(Boolean).map((item) => {
-  const index = item.indexOf("=");
-  return [decodeURIComponent(item.slice(0, index)), decodeURIComponent(item.slice(index + 1))];
-}));
+const sessionCookie = config.secureCookies ? "__Host-madina_session" : "madina_session";
+const readSessionToken = (req) => (req.get("cookie") || "").split(/;\s*/)
+  .find((item) => item.startsWith(`${sessionCookie}=`))
+  ?.slice(sessionCookie.length + 1).match(/^[0-9a-f]{64}$/)?.[0];
 const publicUser = (user) => ({
   id: Number(user.id), name: user.name, email: user.email, username: user.username,
   role: user.role, forcePasswordChange: Boolean(user.force_password_change),
@@ -56,29 +60,24 @@ const cookieOptions = {
   httpOnly: true, secure: config.secureCookies, sameSite: "lax", path: "/",
 };
 const passwordMatches = (password, hash) => bcrypt.compare(password, String(hash).replace(/^\$2y\$/, "$2b$"));
-const publicBookingAttempts = new Map();
-const allowPublicBooking = (req) => {
-  const key = String(req.ip || "unknown");
-  const now = Date.now();
-  const recent = (publicBookingAttempts.get(key) || []).filter((stamp) => now - stamp < 10 * 60 * 1000);
-  if (recent.length >= 6) fail("Too many booking attempts. Please wait a few minutes.", 429, "rate_limited");
-  recent.push(now);
-  publicBookingAttempts.set(key, recent);
-};
-
 async function loadSession(req) {
-  const token = cookies(req).madina_session;
+  const token = readSessionToken(req);
   if (!token) return null;
+  const device = terminalDevice(req);
   const [records] = await pool.execute(
     `SELECT s.token_hash, s.csrf_token, s.finance_unlocked_until, s.expires_at,
             (s.finance_unlocked_until IS NOT NULL AND s.finance_unlocked_until > NOW()) finance_unlocked,
             u.id, u.name, u.email, u.username, u.role, u.active, u.force_password_change
      FROM api_sessions s JOIN users u ON u.id = s.user_id
-     WHERE s.token_hash = ? AND s.expires_at > NOW() LIMIT 1`, [tokenHash(token)],
+     WHERE s.token_hash IN (?, ?) AND s.expires_at > NOW()
+       AND s.created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR) LIMIT 1`,
+    [tokenHash(token), sessionHash(token, "counter", device)],
   );
   const session = records[0];
-  if (!session || !session.active) return null;
-  await pool.execute("UPDATE api_sessions SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 8 HOUR) WHERE token_hash = ?", [session.token_hash]);
+  if (!session || !session.active ||
+      (config.restrictStaffDevices && session.role !== "admin" && !device) ||
+      session.token_hash !== sessionHash(token, session.role, device)) return null;
+  await pool.execute("UPDATE api_sessions SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 8 HOUR) WHERE token_hash = ? AND last_activity < DATE_SUB(NOW(), INTERVAL 5 MINUTE)", [session.token_hash]);
   req.sessionTokenHash = session.token_hash;
   req.session = session;
   req.user = session;
@@ -100,16 +99,16 @@ const requireCsrf = (req) => {
   }
 };
 
-async function createSession(req, res, userId) {
+async function createSession(req, res, user) {
   await pool.execute("DELETE FROM api_sessions WHERE expires_at <= NOW()");
   const token = randomToken();
   const csrf = randomToken();
   await pool.execute(
     `INSERT INTO api_sessions (token_hash, user_id, csrf_token, last_activity, expires_at, ip_address, user_agent)
      VALUES (?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 8 HOUR), ?, ?)`,
-    [tokenHash(token), userId, csrf, String(req.ip || "unknown").slice(0, 64), String(req.get("user-agent") || "").slice(0, 255)],
+    [sessionHash(token, user.role, terminalDevice(req)), user.id, csrf, String(req.ip || "unknown").slice(0, 64), String(req.get("user-agent") || "").slice(0, 255)],
   );
-  res.cookie("madina_session", token, cookieOptions);
+  res.cookie(sessionCookie, token, cookieOptions);
   return csrf;
 }
 
@@ -119,28 +118,39 @@ app.get("/health", asyncRoute(async (_req, res) => {
 }));
 
 app.post("/auth/login", asyncRoute(async (req, res) => {
-  requireFields(req.body, ["identity", "password"]);
-  const identity = String(req.body.identity).trim().toLowerCase();
+  limitAttempts("login", req, 35, 15 * 60_000);
+  const { identity: input, password, otp } = req.body || {};
+  if (typeof input !== "string" || !input.trim() || input.length > 190 ||
+      typeof password !== "string" || !password || Buffer.byteLength(password) > 72) {
+    fail("The username or password is incorrect.", 401, "invalid_credentials");
+  }
+  const identity = input.trim().toLowerCase();
   const [records] = await pool.execute(
     "SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1",
     [identity, identity],
   );
   const user = records[0];
-  if (!user || !user.active || !(await passwordMatches(String(req.body.password), user.password_hash))) {
+  if (!user || !user.active || !(await passwordMatches(password, user.password_hash))) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     fail("The username or password is incorrect.", 401, "invalid_credentials");
   }
-  const oldToken = cookies(req).madina_session;
-  if (oldToken) await pool.execute("DELETE FROM api_sessions WHERE token_hash = ?", [tokenHash(oldToken)]);
+  if (config.restrictStaffDevices && user.role !== "admin" && !terminalDevice(req)) {
+    fail("Use an enrolled terminal PC to sign in to this account.", 403, "terminal_required");
+  }
+  if (user.role === "admin" && !verifyAdminCode(otp)) {
+    fail("Enter a current code from the administrator's authenticator app.", 401, "authenticator_required");
+  }
+  const oldSession = await loadSession(req);
+  if (oldSession) await pool.execute("DELETE FROM api_sessions WHERE token_hash = ?", [oldSession.token_hash]);
   await pool.execute("UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = NOW() WHERE id = ?", [user.id]);
-  const csrfToken = await createSession(req, res, user.id);
+  const csrfToken = await createSession(req, res, user);
   await audit("auth.login", "user", user.id, null, { success: true }, user.id, req);
   res.json({ user: publicUser(user), csrfToken });
 }));
 
 app.get("/public/bootstrap", asyncRoute(async (_req, res) => {
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  res.json({ fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), occupancy: await publicOccupancy(), paymentMode: config.paymentMode });
+  res.json({ fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), occupancy: await publicOccupancy(pakistanDate()) });
 }));
 
 app.get("/public/trip-runs", asyncRoute(async (req, res) => {
@@ -149,23 +159,24 @@ app.get("/public/trip-runs", asyncRoute(async (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("Choose a valid travel date.", 422, "validation_error");
   const runs = await fetchTripRuns(date);
   res.json({ runs: runs.map((run) => ({ id: run.id, tripId: run.tripId, date: run.date, runNumber: run.runNumber,
-    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true) });
+    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(date), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true) });
 }));
 
 app.post("/public/bookings", asyncRoute(async (req, res) => {
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  allowPublicBooking(req);
-  const bookings = await createBooking(req.body, null, true, req);
-  res.status(201).json({ booking: bookings[0], bookings });
+  limitAttempts("reservation", req, 30, 10 * 60_000);
+  if (!req.body || Array.isArray(req.body)) fail("Enter the reservation details.", 422, "validation_error");
+  const records = await createBooking(req.body, null, true, req);
+  const bookings = records.map(({ ticketNo, passenger, route, destination, boardingPoint, service, seats, total, date, time, expiresAt }) =>
+    ({ ticketNo, passenger, route, destination, boardingPoint, service, seats, total, date, time, expiresAt }));
+  res.status(201).json({ bookings });
 }));
 
 app.use(asyncRoute(async (req, _res, next) => {
   await requireAuth(req);
-  if (req.method !== "GET") {
-    requireCsrf(req);
-    if (req.user.force_password_change && !["/auth/change-password", "/auth/logout"].includes(req.path)) {
-      fail("Change the temporary password before making operational changes.", 403, "password_change_required");
-    }
+  if (!["GET", "HEAD"].includes(req.method)) requireCsrf(req);
+  if (req.user.force_password_change && !["/auth/me", "/admin/bootstrap", "/auth/change-password", "/auth/logout"].includes(req.path)) {
+    fail("Change the temporary password to access operations.", 403, "password_change_required");
   }
   next();
 }));
@@ -175,7 +186,7 @@ app.get("/auth/me", asyncRoute(async (req, res) => res.json({ user: publicUser(r
 app.post("/auth/logout", asyncRoute(async (req, res) => {
   await audit("auth.logout", "user", req.user.id, null, { success: true }, req.user.id, req);
   await pool.execute("DELETE FROM api_sessions WHERE token_hash = ?", [req.sessionTokenHash]);
-  res.clearCookie("madina_session", cookieOptions);
+  res.clearCookie(sessionCookie, cookieOptions);
   res.json({ ok: true });
 }));
 
@@ -184,12 +195,13 @@ app.post("/auth/change-password", asyncRoute(async (req, res) => {
   const [records] = await pool.execute("SELECT password_hash FROM users WHERE id = ?", [req.user.id]);
   if (!(await passwordMatches(String(req.body.currentPassword), records[0]?.password_hash || ""))) fail("The current password is incorrect.", 422, "invalid_password");
   const password = String(req.body.newPassword);
-  if (password.length < 12 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+  if (password.length < 12 || Buffer.byteLength(password) > 72 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
     fail("Use at least 12 characters with upper-case, lower-case, number and symbol.", 422, "weak_password");
   }
   const csrfToken = randomToken();
   await transaction(async (connection) => {
     await connection.execute("UPDATE users SET password_hash = ?, force_password_change = 0 WHERE id = ?", [await bcrypt.hash(password, 12), req.user.id]);
+    await connection.execute("DELETE FROM api_sessions WHERE user_id = ? AND token_hash <> ?", [req.user.id, req.sessionTokenHash]);
     await connection.execute("UPDATE api_sessions SET csrf_token = ?, finance_unlocked_until = NULL WHERE token_hash = ?", [csrfToken, req.sessionTokenHash]);
     await audit("auth.password_changed", "user", req.user.id, null, { success: true }, req.user.id, req, connection);
   });
@@ -197,6 +209,10 @@ app.post("/auth/change-password", asyncRoute(async (req, res) => {
 }));
 
 app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
+  if (req.user.force_password_change) {
+    return res.json({ bookings: [], fleet: [], trips: [], runs: [], routes: [], crew: [], users: [],
+      user: publicUser(req.user), paymentMode: config.paymentMode });
+  }
   const trips = await fetchTrips();
   const runs = await fetchTripRuns();
   const todayTrips = trips.map((trip) => {
@@ -212,6 +228,7 @@ app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
 
 app.post("/auth/finance-unlock", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
+  limitAttempts("finance", req, 20, 15 * 60_000);
   requireFields(req.body, ["password"]);
   const [records] = await pool.execute("SELECT password_hash FROM users WHERE id = ? AND role = 'admin' AND active = 1 LIMIT 1", [req.user.id]);
   if (!(await passwordMatches(String(req.body.password), records[0]?.password_hash || ""))) {
@@ -300,6 +317,7 @@ app.post("/users", asyncRoute(async (req, res) => { requireRole(req.user, ["admi
 app.use((_req, _res, next) => next(new ApiError("API route not found.", 404, "not_found")));
 app.use((error, _req, res, _next) => {
   if (error?.type === "entity.parse.failed") return res.status(400).json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } });
+  if (error?.type === "encoding.unsupported") return res.status(415).json({ error: { code: "unsupported_encoding", message: "Use an uncompressed JSON request." } });
   if (error?.type === "entity.too.large") return res.status(413).json({ error: { code: "request_too_large", message: "Request body is too large." } });
   if (error instanceof ApiError) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
   if (error?.code === "ER_DUP_ENTRY") return res.status(409).json({ error: { code: "duplicate_record", message: "That record conflicts with an existing record." } });

@@ -11,3 +11,10 @@ export function presentationText(value: string): string {
   };
   return labels[value] ?? value.replace(/^DEMO-/i, '');
 }
+
+export function shortPaymentReference(reference: string): string {
+  const text = presentationText(reference);
+  const oneBill = text.match(/^1BILL-([0-9a-f]{16,})$/i);
+  if (oneBill) return `1BILL-${oneBill[1].slice(0, 8)}`;
+  return text.length > 24 ? `${text.slice(0, 12)}…${text.slice(-8)}` : text;
+}

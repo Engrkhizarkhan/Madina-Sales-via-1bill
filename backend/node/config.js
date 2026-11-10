@@ -9,11 +9,19 @@ const required = (key, fallback) => {
   return value;
 };
 
+const adminOtp = process.env.ADMIN_TOTP_HEX || "";
+const restrictStaffDevices = process.env.RESTRICT_STAFF_DEVICES === "true";
+if ((adminOtp || restrictStaffDevices) && !/^[0-9a-f]{40}$/i.test(adminOtp)) {
+  throw new Error("ADMIN_TOTP_HEX must be a 20-byte hexadecimal key when production staff access is enabled.");
+}
+
 export const config = {
+  restrictStaffDevices,
+  adminOtpKey: adminOtp ? Buffer.from(adminOtp, "hex") : null,
   env: process.env.APP_ENV || "production",
   port: Number(process.env.NODE_API_PORT || 3101),
   host: process.env.NODE_API_HOST || "localhost",
-  trustProxy: process.env.TRUST_PROXY === "1" ? 1 : "loopback",
+  trustProxy: process.env.TRUST_PROXY === "1" ? "127.0.0.1" : "loopback",
   allowedOrigins: (process.env.ALLOWED_ORIGINS || "http://localhost")
     .split(",")
     .map((value) => value.trim())

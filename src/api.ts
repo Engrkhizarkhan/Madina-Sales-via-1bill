@@ -58,10 +58,10 @@ export const api = {
   adminBootstrap: <T>() => request<T>("/admin/bootstrap"),
   me: <T>() =>
     request<T & { csrfToken?: string }>("/auth/me").then(rememberCsrf),
-  login: <T>(identity: string, password: string) =>
+  login: <T>(identity: string, password: string, otp = "") =>
     request<T & { csrfToken?: string }>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ identity, password }),
+      body: JSON.stringify({ identity, password, otp }),
     }).then(rememberCsrf),
   logout: () =>
     request<{ ok: boolean }>("/auth/logout", { method: "POST" }).finally(() =>
@@ -80,7 +80,7 @@ export const api = {
   financeStatus: () =>
     request<{ unlocked: boolean }>("/finance/status"),
   createPublicBooking: <T>(booking: unknown) =>
-    request<{ booking: T; bookings: T[] }>("/public/bookings", {
+    request<{ bookings: T[] }>("/public/bookings", {
       method: "POST",
       body: JSON.stringify(booking),
     }),

@@ -2,7 +2,8 @@ import {routeDestinations,seatFare,seatClass,departureTimes,commissionPolicy,typ
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
-import { presentationText } from "./presentation-text";
+import { downloadReservationPdf } from "./reservation-pdf";
+import { presentationText, shortPaymentReference } from "./presentation-text";
 import { inDateRange, type DateRange } from "./booking-filters";
 import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
 import { printDocument, printTicketBatch, type TicketPaper } from "./print-document";
@@ -249,12 +250,13 @@ type PublicOccupancy = {
   time: string;
   seats: number[];
 };
+type PublicReservation = Pick<Booking, "ticketNo" | "passenger" | "route" | "destination" |
+  "boardingPoint" | "service" | "seats" | "total" | "date" | "time"> & { expiresAt: string };
 type PublicBootstrap = {
   trips: TripRecord[];
   fleet: BusRecord[];
   routes: RouteRecord[];
   occupancy: PublicOccupancy[];
-  paymentMode: string;
 };
 type AdminBootstrap = {
   runs: TripRun[];
@@ -690,7 +692,6 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     [publicRoutes, setPublicRoutes] = useState<RouteRecord[]>([]),
     [occupancy, setOccupancy] = useState<PublicOccupancy[]>([]),
     [tripRuns, setTripRuns] = useState<TripRun[]>([]),
-    [paymentMode, setPaymentMode] = useState("disabled"),
     [loadError, setLoadError] = useState("");
   useEffect(() => {
     api
@@ -700,7 +701,6 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
         setPublicFleet(result.fleet);
         setPublicRoutes(result.routes);
         setOccupancy(result.occupancy);
-        setPaymentMode(result.paymentMode);
         const firstOrigin = result.routes[0]?.from;
         setFrom((currentOrigin) => {
           if (
@@ -738,8 +738,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     fare: number;
     occupiedSeats: number[];
   } | null>(null);
-  const [ticketReceiptBatch,setTicketReceiptBatch]=useState<Booking[]>([]);
-  const [ticketReceipt, setTicketReceipt] = useState<Booking | null>(null);
+  const [reservation, setReservation] = useState<PublicReservation[]>([]);
   const originCities = Array.from(
     new Set(
       publicRoutes
@@ -818,7 +817,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
           </span>
         </button>
         <nav aria-label="Main navigation">
-          <a href="#routes">Book a ticket</a>
+          <a href="#routes">Reserve a seat</a>
           <a href="#services">Services</a>
           <a href="#contact">Contact</a>
         </nav>
@@ -830,19 +829,19 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <span /> Intercity travel across Pakistan
             </p>
             <h1>
-              Book your seat.
+              Reserve your seat.
               <br />
               <em>Travel with confidence.</em>
             </h1>
             <p>
-              Find a departure, choose your seats and book online with 1Bill.
+              Find a departure, reserve your seats online and pay at the terminal.
             </p>
             <div className="hero-trust">
               <span>
                 <BadgeCheck size={17} /> Live seat availability
               </span>
               <span>
-                <ShieldCheck size={17} /> Book and pay online
+                <ShieldCheck size={17} /> Pay at the terminal
               </span>
               <span>
                 <Headphones size={17} /> Passenger support
@@ -857,10 +856,10 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             </span>
             <div>
               <h2>Find your bus</h2>
-              <p>Choose your seats and book online.</p>
+              <p>Choose your seats and reserve online.</p>
             </div>
             <div className="payment-assurance">
-              <ShieldCheck size={15} /> 1Bill payment
+              <ShieldCheck size={15} /> Pay at the counter
             </div>
           </div>
           {loadError && <p className="form-error">{loadError}</p>}
@@ -1022,7 +1021,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <strong>Choose your exact seat</strong>
               <p>
                 See live seat availability and select up to four seats in one
-                purchase.
+                reservation.
               </p>
             </div>
           </article>
@@ -1031,9 +1030,9 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <CreditCard size={21} />
             </span>
             <div>
-              <strong>Book and pay online</strong>
+              <strong>Pay at the terminal</strong>
               <p>
-                Choose your seat and receive a separate ticket for each passenger.
+                Download your reservation confirmation and show it when you pay at the counter.
               </p>
             </div>
           </article>
@@ -1054,21 +1053,15 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
         <PublicCheckout
           trip={checkoutTrip}
           date={date}
-          paymentMode={paymentMode}
           onClose={() => setCheckoutTrip(null)}
-          onPaid={(booking,batch) => {
-            setTicketReceiptBatch(batch);
+          onReserved={(bookings) => {
             setCheckoutTrip(null);
-            setTicketReceipt(booking);
+            setReservation(bookings);
           }}
         />
       )}
-      {ticketReceipt && (
-        <ReceiptModal
-          booking={ticketReceipt}
-          batch={ticketReceiptBatch}
-          onClose={() => setTicketReceipt(null)}
-        />
+      {reservation.length > 0 && (
+        <ReservationConfirmation bookings={reservation} onClose={() => setReservation([])} />
       )}
     </div>
   );
@@ -1077,9 +1070,8 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
 function PublicCheckout({
   trip,
   date,
-  paymentMode,
   onClose,
-  onPaid,
+  onReserved,
 }: {
   trip: {
     destination?:string;
@@ -1091,16 +1083,13 @@ function PublicCheckout({
     occupiedSeats: number[];
   };
   date: string;
-  paymentMode: string;
   onClose: () => void;
-  onPaid: (booking: Booking, batch:Booking[]) => void;
+  onReserved: (bookings: PublicReservation[]) => void;
 }) {
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]),
     [passenger, setPassenger] = useState({
       name: "",
       phone: "",
-      cnic: "",
-      gender: "Male" as "Male" | "Female",
     }),
     [processing, setProcessing] = useState(false),
     [error, setError] = useState("");
@@ -1124,35 +1113,31 @@ function PublicCheckout({
     if (
       !selectedSeats.length ||
       !passenger.name.trim() ||
-      !passenger.phone.trim() ||
-      !passenger.cnic.trim()
+      !passenger.phone.trim()
     ) {
       setError(
-        "Select a seat and enter the passenger name, mobile number and ID.",
+        "Select a seat and enter the passenger name and mobile number.",
       );
       return;
     }
     setError("");
     setProcessing(true);
     try {
-      const result = await api.createPublicBooking<Booking>({
+      const result = await api.createPublicBooking<PublicReservation>({
         passenger: passenger.name.trim(),
         phone: passenger.phone.trim(),
-        cnic: passenger.cnic.trim(),
-        gender: passenger.gender,
         destination,
-        boardingPoint: trip.route.boarding,
         tripId: trip.schedule.id,
         date,
         seats: selectedSeats,
         quotedFares:selectedSeats.map(seat=>seatFare(trip.route,trip.bus,destination,seat)),
       });
-      onPaid(result.booking,result.bookings);
+      onReserved(result.bookings);
     } catch (requestError) {
       setError(
         requestError instanceof Error
           ? requestError.message
-          : "The booking could not be completed.",
+          : "The reservation could not be completed.",
       );
     } finally {
       setProcessing(false);
@@ -1163,7 +1148,7 @@ function PublicCheckout({
       className="checkout-overlay"
       role="dialog"
       aria-modal="true"
-      aria-label="Buy ticket"
+      aria-label="Reserve seats"
     >
       <div className="checkout-modal">
         <header className="checkout-header">
@@ -1171,7 +1156,7 @@ function PublicCheckout({
             <button type="button" onClick={onClose}>
               <ArrowLeft size={16} /> Back
             </button>
-            <h2>Book your seats</h2>
+            <h2>Reserve your seats</h2>
             <p>
               {routeLabel(trip.route)} · {date} at {trip.time}
             </p>
@@ -1208,7 +1193,7 @@ function PublicCheckout({
               <SectionTitle
                 number="2"
                 title="Passenger details"
-                text="Bring the same ID when boarding."
+                text="Use the name and mobile number you will give at the counter."
               />
               <div className="checkout-form">
                 {routeDestinations(trip.route).length>1&&<label><span>Destination</span><select value={destination} onChange={e=>setDestination(e.target.value)}>{routeDestinations(trip.route).map(stop=><option key={stop.name}>{stop.name}</option>)}</select></label>}
@@ -1233,52 +1218,13 @@ function PublicCheckout({
                     inputMode="tel"
                   />
                 </label>
-                <label>
-                  <span>CNIC / Passport</span>
-                  <input
-                    value={passenger.cnic}
-                    onChange={(event) =>
-                      setPassenger({ ...passenger, cnic: event.target.value })
-                    }
-                    placeholder="XXXXX-XXXXXXX-X"
-                  />
-                </label>
-                <fieldset className="compact-choice">
-                  <legend>Gender</legend>
-                  <div>
-                    <button
-                      type="button"
-                      className={
-                        passenger.gender === "Male" ? "choice active" : "choice"
-                      }
-                      onClick={() =>
-                        setPassenger({ ...passenger, gender: "Male" })
-                      }
-                    >
-                      Male
-                    </button>
-                    <button
-                      type="button"
-                      className={
-                        passenger.gender === "Female"
-                          ? "choice active"
-                          : "choice"
-                      }
-                      onClick={() =>
-                        setPassenger({ ...passenger, gender: "Female" })
-                      }
-                    >
-                      Female
-                    </button>
-                  </div>
-                </fieldset>
               </div>
             </section>
             <section className="checkout-card payment-card">
               <SectionTitle
                 number="3"
-                title="Payment"
-                text="Complete your booking and receive your tickets."
+                title="Reservation summary"
+                text="The counter issues tickets after payment."
                 icon
               />
               <div className="payment-total">
@@ -1299,25 +1245,75 @@ function PublicCheckout({
               <button
                 className="pay-button"
                 type="button"
-                disabled={processing||paymentMode!=="demo"}
+                disabled={processing}
                 onClick={reserveSeats}
               >
                 {processing ? (
                   <>
-                    <RefreshCw className="spin" size={17} /> Issuing ticket…
+                    <RefreshCw className="spin" size={17} /> Reserving seats…
                   </>
                 ) : (
                   <>
-                    <CreditCard size={17} /> Pay & issue tickets
+                    <CalendarCheck size={17} /> Confirm reservation
                   </>
                 )}
               </button>
               <small className="gateway-note">
-                <ShieldCheck size={13} /> Your ticket details are saved with your booking.
-                {paymentMode === "disabled" && " Live 1Bill checkout is unavailable until merchant setup."}
+                <ShieldCheck size={13} /> Your seats are held for up to two hours or until departure, whichever comes first.
               </small>
             </section>
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReservationConfirmation({ bookings, onClose }: { bookings: PublicReservation[]; onClose: () => void }) {
+  const card = useRef<HTMLElement>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState("");
+  const first = bookings[0];
+  const until = new Intl.DateTimeFormat("en-PK", {
+    dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi",
+  }).format(new Date(first.expiresAt));
+  const download = async () => {
+    if (!card.current) return;
+    setDownloading(true);
+    setError("");
+    try {
+      await downloadReservationPdf(card.current, first.ticketNo);
+    } catch {
+      setError("The PDF could not be downloaded. Please try again.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+  return (
+    <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation confirmation">
+      <div className="receipt-modal reservation-confirmation">
+        <article className="reservation-card" ref={card}>
+          <p className="reservation-brand">MADINA EXPRESS</p>
+          <h2>Reservation confirmation</h2>
+          <p className="reservation-banner">UNPAID · NOT VALID FOR BOARDING</p>
+          <dl>
+            <dt>Passenger</dt><dd>{first.passenger}</dd>
+            <dt>Route</dt><dd>{first.route}</dd>
+            <dt>Destination</dt><dd>{first.destination}</dd>
+            <dt>Departure</dt><dd>{ticketDate(first.date)} · {first.time} PKT</dd>
+            <dt>Terminal</dt><dd>{first.boardingPoint}</dd>
+            <dt>Seats / references</dt><dd>{bookings.map(booking => <span key={booking.ticketNo}>{seatList(booking.seats, booking.service)} · {booking.ticketNo}</span>)}</dd>
+            <dt>Amount due</dt><dd>{money(bookings.reduce((total, booking) => total + booking.total, 0))}</dd>
+            <dt>Held until</dt><dd>{until} PKT</dd>
+          </dl>
+          <p>Show this confirmation at the counter and pay before the hold expires to receive your travel tickets.</p>
+        </article>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="receipt-actions">
+          <button className="secondary-button" type="button" onClick={onClose}>Done</button>
+          <button className="primary-button" type="button" onClick={download} disabled={downloading}>
+            <FileText size={16} /> {downloading ? "Preparing PDF…" : "Download reservation PDF"}
+          </button>
         </div>
       </div>
     </div>
@@ -1353,6 +1349,8 @@ function SectionTitle({
 function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
+    [otp, setOtp] = useState(""),
+    [requiresOtp, setRequiresOtp] = useState(false),
     [loginNotice, setLoginNotice] = useState(""),
     [signingIn, setSigningIn] = useState(false);
   const signIn = async (event: FormEvent<HTMLFormElement>) => {
@@ -1361,9 +1359,10 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     setSigningIn(true);
     setLoginNotice("");
     try {
-      await api.login<{ user: StaffUser }>(email, password);
+      await api.login<{ user: StaffUser }>(email, password, otp);
       onNavigate("/manage");
     } catch (error) {
+      if (error instanceof ApiError && error.code === "authenticator_required") setRequiresOtp(true);
       setLoginNotice(
         error instanceof ApiError
           ? error.message
@@ -1387,7 +1386,7 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
             <span>Email or username</span>
             <input
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => { setEmail(event.target.value); setRequiresOtp(false); setOtp(""); }}
               placeholder="Enter your username"
               autoComplete="username"
             />
@@ -1402,6 +1401,11 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
               autoComplete="current-password"
             />
           </label>
+          {requiresOtp && <label>
+            <span>Authenticator code</span>
+            <input value={otp} onChange={event => setOtp(event.target.value)} inputMode="numeric"
+              autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} required />
+          </label>}
           <div className="login-row">
 
             <button
@@ -5010,7 +5014,6 @@ function SettingsView({
                   <option value="counter">Counter agent</option>
                   <option value="dispatcher">Dispatcher</option>
                   <option value="finance">Finance</option>
-                  <option value="admin">Administrator</option>
                 </select>
               </label>
               <label className="span-2">
@@ -5041,7 +5044,7 @@ function SettingsView({
             <span>
               <strong>Public payment rule</strong>
               <small>
-                Web bookings issue tickets after checkout. Counter staff can reserve seats and collect payment on the ticket page.
+                Public reservations are unpaid and expire after two hours or at departure. Counter staff issue tickets after collecting payment.
               </small>
             </span>
           </div>
@@ -5360,8 +5363,8 @@ function BookingTable({
                 <td>
                   <strong>{b.source}</strong>
                   <small>
-                    {b.paymentMethod}
-                    {b.paymentReference ? ` · ${presentationText(b.paymentReference)}` : ""}
+                    {b.bookingStatus === "Reserved" ? "Unpaid reservation" : b.paymentMethod}
+                    {b.paymentReference && <span title={b.paymentReference}> · {shortPaymentReference(b.paymentReference)}</span>}
                   </small>
                 </td>
                 <td>
@@ -5651,7 +5654,7 @@ function ReceiptModal({ booking, batch = [], paper = "thermal", onClose }: {
   useEffect(() => () => printRun.current?.abort(), []);
   const entries=batch.length?batch:[booking];
   const hasBoardingPass = entries.some(entry => ticketPresentation(entry).canBoard);
-  if(booking.bookingStatus==="Reserved")return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation saved"><div className="receipt-modal reservation-confirmation"><h2>Seats reserved</h2><p>{booking.passenger} · Seat {seatList(booking.seats,booking.service)}</p><p>{booking.route} · {ticketDate(booking.date)} · {booking.time}</p><p>Book and pay online to receive your ticket and boarding token.</p><button className="primary-button" onClick={onClose}>Done</button></div></div>;
+  if(booking.bookingStatus==="Reserved")return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation saved"><div className="receipt-modal reservation-confirmation"><h2>Seats reserved</h2><p>{booking.passenger} · Seat {seatList(booking.seats,booking.service)}</p><p>{booking.route} · {ticketDate(booking.date)} · {booking.time}</p><p>Pay at the counter to receive your ticket and boarding token.</p><button className="primary-button" onClick={onClose}>Done</button></div></div>;
   return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}><div className="receipt-modal ticket-print-modal">
     <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>{paper === "tm-t88iv" ? "Epson TM-T88IV · cut after each slip" : paper === "a4" ? "A4 portrait · one page per slip" : "80 mm thermal portrait · one job per slip"}</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
     <div ref={printArea} className="receipt thermal-ticket"><TicketPrintPairs entries={entries} printedAt={printedAt} /></div>

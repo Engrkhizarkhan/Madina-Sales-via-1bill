@@ -81,3 +81,33 @@ sudo systemctl start madina-express
 ```
 
 Future `deploy/update.sh` runs use PM2 again. PM2 startup/background: [official documentation](https://pm2.keymetrics.io/docs/usage/startup/).
+
+## Production access
+
+The public portal is at [Madina Express](https://madinaexpress.duckdns.org). Staff sign in at [Staff sign-in](https://staff.madinaexpress.duckdns.org/login). Production uses the separate HTTPS virtual hosts in `nginx-production.conf.template`. Only the public reservation APIs are exposed on the passenger host.
+
+The main administrator signs in with username `admin`, a password, and a six-digit authenticator code. Initial enrollment details and the temporary password are in root-only files on the VPS. Retrieve them through SSH and change the temporary password after the first sign-in. Store the authenticator recovery key separately.
+
+```bash
+ssh root@62.171.173.11 'cat /root/madina-express-admin-enrollment.txt /root/madina-express-initial-login.txt'
+```
+
+The main administrator can create staff accounts under **Settings**. Staff require a certificate from one of the three enrolled terminal PCs for login and subsequent authenticated requests.
+
+### Enroll a terminal PC
+
+1. Copy `terminal-enrollment.inf` to the terminal PC. While signed in to the Windows account used for ticketing, open Command Prompt in that folder and run `certreq -new terminal-enrollment.inf terminal.req`. The private key stays in that Windows user's TPM. Enrollment requires a working TPM and a Chromium browser using the same Windows account.
+2. Retrieve `terminal.req` directly from that PC and transfer the request to the server via SSH. Use slot 1, 2, or 3. Verify which PC produced the request before signing it.
+
+   ```bash
+   scp terminal.req root@62.171.173.11:/root/terminal-1.req
+   ssh root@62.171.173.11 'cd /opt/madina-express && bash deploy/issue-terminal-certificate.sh 1 /root/terminal-1.req'
+   scp root@62.171.173.11:/root/madina-terminal-ca/terminal-1.cer terminal-1.cer
+   ```
+
+3. Return the certificate to the same PC and Windows account, then run `certreq -accept -user terminal-1.cer`. Restart the counter browser and choose the Madina Express terminal certificate when prompted at staff sign-in.
+4. Repeat for the other two slots. Enrolling a replacement in a slot overwrites that slot's previous certificate pin. To revoke access, remove the relevant `/etc/nginx/madina-terminal-devices/terminal-N.conf` on the server, run `nginx -t`, and reload Nginx.
+
+### Backup retention
+
+The daily backup runs around 02:30 Pakistan time. It verifies the gzip file before publishing it and removes local database backups older than 30 days. Store important backups outside the VPS if you need to recover from loss of the machine.

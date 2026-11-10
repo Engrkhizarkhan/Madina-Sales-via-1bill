@@ -6250,3 +6250,27 @@ td small {
 .service-fares { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px; }
 @media(max-width:600px) { .class-row { grid-template-columns:minmax(0,1fr) auto; }.class-row label:nth-child(2){grid-row:2;grid-column:1;}.class-row>button{grid-column:2;grid-row:1;}.service-fares{grid-template-columns:1fr;} }
 .seat-class-key{display:flex;justify-content:center;flex-wrap:wrap;gap:10px;margin:5px 0 10px;font-size:11px;color:#355b86;}
+
+.reservation-card { padding: clamp(15px, 4vw, 28px); color: #162f43; background: #fff; overflow-wrap: anywhere; }
+.reservation-card .reservation-brand { margin: 0 0 8px; color: #23547e; font-size: 13px; font-weight: 800; letter-spacing: .12em; }
+.reservation-card h2 { margin: 0 0 12px; font-size: clamp(20px, 5vw, 27px); }
+.reservation-card .reservation-banner { margin: 0 0 18px; padding: 10px; border-left: 4px solid #b37611; background: #fff2d4; color: #694310; font-weight: 800; }
+.reservation-card dl { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); margin: 0 0 16px; }
+.reservation-card :is(dt, dd) { margin: 0; padding: 7px 4px; border-bottom: 1px solid #dce7ef; }
+.reservation-card dd { font-weight: 650; }
+.reservation-card dd span { display: block; }
+.reservation-card > p:last-child { margin: 0; line-height: 1.5; }
+.reservation-confirmation .receipt-actions { flex-wrap: wrap; gap: 8px; }
+
+@media (max-width: 760px) {
+  .public-trip { grid-template-columns: minmax(0, 1fr) minmax(0, .55fr) minmax(0, 1fr); }
+  .public-trip > *, .checkout-body > *, .checkout-form > *, .route-service, .class-row > *, .report-document { min-width: 0; }
+  .public-trip :is(strong, small), .checkout-header p, .thermal-ticket :is(th, td), .route-service label { overflow-wrap: anywhere; }
+  .checkout-body { grid-template-columns: minmax(0, 1fr); max-height: calc(100dvh - 126px); }
+  .receipt-overlay { padding-inline: 8px; }
+  .receipt-modal { max-width: 100%; }
+  .receipt-modal .thermal-ticket { max-width: calc(100% - 16px); }
+  .receipt-modal .thermal-heading h2 { font-size: clamp(16px, 5vw, 23px); white-space: normal; }
+  .receipt-modal .ticket-departure { grid-template-columns: minmax(0, 1fr) minmax(0, 23mm); }
+  .receipt-modal .ticket-departure svg { max-width: 100%; height: auto; }
+}

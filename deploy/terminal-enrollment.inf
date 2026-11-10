@@ -1,0 +1,13 @@
+[Version]
+Signature="$Windows NT$"
+
+[NewRequest]
+Subject = "CN=Madina Express Terminal"
+KeyAlgorithm = RSA
+KeyLength = 2048
+HashAlgorithm = SHA256
+ProviderName = "Microsoft Platform Crypto Provider"
+Exportable = FALSE
+MachineKeySet = FALSE
+RequestType = PKCS10
+KeyUsage = 0x80

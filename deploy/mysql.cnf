@@ -2,3 +2,4 @@
 default-time-zone = '+05:00'
 bind-address = 127.0.0.1
 mysqlx-bind-address = 127.0.0.1
+binlog_expire_logs_seconds = 604800

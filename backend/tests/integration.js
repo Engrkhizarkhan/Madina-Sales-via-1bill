@@ -100,15 +100,32 @@ try {
   const publicSeat = Array.from({ length: publicBus.seats }, (_, index) => publicBus.seats - index)
     .find((number) => !publicOccupied.includes(number));
   if (!publicSeat) throw new Error("No public reservation test seat is available.");
-  const publicReservation = await request("POST", "/public/bookings", {
-    passenger:"Public Paid Demo QA",phone:"03001112222",cnic:"17301-7654321-9",gender:"Male",tripId:publicTrip.id,date:publicDate,seats:[publicSeat],bookingStatus:"Reserved",paid:0,paymentReference:"CLIENT-FORGED",
-  });
-  check(publicReservation.status===201&&publicReservation.body.booking.bookingStatus==='Confirmed'&&publicReservation.body.booking.paid===500,'web demo issues a fully paid ticket and cannot be forced into a reservation');
-  createdBookings.push(publicReservation.body.booking.id);
-  check(publicReservation.body.booking.paymentMethod==='1Bill'&&publicReservation.body.booking.paymentReference.startsWith('DEMO-1BILL-'),'server marks simulated 1Bill payment without trusting the client reference');
-  check((await request('POST',`/bookings/${publicReservation.body.booking.id}/cancel`,{},csrf)).status===409,'paid web ticket requires an audited refund');
-  const publicRefund=await request('POST',`/bookings/${publicReservation.body.booking.id}/refunds`,{amount:500,method:'1Bill',reason:'Passenger request',reference:'DEMO-REFUND-QA'},csrf);
-  check(publicRefund.status===201&&publicRefund.body.booking.bookingStatus==='Refunded','web demo refund releases the seat through the ledger');
+  const publicPayload = {
+    passenger: "Public Reservation QA", phone: "03001112222", cnic: "17301-7654321-9",
+    tripId: publicTrip.id, date: publicDate, seats: [publicSeat], bookingStatus: "Confirmed",
+    paid: 500, paymentReference: "CLIENT-FORGED",
+  };
+  const publicReservation = await request("POST", "/public/bookings", publicPayload, undefined, false);
+  const confirmation = publicReservation.body.bookings?.[0];
+  check(publicReservation.status === 201 && confirmation?.ticketNo.startsWith("RS-") &&
+    confirmation.expiresAt && !("cnic" in confirmation) && !("phone" in confirmation),
+    "public checkout returns an expiring reservation confirmation with no ID or phone");
+  const [held] = await pool.execute("SELECT id, booking_status, payment_status, paid, payment_reference, cnic FROM bookings WHERE ticket_no = ?", [confirmation.ticketNo]);
+  createdBookings.push(held[0].id);
+  check(held[0].booking_status === "Reserved" && held[0].payment_status === "Unpaid" &&
+    Number(held[0].paid) === 0 && !held[0].payment_reference && !held[0].cnic,
+    "server ignores forged payment and identity fields for public reservations");
+  const [ledger] = await pool.execute("SELECT COUNT(*) count FROM financial_transactions WHERE booking_id = ?", [held[0].id]);
+  check(Number(ledger[0].count) === 0, "unpaid web hold writes no ledger transaction");
+  check((await request("POST", "/public/bookings", publicPayload, undefined, false)).status === 409,
+    "an unpaid web hold protects the selected seat");
+  await pool.execute("UPDATE bookings SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE id = ?", [held[0].id]);
+  const renewed = await request("POST", "/public/bookings", publicPayload, undefined, false);
+  check(renewed.status === 201, "an expired web hold releases its seat");
+  const [[replacementHold]] = await pool.execute("SELECT id FROM bookings WHERE ticket_no = ?", [renewed.body.bookings[0].ticketNo]);
+  createdBookings.push(replacementHold.id);
+  check((await request("POST", `/bookings/${replacementHold.id}/cancel`, {}, csrf)).status === 200,
+    "counter staff can cancel a web reservation");
   check((await request("POST", "/auth/login", { identity: "not-a-user", password: "wrong" })).status === 401, "invalid staff login is rejected");
 
   const bootstrap = await request("GET", "/admin/bootstrap");

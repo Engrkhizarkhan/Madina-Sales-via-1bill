@@ -13,8 +13,9 @@ export const fail = (message, status = 400, code = "request_error") => {
 };
 
 export function requireFields(data, fields) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) fail("Enter the requested details.", 422, "validation_error");
   for (const field of fields) {
-    if (!(field in data) || (typeof data[field] === "string" && !data[field].trim())) {
+    if (!Object.hasOwn(data, field) || data[field] == null || (typeof data[field] === "string" && !data[field].trim())) {
       fail(`${field} is required.`, 422, "validation_error");
     }
   }

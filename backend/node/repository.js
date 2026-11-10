@@ -87,13 +87,10 @@ export async function fetchTripRuns(serviceDate = null, executor = pool) {
   }));
 }
 
-async function mapBooking(row, executor = pool) {
-  const seats = await rows("SELECT seat_number FROM booking_seats WHERE booking_id = ? ORDER BY seat_number", [row.id], executor);
-  const refunds = await rows(
-    `SELECT r.id, r.amount, r.method, r.reason, r.reference, r.notes, r.processed_at, u.name processed_by_name
-     FROM refunds r JOIN users u ON u.id = r.processed_by WHERE r.booking_id = ? ORDER BY r.processed_at`,
-    [row.id], executor,
-  );
+const refundDetails = `SELECT r.id, r.booking_id, r.amount, r.method, r.reason, r.reference, r.notes,
+  r.processed_at, u.name processed_by_name FROM refunds r JOIN users u ON u.id = r.processed_by`;
+
+function mapBooking(row, seats, refunds) {
   return {
     id: row.id, ticketNo: row.ticket_no, source: row.source, passenger: row.passenger,
     phone: row.phone, cnic: row.cnic, gender: row.gender, route: row.route_label,
@@ -114,13 +111,32 @@ async function mapBooking(row, executor = pool) {
 }
 
 export async function fetchBooking(id, executor = pool) {
-  const result = await rows("SELECT * FROM bookings WHERE id = ? LIMIT 1", [id], executor);
-  return result[0] ? mapBooking(result[0], executor) : null;
+  const [row] = await rows("SELECT * FROM bookings WHERE id = ? LIMIT 1", [id], executor);
+  if (!row) return null;
+  const seats = await rows("SELECT seat_number FROM booking_seats WHERE booking_id = ? ORDER BY seat_number", [id], executor);
+  const refunds = await rows(`${refundDetails} WHERE r.booking_id = ? ORDER BY r.processed_at`, [id], executor);
+  return mapBooking(row, seats, refunds);
+}
+
+function groupByBooking(records) {
+  const groups = new Map();
+  for (const record of records) {
+    const group = groups.get(record.booking_id);
+    if (group) group.push(record);
+    else groups.set(record.booking_id, [record]);
+  }
+  return groups;
 }
 
 export async function fetchBookings(executor = pool) {
-  const result = await rows("SELECT * FROM bookings ORDER BY created_at DESC", [], executor);
-  return Promise.all(result.map((row) => mapBooking(row, executor)));
+  const [bookings, seats, refunds] = await Promise.all([
+    rows("SELECT * FROM bookings ORDER BY created_at DESC", [], executor),
+    rows("SELECT booking_id, seat_number FROM booking_seats ORDER BY booking_id, seat_number", [], executor),
+    rows(`${refundDetails} ORDER BY r.booking_id, r.processed_at`, [], executor),
+  ]);
+  const bookingSeats = groupByBooking(seats);
+  const bookingRefunds = groupByBooking(refunds);
+  return bookings.map(row => mapBooking(row, bookingSeats.get(row.id) ?? [], bookingRefunds.get(row.id) ?? []));
 }
 
 export async function fetchExpenses(executor = pool) {
@@ -138,12 +154,13 @@ export async function fetchExpenses(executor = pool) {
   }));
 }
 
-export async function publicOccupancy(executor = pool) {
+export async function publicOccupancy(date, executor = pool) {
   const result = await rows(
     `SELECT bs.trip_run_id, b.bus_registration, b.travel_date, b.travel_time, bs.seat_number
      FROM booking_seats bs JOIN bookings b ON b.id = bs.booking_id
-     WHERE bs.active = 1 AND b.booking_status IN ('Confirmed','Reserved')`,
-    [], executor,
+     WHERE b.travel_date = ? AND bs.active = 1 AND b.booking_status IN ('Confirmed','Reserved')
+       AND (b.expires_at IS NULL OR b.expires_at > NOW())`,
+    [date], executor,
   );
   const groups = new Map();
   for (const row of result) {

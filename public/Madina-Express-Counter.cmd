@@ -10,4 +10,4 @@ if not exist "%chrome%" (
     exit /b 1
 )
 
-start "" "%chrome%" --user-data-dir="%LOCALAPPDATA%\MadinaExpress\CounterChrome" --no-first-run --no-default-browser-check --use-system-default-printer --kiosk-printing --app="https://20.187.97.214/manage"
+start "" "%chrome%" --user-data-dir="%LOCALAPPDATA%\MadinaExpress\CounterChrome" --no-first-run --no-default-browser-check --use-system-default-printer --kiosk-printing --app="https://staff.madinaexpress.duckdns.org/manage"

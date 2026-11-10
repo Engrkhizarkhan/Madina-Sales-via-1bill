@@ -50,8 +50,23 @@ function counterFares(fares, overrides) {
   });
 }
 
+export async function releaseExpiredReservations(executor = pool, tripRunId = null) {
+  await query(executor,
+    `UPDATE bookings b JOIN booking_seats bs ON bs.booking_id = b.id
+     SET b.booking_status = 'Cancelled', bs.active = 0
+     WHERE b.booking_status = 'Reserved' AND b.expires_at <= NOW()
+     ${tripRunId ? "AND b.trip_run_id = ?" : ""}`,
+    tripRunId ? [tripRunId] : [],
+  );
+}
+
 export async function createBooking(data, user, isPublic, req) {
-  const reserved = !isPublic && data.bookingStatus === "Reserved";
+  const reserved = isPublic || data.bookingStatus === "Reserved";
+  if (isPublic) {
+    const phone = String(data.phone || "").replace(/[\s()-]/g, "").replace(/^(?:\+92|0092)/, "0");
+    if (!/^03\d{9}$/.test(phone)) fail("Enter a valid Pakistani mobile number.", 422, "validation_error");
+    data = { ...data, phone, cnic: "", gender: "Unspecified", boardingPoint: undefined };
+  }
   const details=passengerDetails(data,reserved);
   requireFields(data, ["tripId", "date", "seats"]);
   const seats = [...new Set(Array.isArray(data.seats) ? data.seats.map(Number).filter(Number.isInteger) : [])];
@@ -72,6 +87,9 @@ export async function createBooking(data, user, isPublic, req) {
     }
     const travelDate = String(data.date);
     if (!validDate(travelDate) || travelDate < pakistanDate()) fail("Choose today or a future travel date.", 422, "validation_error");
+    if (isPublic && travelDate > pakistanDate(new Date(Date.now() + 90 * 86400000))) {
+      fail("Online reservations open 90 days before departure.", 422, "validation_error");
+    }
     if (!parseJson(trip.service_days).includes(weekday(travelDate))) fail("This trip does not run on the selected date.", 409, "departure_unavailable");
     const run = await ensureRun(connection, trip, travelDate);
     await assertSaleOpen(connection, run, travelDate, isPublic);
@@ -80,12 +98,12 @@ export async function createBooking(data, user, isPublic, req) {
     }
     const tripRunId = run.id;
     if (seats.some((seat) => seat < 1 || seat > Number(run.snapshot.bus.seats))) fail("One or more selected seats are invalid.", 422, "validation_error");
-    if (isPublic && config.paymentMode !== "demo") fail("Online payment is not configured. Please contact the terminal.",503,"payment_unavailable");
+    await releaseExpiredReservations(connection, tripRunId);
 
-    const paymentMethod = isPublic ? "1Bill" : String(data.paymentMethod || "Cash");
+    const paymentMethod = reserved ? "Cash" : String(data.paymentMethod || "Cash");
     allowed(paymentMethod, ["Cash", "Card", "Bank transfer", "1Bill"], "paymentMethod");
     if (paymentMethod === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or card.", 409, "payment_unavailable");
-    let paymentReference = isPublic ? `DEMO-1BILL-${uuid()}` : String(data.paymentReference || "").trim();
+    let paymentReference = String(data.paymentReference || "").trim();
     if (!reserved && paymentMethod !== "Cash" && !paymentReference) fail("A verified payment reference is required.", 422, "validation_error");
     paymentReference = reserved ? '' : paymentReference || `CASH-${timeCode()}`;
     const route=(await fetchRoutes(false,connection)).find(r=>r.id===trip.route_id) || run.snapshot.route;
@@ -110,7 +128,8 @@ export async function createBooking(data, user, isPublic, req) {
       const paid = reserved ? 0 : total;
       const id = uuid("booking-");
       const ticketNo = await nextTicketNumber(connection,reserved);
-      const expiresAt = null;
+      const departure = Date.parse(`${travelDate}T${run.snapshot.departure.slice(0, 5)}:00+05:00`);
+      const expiresAt = isPublic ? sqlDateTime(new Date(Math.min(departure, Date.now() + 2 * 60 * 60 * 1000))) : null;
       await query(connection,
         `INSERT INTO bookings
          (id, ticket_no, source, passenger, phone, cnic, gender, route_label, destination, boarding_point,
@@ -183,7 +202,7 @@ export async function confirmReservation(id, data, user, req) {
       [id],
     );
     const row = records[0];
-    if (!row || row.booking_status !== "Reserved") fail("Active reservation not found.", 404, "not_found");
+    if (!row || row.booking_status !== "Reserved" || (row.expires_at && Date.parse(isoDateTime(row.expires_at)) <= Date.now())) fail("Active reservation not found.", 404, "not_found");
     const method = allowed(String(data.paymentMethod || "Cash"), ["Cash", "Card", "Bank transfer", "1Bill"], "paymentMethod");
     if (method === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or card.", 409, "payment_unavailable");
     let reference = String(data.paymentReference || "").trim();
@@ -520,7 +539,7 @@ export async function createExpense(data, user, req) {
 
 export async function createStaffUser(data, user, req) {
   requireFields(data, ["name", "email", "username", "role", "password"]);
-  const role = allowed(String(data.role), ["admin", "manager", "counter", "dispatcher", "finance"], "role");
+  const role = allowed(String(data.role), ["manager", "counter", "dispatcher", "finance"], "role");
   const email = String(data.email).trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail("Enter a valid email address.", 422, "validation_error");
   const username = String(data.username).trim().toLowerCase();
@@ -528,7 +547,7 @@ export async function createStaffUser(data, user, req) {
     fail("Username must be 3-40 characters using letters, numbers, dots, dashes or underscores.", 422, "validation_error");
   }
   const password = String(data.password);
-  if (password.length < 12 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+  if (password.length < 12 || Buffer.byteLength(password) > 72 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
     fail("Use at least 12 characters with upper-case, lower-case, number and symbol.", 422, "weak_password");
   }
   const result = await query(pool,

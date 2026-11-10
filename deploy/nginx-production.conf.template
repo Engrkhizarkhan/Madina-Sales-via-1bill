@@ -1,0 +1,49 @@
+# Install in sites-available and replace __PUBLIC_HOST__ and __STAFF_HOST__.
+map "$ssl_client_verify:$ssl_client_fingerprint" $madina_device {
+    default "";
+    include /etc/nginx/madina-terminal-devices/*.conf;
+}
+
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name __PUBLIC_HOST__ __STAFF_HOST__;
+    server_tokens off;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type text/plain; }
+    location / {
+        if ($host = __STAFF_HOST__) { return 301 https://__STAFF_HOST__$request_uri; }
+        return 301 https://__PUBLIC_HOST__$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name __PUBLIC_HOST__;
+    include /etc/nginx/snippets/madina-common.conf;
+    location ~ ^/api/(health|public/(bootstrap|trip-runs|bookings))$ {
+        include /etc/nginx/snippets/madina-api.conf;
+        proxy_set_header X-Madina-Device "";
+    }
+    location /api/ { return 404; }
+    location ~* ^/(login|manage)(/|$) { return 404; }
+    location / { try_files $uri $uri/ /index.html; }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name __STAFF_HOST__;
+    include /etc/nginx/snippets/madina-common.conf;
+
+    ssl_client_certificate /etc/nginx/madina-device-ca.crt;
+    ssl_verify_client optional;
+    ssl_verify_depth 1;
+
+    location = / { return 302 /login; }
+    location /api/ {
+        include /etc/nginx/snippets/madina-api.conf;
+        proxy_set_header X-Madina-Device $madina_device;
+    }
+    location / { try_files $uri $uri/ /index.html; }
+}
