@@ -5076,8 +5076,8 @@ function SettingsView({
             <button className="secondary-button" type="button" onClick={() => setSampleReceipt(true)}>
               <Printer size={15} /> Print sample
             </button>
-            <a className="secondary-button" href={`${appBase}/Madina-Express-Counter.cmd`} download>
-              Windows counter launcher
+            <a className="secondary-button" href={`${appBase}/Madina-Express-Print-Setup.cmd`} download>
+              Windows print setup
             </a>
           </div>
         </section>

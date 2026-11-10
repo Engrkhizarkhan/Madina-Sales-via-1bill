@@ -30,8 +30,10 @@ Never commit `backend/.env`; it contains database and payment secrets.
 ## Counter printing without confirmation
 
 1. Set the 80 mm thermal printer as the counter computer's default printer. Use 80 mm roll paper and enable cutting after each job in the printer's preferences if the driver offers that setting.
-2. On Windows, download **Windows counter launcher** from **System Settings → Receipt configuration**, save it to the desktop, and use it to open the staff workspace. It starts Chrome with a dedicated counter profile and sends jobs to the system default printer without a prompt.
-3. Sign in and enable **Auto-print after collecting payment** in **System Settings → Receipt configuration**. Reprint an existing paid ticket to check that the passenger receipt and boarding pass print as two slips.
+2. On the counter PC, download and run **Windows print setup** from **System Settings → Receipt configuration**. It enables silent printing in Chrome and Edge 144 or later for the current Windows account. Printing from those browsers goes to the Windows default printer across sites.
+3. Fully close and reopen the browser, then enable **Auto-print after collecting payment** in **System Settings → Receipt configuration**. Reprint an existing paid ticket to verify that the passenger receipt and boarding pass print separately without confirmation.
+
+If a prompt persists, open `chrome://policy` or `edge://policy` and check that `SilentPrintingEnabled` is `true`. If an organization manages the counter browser, its machine policy can take precedence over the current account's settings.
 
 ## Verification
 
