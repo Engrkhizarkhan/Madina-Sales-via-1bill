@@ -4,37 +4,31 @@ let ticketPrintQueue = Promise.resolve();
 
 export function printTicketBatch(source: HTMLElement, paper: TicketPaper, signal: AbortSignal) {
   const slips = Array.from(source.querySelectorAll(".passenger-receipt, .conductor-token"), slip => slip.cloneNode(true) as Element);
-  const batch = ticketPrintQueue.then(async () => {
-    for (const slip of slips) {
-      signal.throwIfAborted();
-      await printTicketSlip(slip, paper, signal);
-    }
-  });
-  ticketPrintQueue = batch.catch(() => undefined);
-  return batch;
-}
-
-function printTicketSlip(slip: Element, paper: TicketPaper, signal: AbortSignal) {
+  if (!slips.length) return Promise.resolve();
   const printArea = document.createElement("div");
   printArea.className = "receipt thermal-ticket";
   printArea.style.maxWidth = "none";
-  printArea.append(slip);
-  const singleSlip = `@media print {
+  printArea.append(...slips);
+  const slipPages = `@media print {
     body > .receipt.thermal-ticket > article { page: auto; break-after: auto; }
+    body > .receipt.thermal-ticket > article + article { break-before: page; }
   }`;
-  return printDocument(printArea, {
-    title: slip.getAttribute("aria-label") ?? "Madina Express ticket",
+  const batch = ticketPrintQueue.then(() => printDocument(printArea, {
+    title: slips.length > 1 ? "Madina Express tickets" : slips[0].getAttribute("aria-label") ?? "Madina Express ticket",
     width: paper === "a4" ? "210mm" : "80mm",
     pageCss: paper === "a4"
       ? `@page { size: A4 portrait; margin: 10mm; }
          @media print { body > .receipt.thermal-ticket { margin-inline: auto !important; } }
-         ${singleSlip}`
+         ${slipPages}`
       : body => {
-        const heightMm = Math.max(81, Math.ceil(body.firstElementChild!.scrollHeight * 25.4 / 96) + 2);
-        return `@page { size: 80mm ${heightMm}mm; margin: 0; } ${singleSlip}`;
+        const heightPx = Math.max(...Array.from(body.querySelectorAll(".thermal-ticket > article"), slip => slip.scrollHeight));
+        const heightMm = Math.max(81, Math.ceil(heightPx * 25.4 / 96) + 2);
+        return `@page { size: 80mm ${heightMm}mm; margin: 0; } ${slipPages}`;
       },
     signal,
-  });
+  }));
+  ticketPrintQueue = batch.catch(() => undefined);
+  return batch;
 }
 
 export async function printDocument(content: HTMLElement, { title, width, pageCss, signal }: {
