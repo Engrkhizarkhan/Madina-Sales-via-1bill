@@ -252,6 +252,12 @@ type PublicOccupancy = {
 };
 type PublicReservation = Pick<Booking, "ticketNo" | "passenger" | "route" | "destination" |
   "boardingPoint" | "service" | "seats" | "total" | "date" | "time"> & { expiresAt: string };
+type PublicJourney = Pick<PublicReservation, "route" | "destination" | "boardingPoint" | "service" |
+  "seats" | "date" | "time"> & {
+    reference: string;
+    status: BookingStatus | "Expired";
+    expiresAt: string | null;
+  };
 type PublicBootstrap = {
   trips: TripRecord[];
   fleet: BusRecord[];
@@ -822,6 +828,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
         </button>
         <nav aria-label="Main navigation">
           <a href="#routes">Reserve a seat</a>
+          <a href="#ticket-lookup">Check a ticket</a>
           <a href="#services">Services</a>
           <a href="#contact">Contact</a>
         </nav>
@@ -929,6 +936,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <Search size={16} /> Search buses
             </button>
           </form>
+          <a className="lookup-jump" href="#ticket-lookup">Already booked? Check your ticket or reservation</a>
         </section>
         {searched && (
           <section className="public-results" aria-live="polite">
@@ -1004,6 +1012,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             )}
           </section>
         )}
+        <PublicTicketLookup />
         <section className="public-benefits" id="services">
           <article>
             <span>
@@ -1068,6 +1077,85 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
         <ReservationConfirmation bookings={reservation} onClose={() => setReservation([])} />
       )}
     </div>
+  );
+}
+
+const journeyStatuses: Record<PublicJourney["status"], string> = {
+  Confirmed: "Confirmed ticket",
+  Reserved: "Reserved · Pay at the counter",
+  Expired: "Reservation expired",
+  Cancelled: "Cancelled",
+  Refunded: "Refunded",
+};
+
+function PublicTicketLookup() {
+  const [reference, setReference] = useState("");
+  const [phone, setPhone] = useState("");
+  const [journey, setJourney] = useState<PublicJourney | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const search = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    setJourney(null);
+    try {
+      const result = await api.lookupJourney<PublicJourney>(reference.trim(), phone.trim());
+      setJourney(result.journey);
+    } catch (error) {
+      setError(error instanceof ApiError ? error.message : "Ticket lookup is unavailable. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="route-finder public-lookup" id="ticket-lookup" aria-labelledby="ticket-lookup-heading">
+      <div className="route-finder-heading">
+        <span><Ticket size={18} /></span>
+        <div>
+          <h2 id="ticket-lookup-heading">Check a ticket or reservation</h2>
+          <p>Use the reference and mobile number from your booking.</p>
+        </div>
+      </div>
+      <form className="public-search lookup-form" onSubmit={search}>
+        <label>
+          <span>Ticket or reservation reference</span>
+          <input value={reference} onChange={event => setReference(event.target.value)} maxLength={40}
+            placeholder="e.g. ME-000123 or RS-000123" autoCapitalize="characters" spellCheck={false} required />
+        </label>
+        <label>
+          <span>Booking mobile number</span>
+          <input type="tel" value={phone} onChange={event => setPhone(event.target.value)} maxLength={30}
+            placeholder="03XX XXXXXXX" required />
+        </label>
+        <button className="search-journey" type="submit" disabled={busy}>
+          <Search size={16} /> {busy ? "Checking…" : "Check details"}
+        </button>
+      </form>
+      {error && <p className="form-error" role="alert">{error}</p>}
+      <div aria-live="polite">
+        {journey && (
+          <article className="lookup-result">
+            <div className="lookup-result-heading">
+              <h3>{journey.reference}</h3>
+              <strong>{journeyStatuses[journey.status]}</strong>
+            </div>
+            <dl>
+              <div><dt>Route</dt><dd>{journey.route}</dd></div>
+              <div><dt>Destination</dt><dd>{journey.destination}</dd></div>
+              <div><dt>Departure</dt><dd>{ticketDate(journey.date)} · {journey.time} PKT</dd></div>
+              <div><dt>Boarding point</dt><dd>{journey.boardingPoint}</dd></div>
+              <div><dt>Seats</dt><dd>{seatList(journey.seats, journey.service)}</dd></div>
+              <div><dt>Bus type</dt><dd>{journey.service}</dd></div>
+              {journey.expiresAt && <div><dt>Held until</dt><dd>{reservationHoldLabel(journey.expiresAt)} PKT</dd></div>}
+            </dl>
+          </article>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -1273,26 +1361,43 @@ function PublicCheckout({
   );
 }
 
+function reservationHoldLabel(expiresAt: string) {
+  return new Intl.DateTimeFormat("en-PK", {
+    dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi",
+  }).format(new Date(expiresAt));
+}
+
 function ReservationConfirmation({ bookings, onClose }: { bookings: PublicReservation[]; onClose: () => void }) {
   const card = useRef<HTMLElement>(null);
+  const autoDownloadStarted = useRef(false);
+  const downloadInProgress = useRef(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
   const first = bookings[0];
-  const until = new Intl.DateTimeFormat("en-PK", {
-    dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Karachi",
-  }).format(new Date(first.expiresAt));
-  const download = async () => {
-    if (!card.current) return;
+  const reference = first.ticketNo;
+  const until = reservationHoldLabel(first.expiresAt);
+
+  const download = useCallback(async () => {
+    if (!card.current || downloadInProgress.current) return;
+    downloadInProgress.current = true;
     setDownloading(true);
     setError("");
     try {
-      await downloadReservationPdf(card.current, first.ticketNo);
+      await downloadReservationPdf(card.current, reference);
     } catch {
-      setError("The PDF could not be downloaded. Please try again.");
+      setError("The PDF could not be downloaded. Please try the download button.");
     } finally {
+      downloadInProgress.current = false;
       setDownloading(false);
     }
-  };
+  }, [reference]);
+
+  useEffect(() => {
+    if (autoDownloadStarted.current) return;
+    autoDownloadStarted.current = true;
+    void download();
+  }, [download]);
+
   return (
     <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation confirmation">
       <div className="receipt-modal reservation-confirmation">

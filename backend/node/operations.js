@@ -226,7 +226,7 @@ export async function confirmReservation(id, data, user, req) {
     const ticketNo = await nextTicketNumber(connection);
     const before = await fetchBooking(id, connection);
     await query(connection,
-      "UPDATE bookings SET ticket_no=?,passenger=?,phone=?,cnic=?,gender=?,destination=?,boarding_point=?,fare=?,discount=?,total=?,paid=?,balance=0,payment_method=?,payment_reference=?,payment_status='Paid',booking_status='Confirmed',expires_at=NULL,seat_printed_at=NOW(),issued_by=? WHERE id=?",
+      "UPDATE bookings SET reservation_no=COALESCE(reservation_no,ticket_no),ticket_no=?,passenger=?,phone=?,cnic=?,gender=?,destination=?,boarding_point=?,fare=?,discount=?,total=?,paid=?,balance=0,payment_method=?,payment_reference=?,payment_status='Paid',booking_status='Confirmed',expires_at=NULL,seat_printed_at=NOW(),issued_by=? WHERE id=?",
       [ticketNo,details.passenger,details.phone,details.cnic,details.gender,destination,String(data.boardingPoint||row.boarding_point||route.boarding),fare,discount,total,total,method,reference,user.name,id]);
     await query(connection,
       "INSERT INTO financial_transactions (booking_id, transaction_type, amount, payment_method, reference, description, created_by) VALUES (?, 'sale', ?, ?, ?, ?, ?)",

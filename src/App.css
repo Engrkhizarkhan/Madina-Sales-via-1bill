@@ -6277,3 +6277,35 @@ td small {
   .receipt-modal .ticket-departure svg { max-width: 100%; height: auto; }
   .reservation-card:not(.reservation-pdf-card) dt { font-size: 14px; }
 }
+
+.route-finder.public-lookup { margin-top: 20px; scroll-margin-top: 16px; }
+.lookup-jump { display: inline-block; margin-top: 14px; color: var(--green-800); font-size: 14px; font-weight: 650; }
+.public-search.lookup-form { grid-template-columns: repeat(2, minmax(0, 1fr)) auto; }
+.lookup-form label { display: grid; gap: 5px; min-width: 0; }
+.lookup-form label > span { color: var(--ink); font-weight: 650; }
+.lookup-form input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+}
+.lookup-result {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f9fbfa;
+  overflow-wrap: anywhere;
+}
+.lookup-result-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+.lookup-result-heading h3 { margin: 0; color: var(--green-950); }
+.lookup-result-heading strong { color: var(--green-800); font-size: 14px; }
+.lookup-result dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 12px 0 0; }
+.lookup-result dt { color: var(--muted); font-size: 13px; }
+.lookup-result dd { margin: 2px 0 0; font-weight: 650; }
+@media (max-width: 600px) {
+  .public-search.lookup-form { grid-template-columns: minmax(0, 1fr); }
+  .lookup-form .search-journey { grid-column: auto; }
+  .lookup-result dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

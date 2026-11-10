@@ -110,6 +110,18 @@ try {
   check(publicReservation.status === 201 && confirmation?.ticketNo.startsWith("RS-") &&
     confirmation.expiresAt && !("cnic" in confirmation) && !("phone" in confirmation),
     "public checkout returns an expiring reservation confirmation with no ID or phone");
+  const lookup = (reference, phone) => request("POST", "/public/ticket-lookup", { reference, phone }, undefined, false);
+  const foundHold = await lookup(confirmation.ticketNo.toLowerCase(), "+92 300 1112222");
+  check(foundHold.status === 200 && foundHold.body.journey.status === "Reserved" &&
+    foundHold.body.journey.date === publicDate && foundHold.body.journey.time === publicTrip.departure &&
+    foundHold.body.journey.seats[0] === publicSeat && foundHold.body.journey.expiresAt === confirmation.expiresAt,
+    "lookup accepts formatted phone and returns the reserved journey");
+  check(!["id", "cnic", "phone", "passenger", "paymentReference"].some(field => field in foundHold.body.journey),
+    "public lookup excludes personal and internal booking fields");
+  const wrongPhone = await lookup(confirmation.ticketNo, "03009998888");
+  const unknownReference = await lookup("RS-UNKNOWN-REFERENCE", publicPayload.phone);
+  check(wrongPhone.status === 404 && unknownReference.status === 404 &&
+    wrongPhone.body.error.message === unknownReference.body.error.message, "lookup conceals unmatched references");
   const [held] = await pool.execute("SELECT id, booking_status, payment_status, paid, payment_reference, cnic FROM bookings WHERE ticket_no = ?", [confirmation.ticketNo]);
   createdBookings.push(held[0].id);
   check(held[0].booking_status === "Reserved" && held[0].payment_status === "Unpaid" &&
@@ -120,6 +132,8 @@ try {
   check((await request("POST", "/public/bookings", publicPayload, undefined, false)).status === 409,
     "an unpaid web hold protects the selected seat");
   await pool.execute("UPDATE bookings SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE id = ?", [held[0].id]);
+  check((await lookup(confirmation.ticketNo, publicPayload.phone)).body.journey?.status === "Expired",
+    "lookup shows an expired reservation before cleanup");
   const renewed = await request("POST", "/public/bookings", publicPayload, undefined, false);
   check(renewed.status === 201, "an expired web hold releases its seat");
   const [[replacementHold]] = await pool.execute("SELECT id FROM bookings WHERE ticket_no = ?", [renewed.body.bookings[0].ticketNo]);
@@ -186,6 +200,12 @@ try {
     throw new Error(`reservation payment creates a confirmed ticket (${confirmed.status}: ${confirmed.body.error?.code || "unexpected response"})`);
   }
   check(true, "reservation payment creates a confirmed ticket");
+  const issuedRef = confirmed.body.booking.ticketNo;
+  const foundTicket = await lookup(issuedRef, bookingRequest.phone);
+  const foundOriginal = await lookup(reservation.body.booking.ticketNo, bookingRequest.phone);
+  check(foundTicket.status === 200 && foundTicket.body.journey.status === "Confirmed" &&
+    foundOriginal.status === 200 && foundOriginal.body.journey.reference === issuedRef,
+    "both the issued ticket and original reservation reference find the confirmed journey");
   const retainedRefund = await request('POST', `/bookings/${reservation.body.booking.id}/refunds`, {amount:100,method:'Cash',reason:'Passenger request',releaseSeats:true,notes:'Passenger cancellation with retained amount'},csrf);
   check(retainedRefund.status === 201 && retainedRefund.body.booking.bookingStatus === 'Cancelled' && retainedRefund.body.booking.paymentStatus === 'Partially refunded', 'partial refund can explicitly cancel ticket while retaining the remainder');
   const contenders = await Promise.all([1,2].map(() => request('POST','/bookings',{...bookingRequest,bookingStatus:'Reserved',paymentMethod:'Cash'},csrf)));

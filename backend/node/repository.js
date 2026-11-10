@@ -110,6 +110,39 @@ function mapBooking(row, seats, refunds) {
   };
 }
 
+export function normalizeBookingPhone(phone) {
+  if (typeof phone !== "string" || phone.length > 30 || !/^\+?[0-9().\s-]+$/.test(phone.trim())) return "";
+  const digits = phone.replace(/\D/g, "").replace(/^(?:0092|92)(3\d{9})$/, "0$1");
+  return /^\d{7,15}$/.test(digits) ? digits : "";
+}
+
+export async function lookupJourney(reference, phone) {
+  const [booking] = await rows(
+    `SELECT id, ticket_no, phone, route_label, destination, boarding_point, service, travel_date, travel_time,
+            booking_status, expires_at,
+            (expires_at <= NOW() AND (booking_status = 'Reserved' OR
+              (booking_status = 'Cancelled' AND updated_at >= expires_at))) AS expired
+     FROM bookings WHERE ticket_no = ? OR reservation_no = ? LIMIT 1`,
+    [reference, reference],
+  );
+  if (!booking || normalizeBookingPhone(booking.phone) !== phone) return null;
+
+  const seats = await rows("SELECT seat_number FROM booking_seats WHERE booking_id = ? ORDER BY seat_number", [booking.id]);
+  const status = booking.expired ? "Expired" : booking.booking_status;
+  return {
+    reference: booking.ticket_no,
+    status,
+    route: booking.route_label,
+    destination: booking.destination,
+    boardingPoint: booking.boarding_point,
+    service: booking.service,
+    date: booking.travel_date,
+    time: trimTime(booking.travel_time),
+    seats: seats.map(seat => Number(seat.seat_number)),
+    expiresAt: status === "Reserved" ? isoDateTime(booking.expires_at) : null,
+  };
+}
+
 export async function fetchBooking(id, executor = pool) {
   const [row] = await rows("SELECT * FROM bookings WHERE id = ? LIMIT 1", [id], executor);
   if (!row) return null;

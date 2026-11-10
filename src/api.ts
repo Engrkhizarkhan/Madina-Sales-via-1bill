@@ -79,6 +79,11 @@ export const api = {
     }),
   financeStatus: () =>
     request<{ unlocked: boolean }>("/finance/status"),
+  lookupJourney: <T>(reference: string, phone: string) =>
+    request<{ journey: T }>("/public/ticket-lookup", {
+      method: "POST",
+      body: JSON.stringify({ reference, phone }),
+    }),
   createPublicBooking: <T>(booking: unknown) =>
     request<{ bookings: T[] }>("/public/bookings", {
       method: "POST",

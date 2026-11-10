@@ -6,7 +6,7 @@ import { pool, transaction } from "./db.js";
 import { ApiError, fail, isoDateTime, pakistanDate, randomToken, requireFields, tokenHash } from "./helpers.js";
 import {
   fetchBookings, fetchBuses, fetchCrew,
-  fetchExpenses, fetchRoutes, fetchTripRuns, fetchTrips, fetchUsers, publicOccupancy,
+  fetchExpenses, fetchRoutes, fetchTripRuns, fetchTrips, fetchUsers, lookupJourney, normalizeBookingPhone, publicOccupancy,
 } from "./repository.js";
 import {
   audit, cancelBooking, confirmReservation, createBooking, createExpense,
@@ -170,6 +170,19 @@ app.post("/public/bookings", asyncRoute(async (req, res) => {
   const bookings = records.map(({ ticketNo, passenger, route, destination, boardingPoint, service, seats, total, date, time, expiresAt }) =>
     ({ ticketNo, passenger, route, destination, boardingPoint, service, seats, total, date, time, expiresAt }));
   res.status(201).json({ bookings });
+}));
+
+app.post("/public/ticket-lookup", asyncRoute(async (req, res) => {
+  if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
+  limitAttempts("ticket-lookup", req, 20, 10 * 60_000);
+  const reference = typeof req.body?.reference === "string" ? req.body.reference.trim().toUpperCase() : "";
+  const phone = normalizeBookingPhone(req.body?.phone);
+  if (reference.length > 40 || !/^(?:ME|RS)-[0-9A-Z]+(?:-[0-9A-Z]+)*$/.test(reference) || !phone) {
+    fail("Enter your ticket or reservation reference and the mobile number used for the booking.", 422, "validation_error");
+  }
+  const journey = await lookupJourney(reference, phone);
+  if (!journey) fail("No journey matches that reference and mobile number. Check both and try again.", 404, "not_found");
+  res.json({ journey });
 }));
 
 app.use(asyncRoute(async (req, _res, next) => {
