@@ -6006,9 +6006,11 @@ td small {
 .ticket-terms p { margin: 0 0 4px; }
 .ticket-terms p:last-child { margin: 0; }
 .ticket-print-pair { display: flow-root; }
-.ticket-cut-line { display: flex; align-items: center; gap: 5px; margin: 0 3mm; }
-.ticket-cut-line::before, .ticket-cut-line::after { content: ""; flex: 1; border-top: 1px dotted #000; }
-.ticket-cut-line span { font: 8px Arial, sans-serif; letter-spacing: .7px; }
+.ticket-print-modal .receipt-actions { flex-wrap: wrap; }
+@media screen {
+  .ticket-print-pair .conductor-token,
+  .ticket-print-pair + .ticket-print-pair { border-top: 1px dashed #bbb; }
+}
 .conductor-token header { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; text-align: left; }
 .conductor-token header span { font-size: 10px; }
 .conductor-token header strong { font-size: 14px; }
@@ -6034,8 +6036,13 @@ td small {
   body:has(.thermal-ticket) .receipt-modal { display: block !important; width: 80mm !important; max-width: none !important; max-height: none !important; overflow: visible !important; border-radius: 0 !important; background: #fff !important; box-shadow: none !important; }
   .receipt-toolbar { display: none !important; }
   .receipt.thermal-ticket { width: 80mm !important; max-width: none !important; padding: 0 !important; page: auto; }
-  .ticket-print-pair { page: madina-passenger-ticket; break-inside: avoid; }
-  .ticket-print-pair + .ticket-print-pair { break-before: page; }
+  .ticket-print-pair { display: contents; }
+  .thermal-ticket .passenger-receipt { page: madina-passenger-ticket; }
+  .thermal-ticket .conductor-token { page: madina-boarding-pass; }
+  .thermal-ticket .passenger-receipt,
+  .thermal-ticket .conductor-token { break-inside: avoid; break-after: page; }
+  .thermal-ticket[data-print-part="receipt"] .conductor-token,
+  .thermal-ticket[data-print-part="boarding"] .passenger-receipt { display: none; }
   .thermal-ticket table tr, .ticket-departure, .thermal-payment-status, .ticket-terms, .token-payment { break-inside: avoid; }
 }
 /* Isolate thermal tables from the wide staff-register table rules. */

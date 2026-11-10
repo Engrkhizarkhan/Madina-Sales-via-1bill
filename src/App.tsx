@@ -5482,6 +5482,8 @@ function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
+type TicketPrintPart = "both" | "receipt" | "boarding";
+
 function ReceiptModal({ booking, batch = [], autoPrint = false, onClose }: {
   booking: Booking;
   batch?: Booking[];
@@ -5490,19 +5492,26 @@ function ReceiptModal({ booking, batch = [], autoPrint = false, onClose }: {
 }) {
   const [printing,setPrinting]=useState(false);
   const [printedAt,setPrintedAt]=useState(()=>new Date());
-  const [paperHeight, setPaperHeight] = useState(220);
+  const [paperHeight, setPaperHeight] = useState({ receipt: 140, boarding: 75 });
+  const [printPart, setPrintPart] = useState<TicketPrintPart>("both");
   const printArea = useRef<HTMLDivElement>(null);
-  const print = useCallback(async () => {
+  const print = useCallback(async (part: TicketPrintPart = "both") => {
     setPrinting(true);
     try {
       await document.fonts.load('12px "Noto Nastaliq Urdu"').catch(() => undefined);
       await document.fonts.ready;
-      if (!printArea.current) return;
-      const heights = Array.from(printArea.current.children, pair => pair.getBoundingClientRect().height);
-      const heightMm = Math.ceil(Math.max(...heights) * 25.4 / 96) + 2;
+      const area = printArea.current;
+      if (!area) return;
+      const pageHeight = (selector: string) => {
+        const heights = Array.from(area.querySelectorAll(selector), slip => slip.getBoundingClientRect().height);
+        return Math.ceil(Math.max(0, ...heights) * 25.4 / 96) + 2;
+      };
+      const receipt = pageHeight(".passenger-receipt");
+      const boarding = pageHeight(".conductor-token");
       flushSync(() => {
         setPrintedAt(new Date());
-        if (heightMm > 2) setPaperHeight(heightMm);
+        setPaperHeight({ receipt, boarding });
+        setPrintPart(part);
       });
       window.print();
     } finally {
@@ -5514,19 +5523,37 @@ function ReceiptModal({ booking, batch = [], autoPrint = false, onClose }: {
     const timer = window.setTimeout(() => void print(), 0);
     return () => window.clearTimeout(timer);
   }, [autoPrint, booking.bookingStatus, print]);
+  useEffect(() => {
+    const resetPrintPart = () => setPrintPart("both");
+    window.addEventListener("afterprint", resetPrintPart);
+    return () => window.removeEventListener("afterprint", resetPrintPart);
+  }, []);
   const entries=batch.length?batch:[booking];
+  const hasBoardingPass = entries.some(entry => ticketPresentation(entry).canBoard);
   if(booking.bookingStatus==="Reserved")return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation saved"><div className="receipt-modal reservation-confirmation"><h2>Seats reserved</h2><p>{booking.passenger} · Seat {seatList(booking.seats,booking.service)}</p><p>{booking.route} · {ticketDate(booking.date)} · {booking.time}</p><p>Book and pay online to receive your ticket and boarding token.</p><button className="primary-button" onClick={onClose}>Done</button></div></div>;
   return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}><div className="receipt-modal ticket-print-modal">
-    <style>{`@page madina-passenger-ticket { size: 80mm ${paperHeight}mm; margin: 0; }`}</style>
-    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>80mm thermal slip with a cut line for the boarding token</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
-    <div ref={printArea} className="receipt thermal-ticket">{entries.filter(b=>b.bookingStatus!=="Reserved").flatMap(b=>b.seats.map((seat,index)=>{
+    <style>{`
+      @page madina-passenger-ticket { size: 80mm ${paperHeight.receipt}mm; margin: 0; }
+      @page madina-boarding-pass { size: 80mm ${paperHeight.boarding}mm; margin: 0; }
+    `}</style>
+    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>80 mm thermal print · one page per slip</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
+    <div ref={printArea} className="receipt thermal-ticket" data-print-part={printPart}>{entries.filter(b=>b.bookingStatus!=="Reserved").flatMap(b=>b.seats.map((seat,index)=>{
       // Legacy multi-seat records remain intact; reprints apportion totals in cents.
       const share=(amount:number)=>{const cents=Math.round(amount*100);return (Math.floor(cents/b.seats.length)+(index<cents%b.seats.length?1:0))/100;};
       return <div className="ticket-print-pair" key={`${b.id}-${seat}`}>
         <TicketSlips booking={{...b,seats:[seat],total:share(b.total),paid:share(b.paid),discount:share(b.discount),refunds:(b.refunds??[]).map(r=>({...r,amount:share(r.amount)}))}} printedAt={printedAt}/>
       </div>;
     }))}</div>
-    <div className="receipt-actions"><button className="secondary-button" onClick={onClose}>Close</button><button className="primary-button" disabled={printing} onClick={()=>void print()}><Printer size={16}/>{printing?"Preparing…":ticketPresentation(booking).canBoard?"Print receipt & token":"Print refund record"}</button></div>
+    <div className="receipt-actions">
+      <button type="button" className="secondary-button" onClick={onClose}>Close</button>
+      {hasBoardingPass && <>
+        <button type="button" className="secondary-button" disabled={printing} onClick={() => void print("receipt")}>Print receipt only</button>
+        <button type="button" className="secondary-button" disabled={printing} onClick={() => void print("boarding")}>Print boarding pass only</button>
+      </>}
+      <button type="button" className="primary-button" disabled={printing} onClick={() => void print()}>
+        <Printer size={16}/>{printing ? "Preparing…" : hasBoardingPass ? "Print receipt & boarding pass" : "Print refund record"}
+      </button>
+    </div>
   </div></div>;
 }
 function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
@@ -5545,11 +5572,11 @@ function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
       {!ticket.canBoard&&<div className="thermal-payment-status"><strong>{ticket.status}</strong></div>}
       <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>روانگی سے دس منٹ پہلے پہنچیں۔ ٹکٹ کی تاریخ، وقت اور سیٹ نمبر چیک کریں۔ اصل شناختی کارڈ ہمراہ رکھیں۔</p></div>
     </article>
-    {ticket.canBoard&&<><div className="ticket-cut-line"><span>CUT HERE</span></div><article className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
+    {ticket.canBoard && <article className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
       <header><strong>MADINA EXPRESS</strong><span>BOARDING TOKEN</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
       <table className="token-table"><tbody><tr><th>Bus No.</th><th>Destination</th></tr><tr><td>{booking.bus}</td><td>{booking.destination}</td></tr><tr><th>Travel date</th><th>Departure</th></tr><tr><td>{ticketDate(booking.date)}</td><td className="token-time">{booking.time}</td></tr><tr><th>Ticket No.</th><th>Paid</th></tr><tr><td>{booking.ticketNo}</td><td>{money(netCollected(booking))}</td></tr></tbody></table>
       <p className="ticket-urdu" lang="ur" dir="rtl">یہ ٹوکن کنڈکٹر کے حوالے کریں۔</p>
-    </article></>}
+    </article>}
   </>;
 }
 
