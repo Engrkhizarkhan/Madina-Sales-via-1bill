@@ -5,6 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { presentationText } from "./presentation-text";
 import { inDateRange, type DateRange } from "./booking-filters";
 import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
+import { printTicketSlip } from "./print-ticket";
 import {
   ArrowLeft,
   ArrowRight,
@@ -5482,8 +5483,6 @@ function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
-type TicketPrintPart = "both" | "receipt" | "boarding";
-
 function ReceiptModal({ booking, batch = [], autoPrint = false, onClose }: {
   booking: Booking;
   batch?: Booking[];
@@ -5492,66 +5491,56 @@ function ReceiptModal({ booking, batch = [], autoPrint = false, onClose }: {
 }) {
   const [printing,setPrinting]=useState(false);
   const [printedAt,setPrintedAt]=useState(()=>new Date());
-  const [paperHeight, setPaperHeight] = useState({ receipt: 140, boarding: 75 });
-  const [printPart, setPrintPart] = useState<TicketPrintPart>("both");
+  const [printError, setPrintError] = useState("");
   const printArea = useRef<HTMLDivElement>(null);
-  const print = useCallback(async (part: TicketPrintPart = "both") => {
+  const printRun = useRef<AbortController | null>(null);
+  const print = useCallback(async () => {
+    if (!printArea.current || printRun.current) return;
+    const run = new AbortController();
+    printRun.current = run;
     setPrinting(true);
+    setPrintError("");
     try {
       await document.fonts.load('12px "Noto Nastaliq Urdu"').catch(() => undefined);
       await document.fonts.ready;
+      run.signal.throwIfAborted();
       const area = printArea.current;
       if (!area) return;
-      const pageHeight = (selector: string) => {
-        const heights = Array.from(area.querySelectorAll(selector), slip => slip.getBoundingClientRect().height);
-        return Math.ceil(Math.max(0, ...heights) * 25.4 / 96) + 2;
-      };
-      const receipt = pageHeight(".passenger-receipt");
-      const boarding = pageHeight(".conductor-token");
-      flushSync(() => {
-        setPrintedAt(new Date());
-        setPaperHeight({ receipt, boarding });
-        setPrintPart(part);
-      });
-      window.print();
+      flushSync(() => setPrintedAt(new Date()));
+      const slips = area.querySelectorAll<HTMLElement>(".passenger-receipt, .conductor-token");
+      for (const slip of slips) {
+        await printTicketSlip(slip, run.signal);
+      }
+    } catch {
+      if (!run.signal.aborted) setPrintError("The browser could not open a print job. Check your print settings and try again.");
     } finally {
-      setPrinting(false);
+      printRun.current = null;
+      if (!run.signal.aborted) setPrinting(false);
     }
   }, []);
+  useEffect(() => () => printRun.current?.abort(), []);
   useEffect(() => {
     if (!autoPrint || booking.bookingStatus !== "Confirmed") return;
     const timer = window.setTimeout(() => void print(), 0);
     return () => window.clearTimeout(timer);
   }, [autoPrint, booking.bookingStatus, print]);
-  useEffect(() => {
-    const resetPrintPart = () => setPrintPart("both");
-    window.addEventListener("afterprint", resetPrintPart);
-    return () => window.removeEventListener("afterprint", resetPrintPart);
-  }, []);
   const entries=batch.length?batch:[booking];
   const hasBoardingPass = entries.some(entry => ticketPresentation(entry).canBoard);
   if(booking.bookingStatus==="Reserved")return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation saved"><div className="receipt-modal reservation-confirmation"><h2>Seats reserved</h2><p>{booking.passenger} · Seat {seatList(booking.seats,booking.service)}</p><p>{booking.route} · {ticketDate(booking.date)} · {booking.time}</p><p>Book and pay online to receive your ticket and boarding token.</p><button className="primary-button" onClick={onClose}>Done</button></div></div>;
   return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}><div className="receipt-modal ticket-print-modal">
-    <style>{`
-      @page madina-passenger-ticket { size: 80mm ${paperHeight.receipt}mm; margin: 0; }
-      @page madina-boarding-pass { size: 80mm ${paperHeight.boarding}mm; margin: 0; }
-    `}</style>
-    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>80 mm thermal print · one page per slip</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
-    <div ref={printArea} className="receipt thermal-ticket" data-print-part={printPart}>{entries.filter(b=>b.bookingStatus!=="Reserved").flatMap(b=>b.seats.map((seat,index)=>{
+    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>80 mm thermal print · one job per slip</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
+    <div ref={printArea} className="receipt thermal-ticket">{entries.filter(b=>b.bookingStatus!=="Reserved").flatMap(b=>b.seats.map((seat,index)=>{
       // Legacy multi-seat records remain intact; reprints apportion totals in cents.
       const share=(amount:number)=>{const cents=Math.round(amount*100);return (Math.floor(cents/b.seats.length)+(index<cents%b.seats.length?1:0))/100;};
       return <div className="ticket-print-pair" key={`${b.id}-${seat}`}>
         <TicketSlips booking={{...b,seats:[seat],total:share(b.total),paid:share(b.paid),discount:share(b.discount),refunds:(b.refunds??[]).map(r=>({...r,amount:share(r.amount)}))}} printedAt={printedAt}/>
       </div>;
     }))}</div>
+    {printError && <p className="form-error" role="alert">{printError}</p>}
     <div className="receipt-actions">
       <button type="button" className="secondary-button" onClick={onClose}>Close</button>
-      {hasBoardingPass && <>
-        <button type="button" className="secondary-button" disabled={printing} onClick={() => void print("receipt")}>Print receipt only</button>
-        <button type="button" className="secondary-button" disabled={printing} onClick={() => void print("boarding")}>Print boarding pass only</button>
-      </>}
       <button type="button" className="primary-button" disabled={printing} onClick={() => void print()}>
-        <Printer size={16}/>{printing ? "Preparing…" : hasBoardingPass ? "Print receipt & boarding pass" : "Print refund record"}
+        <Printer size={16}/>{printing ? "Printing…" : hasBoardingPass ? "Print receipt & boarding pass" : "Print refund record"}
       </button>
     </div>
   </div></div>;

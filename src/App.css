@@ -6032,6 +6032,8 @@ td small {
 .token-payment strong { font-size: 14px; }
 .token-payment span { font-size: 9px; letter-spacing: .5px; }
 .conductor-token .ticket-urdu { text-align: center; margin: 3px 0 0; }
+@page madina-passenger-ticket { size: 80mm 140mm; margin: 0; }
+@page madina-boarding-pass { size: 80mm 75mm; margin: 0; }
 @media print {
   body:has(.thermal-ticket) .receipt-modal { display: block !important; width: 80mm !important; max-width: none !important; max-height: none !important; overflow: visible !important; border-radius: 0 !important; background: #fff !important; box-shadow: none !important; }
   .receipt-toolbar { display: none !important; }
@@ -6041,8 +6043,6 @@ td small {
   .thermal-ticket .conductor-token { page: madina-boarding-pass; }
   .thermal-ticket .passenger-receipt,
   .thermal-ticket .conductor-token { break-inside: avoid; break-after: page; }
-  .thermal-ticket[data-print-part="receipt"] .conductor-token,
-  .thermal-ticket[data-print-part="boarding"] .passenger-receipt { display: none; }
   .thermal-ticket table tr, .ticket-departure, .thermal-payment-status, .ticket-terms, .token-payment { break-inside: avoid; }
 }
 /* Isolate thermal tables from the wide staff-register table rules. */
