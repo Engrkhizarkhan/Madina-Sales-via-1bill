@@ -600,7 +600,11 @@ const netCollected = (booking: Booking) =>
 function downloadCsv(filename: string, rows: (string | number)[][]) {
   const csv = rows
     .map((row) =>
-      row.map((value) => `"${presentationText(String(value)).replaceAll('"', '""')}"`).join(","),
+      row.map((value) => {
+        const text = presentationText(String(value));
+        const safe = typeof value === "string" && /^(?:[\t\r\n]|\s*[=+@-])/.test(text) ? "'" + text : text;
+        return `"${safe.replaceAll('"', '""')}"`;
+      }).join(","),
     )
     .join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
@@ -4272,7 +4276,7 @@ function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
         <SurfaceHeader title="Expense history" text={`${visibleExpenses.length} records · ${money(visibleExpenses.reduce((sum,e)=>sum+e.amount,0))}`} /><DateRangeFilter value={range} onChange={setRange} label="Expense dates"/>
         {loading ? <p className="table-loading">Loading expenses…</p> : (
           <div className="table-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Method</th><th>Amount</th><th>Recorded by</th></tr></thead><tbody>
-            {visibleExpenses.length ? visibleExpenses.map((expense) => <tr key={expense.id}><td>{expense.date}</td><td>{expense.category}</td><td><strong>{presentationText(expense.description)}</strong><small>{presentationText(expense.reference || expense.notes || "—")}</small></td><td>{expense.paymentMethod}</td><td><strong>{money(expense.amount)}</strong></td><td>{presentationText(expense.createdBy)}</td></tr>) : <tr><td colSpan={6}><EmptyState title="No expenses recorded" text="Use the form above to add the first expense." /></td></tr>}
+            {visibleExpenses.length ? visibleExpenses.map((expense) => <tr key={expense.id}><td>{expense.date}</td><td>{expense.category}</td><td><strong>{presentationText(expense.description)}</strong><small title={expense.reference || undefined}>{expense.reference ? shortPaymentReference(expense.reference) : presentationText(expense.notes || "—")}</small></td><td>{expense.paymentMethod}</td><td><strong>{money(expense.amount)}</strong></td><td>{presentationText(expense.createdBy)}</td></tr>) : <tr><td colSpan={6}><EmptyState title="No expenses recorded" text="Use the form above to add the first expense." /></td></tr>}
           </tbody></table></div>
         )}
       </section>
@@ -4588,7 +4592,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
                       </td>
                       <td>
                         <strong>{refund.method}</strong>
-                        <small>{presentationText(refund.reference)}</small>
+                        <small title={refund.reference}>{shortPaymentReference(refund.reference)}</small>
                       </td>
                       <td>
                         <strong>{refund.reason}</strong>

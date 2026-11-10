@@ -96,7 +96,7 @@ The main administrator can create staff accounts under **Settings**. Staff requi
 
 ### Enroll a terminal PC
 
-1. Copy `terminal-enrollment.inf` to the terminal PC. While signed in to the Windows account used for ticketing, open Command Prompt in that folder and run `certreq -new terminal-enrollment.inf terminal.req`. The private key stays in that Windows user's TPM. Enrollment requires a working TPM and a Chromium browser using the same Windows account.
+1. Copy `terminal-enrollment.inf` to the terminal PC. While signed in to the Windows account used for ticketing, open Command Prompt in that folder and run `certreq -new -user terminal-enrollment.inf terminal.req`. The private key stays in that Windows user's TPM. Enrollment requires a working TPM and a Chromium browser using the same Windows account.
 2. Retrieve `terminal.req` directly from that PC and transfer the request to the server via SSH. Use slot 1, 2, or 3. Verify which PC produced the request before signing it.
 
    ```bash
@@ -106,7 +106,7 @@ The main administrator can create staff accounts under **Settings**. Staff requi
    ```
 
 3. Return the certificate to the same PC and Windows account, then run `certreq -accept -user terminal-1.cer`. Restart the counter browser and choose the Madina Express terminal certificate when prompted at staff sign-in.
-4. Repeat for the other two slots. Enrolling a replacement in a slot overwrites that slot's previous certificate pin. To revoke access, remove the relevant `/etc/nginx/madina-terminal-devices/terminal-N.conf` on the server, run `nginx -t`, and reload Nginx.
+4. Repeat for the other two slots. In Firefox on the enrolled Windows account, enable `security.osclientcerts.autoload` in `about:config` if Firefox does not list the terminal certificate. Enrolling a replacement in a slot overwrites that slot's previous certificate pin. To revoke access, remove the relevant `/etc/nginx/madina-terminal-devices/terminal-N.conf` on the server, run `nginx -t`, and reload Nginx.
 
 ### Backup retention
 
