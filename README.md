@@ -35,6 +35,8 @@ Never commit `backend/.env`; it contains database and payment secrets.
 
 If a prompt persists, open `chrome://policy` or `edge://policy` and check that `SilentPrintingEnabled` is `true`. If an organization manages the counter browser, its machine policy can take precedence over the current account's settings.
 
+For a USB-connected Epson TM-T88IV, select **Epson TM-T88IV · 80 mm USB** under **Ticket paper** in Chrome or Edge. Click **Connect USB printer** once and select the TM-T88IV in the browser's device picker. Enable **Auto-print after collecting payment** and use **Print sample** to verify the receipt and boarding pass. The USB mode sends each slip and its own cut command straight to the printer. The printer's partial cutter leaves a small tear-off tab.
+
 ## Verification
 
 ```powershell

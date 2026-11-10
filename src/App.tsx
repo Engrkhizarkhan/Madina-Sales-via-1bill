@@ -6,6 +6,7 @@ import { presentationText } from "./presentation-text";
 import { inDateRange, type DateRange } from "./booking-filters";
 import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
 import { printDocument, printTicketBatch, type TicketPaper } from "./print-document";
+import { connectEpsonTicketPrinter } from "./epson-ticket-printer";
 import {
   ArrowLeft,
   ArrowRight,
@@ -1486,7 +1487,8 @@ function autoPrintEnabled() {
 }
 function getTicketPaper(): TicketPaper {
   try {
-    return localStorage.getItem(ticketPaperPreference) === "a4" ? "a4" : "thermal";
+    const paper = localStorage.getItem(ticketPaperPreference);
+    return paper === "a4" || paper === "tm-t88iv" ? paper : "thermal";
   } catch {
     return "thermal";
   }
@@ -1597,9 +1599,9 @@ function ManagementApp({
     setReceiptBatch(batch);
     setReceipt(booking);
   };
-  const finishAutomaticPrint = useCallback((bookingId: string, failed: boolean) => {
+  const finishAutomaticPrint = useCallback((bookingId: string, error?: string) => {
     setAutomaticPrints(current => current.filter(request => request.bookingId !== bookingId));
-    if (failed) showToast("Ticket issued. Automatic printing stopped. Reprint from the booked seat.");
+    if (error) showToast(error);
   }, [showToast]);
   const saveBooking = async (booking: Booking) => {
     try {
@@ -4842,6 +4844,7 @@ function SettingsView({
 }) {
   const [autoPrint, setAutoPrint] = useState(autoPrintEnabled);
   const [ticketPaper, setTicketPaper] = useState(getTicketPaper);
+  const [connectingPrinter, setConnectingPrinter] = useState(false);
   const [sampleReceipt, setSampleReceipt] = useState(false),
     [currentPassword, setCurrentPassword] = useState(""),
     [newPassword, setNewPassword] = useState(""),
@@ -5102,7 +5105,7 @@ function SettingsView({
             <label className="span-2">
               <span>Ticket paper</span>
               <select value={ticketPaper} onChange={event => {
-                const paper = event.target.value === "a4" ? "a4" : "thermal";
+                const paper = event.target.value as TicketPaper;
                 try {
                   localStorage.setItem(ticketPaperPreference, paper);
                   setTicketPaper(paper);
@@ -5111,11 +5114,23 @@ function SettingsView({
                 }
               }}>
                 <option value="thermal">80 mm thermal portrait</option>
-                <option value="a4">A4 portrait (Epson)</option>
+                <option value="a4">A4 portrait</option>
+                <option value="tm-t88iv">Epson TM-T88IV · 80 mm USB</option>
               </select>
             </label>
           </div>
           <div className="view-actions">
+            {ticketPaper === "tm-t88iv" && <button className="secondary-button" type="button" disabled={connectingPrinter} onClick={async () => {
+              setConnectingPrinter(true);
+              try {
+                await connectEpsonTicketPrinter();
+                showToast("Epson TM-T88IV connected.");
+              } catch (error) {
+                showToast(error instanceof Error ? error.message : "Could not connect the TM-T88IV.");
+              } finally {
+                setConnectingPrinter(false);
+              }
+            }}>{connectingPrinter ? "Connecting…" : "Connect USB printer"}</button>}
             <button className="secondary-button" type="button" onClick={() => setSampleReceipt(true)}>
               <Printer size={15} /> Print sample
             </button>
@@ -5530,7 +5545,7 @@ function EmptyState({ title, text }: { title: string; text: string }) {
 
 function AutomaticTicketPrint({ request, onFinish }: {
   request: AutomaticPrintRequest;
-  onFinish: (bookingId: string, failed: boolean) => void;
+  onFinish: (bookingId: string, error?: string) => void;
 }) {
   const source = useRef<HTMLDivElement>(null);
   const [printedAt] = useState(() => new Date());
@@ -5538,12 +5553,19 @@ function AutomaticTicketPrint({ request, onFinish }: {
     if (!source.current) return;
     const run = new AbortController();
     void printTicketBatch(source.current, request.paper, run.signal).then(
-      () => { if (!run.signal.aborted) onFinish(request.bookingId, false); },
-      () => { if (!run.signal.aborted) onFinish(request.bookingId, true); },
+      () => { if (!run.signal.aborted) onFinish(request.bookingId); },
+      (error: unknown) => {
+        if (!run.signal.aborted) onFinish(request.bookingId, `Ticket issued. ${ticketPrintError(request.paper, error)}`);
+      },
     );
     return () => run.abort();
   }, [request, onFinish]);
   return <div ref={source} hidden><TicketPrintPairs entries={request.entries} printedAt={printedAt} /></div>;
+}
+
+function ticketPrintError(paper: TicketPaper, error: unknown) {
+  if (paper === "tm-t88iv" && error instanceof Error) return error.message;
+  return "Printing stopped. Check your print settings and reprint the ticket.";
 }
 
 function ReceiptModal({ booking, batch = [], paper = "thermal", onClose }: {
@@ -5566,8 +5588,8 @@ function ReceiptModal({ booking, batch = [], paper = "thermal", onClose }: {
     try {
       flushSync(() => setPrintedAt(new Date()));
       if (printArea.current) await printTicketBatch(printArea.current, paper, run.signal);
-    } catch {
-      if (!run.signal.aborted) setPrintError("The browser could not open a print job. Check your print settings and try again.");
+    } catch (error) {
+      if (!run.signal.aborted) setPrintError(ticketPrintError(paper, error));
     } finally {
       printRun.current = null;
       if (!run.signal.aborted) setPrinting(false);
@@ -5578,7 +5600,7 @@ function ReceiptModal({ booking, batch = [], paper = "thermal", onClose }: {
   const hasBoardingPass = entries.some(entry => ticketPresentation(entry).canBoard);
   if(booking.bookingStatus==="Reserved")return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation saved"><div className="receipt-modal reservation-confirmation"><h2>Seats reserved</h2><p>{booking.passenger} · Seat {seatList(booking.seats,booking.service)}</p><p>{booking.route} · {ticketDate(booking.date)} · {booking.time}</p><p>Book and pay online to receive your ticket and boarding token.</p><button className="primary-button" onClick={onClose}>Done</button></div></div>;
   return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}><div className="receipt-modal ticket-print-modal">
-    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>{paper === "a4" ? "A4 portrait" : "80 mm thermal portrait"} · one page per slip</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
+    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>{paper === "tm-t88iv" ? "Epson TM-T88IV · cut after each slip" : `${paper === "a4" ? "A4 portrait" : "80 mm thermal portrait"} · one page per slip`}</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
     <div ref={printArea} className="receipt thermal-ticket"><TicketPrintPairs entries={entries} printedAt={printedAt} /></div>
     {printError && <p className="form-error" role="alert">{printError}</p>}
     <div className="receipt-actions">

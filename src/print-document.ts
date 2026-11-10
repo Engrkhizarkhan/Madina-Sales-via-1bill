@@ -1,4 +1,6 @@
-export type TicketPaper = "thermal" | "a4";
+import { printEpsonTickets } from "./epson-ticket-printer";
+
+export type TicketPaper = "thermal" | "a4" | "tm-t88iv";
 
 let ticketPrintQueue = Promise.resolve();
 
@@ -13,7 +15,7 @@ export function printTicketBatch(source: HTMLElement, paper: TicketPaper, signal
     body > .receipt.thermal-ticket > article { page: auto; break-after: auto; }
     body > .receipt.thermal-ticket > article + article { break-before: page; }
   }`;
-  const batch = ticketPrintQueue.then(() => printDocument(printArea, {
+  const batch = ticketPrintQueue.then(() => paper === "tm-t88iv" ? printEpsonTickets(printArea, signal) : printDocument(printArea, {
     title: slips.length > 1 ? "Madina Express tickets" : slips[0].getAttribute("aria-label") ?? "Madina Express ticket",
     width: paper === "a4" ? "210mm" : "80mm",
     pageCss: paper === "a4"
