@@ -5098,7 +5098,7 @@ function SettingsView({
             />
             <span>
               <strong>Auto-print after collecting payment</strong>
-              <small>Send the receipt and boarding pass in one job without opening the ticket preview.</small>
+              <small>Print the receipt and boarding pass without opening the ticket preview.</small>
             </span>
           </label>
           <div className="settings-fields">
@@ -5113,7 +5113,7 @@ function SettingsView({
                   showToast("This browser could not save the paper setting.");
                 }
               }}>
-                <option value="thermal">80 mm thermal portrait</option>
+                <option value="thermal">80 mm thermal portrait · separate jobs</option>
                 <option value="a4">A4 portrait</option>
                 <option value="tm-t88iv">Epson TM-T88IV · 80 mm USB</option>
               </select>
@@ -5600,7 +5600,7 @@ function ReceiptModal({ booking, batch = [], paper = "thermal", onClose }: {
   const hasBoardingPass = entries.some(entry => ticketPresentation(entry).canBoard);
   if(booking.bookingStatus==="Reserved")return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label="Reservation saved"><div className="receipt-modal reservation-confirmation"><h2>Seats reserved</h2><p>{booking.passenger} · Seat {seatList(booking.seats,booking.service)}</p><p>{booking.route} · {ticketDate(booking.date)} · {booking.time}</p><p>Book and pay online to receive your ticket and boarding token.</p><button className="primary-button" onClick={onClose}>Done</button></div></div>;
   return <div className="receipt-overlay" role="dialog" aria-modal="true" aria-label={`Ticket ${booking.ticketNo}`}><div className="receipt-modal ticket-print-modal">
-    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>{paper === "tm-t88iv" ? "Epson TM-T88IV · cut after each slip" : `${paper === "a4" ? "A4 portrait" : "80 mm thermal portrait"} · one page per slip`}</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
+    <div className="receipt-toolbar"><div><strong>{entries.length>1?`${entries.length} separate tickets`:"Passenger ticket"}</strong><small>{paper === "tm-t88iv" ? "Epson TM-T88IV · cut after each slip" : paper === "a4" ? "A4 portrait · one page per slip" : "80 mm thermal portrait · one job per slip"}</small></div><button type="button" aria-label="Close ticket" onClick={onClose}><X size={18}/></button></div>
     <div ref={printArea} className="receipt thermal-ticket"><TicketPrintPairs entries={entries} printedAt={printedAt} /></div>
     {printError && <p className="form-error" role="alert">{printError}</p>}
     <div className="receipt-actions">

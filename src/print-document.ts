@@ -7,15 +7,33 @@ let ticketPrintQueue = Promise.resolve();
 export function printTicketBatch(source: HTMLElement, paper: TicketPaper, signal: AbortSignal) {
   const slips = Array.from(source.querySelectorAll(".passenger-receipt, .conductor-token"), slip => slip.cloneNode(true) as Element);
   if (!slips.length) return Promise.resolve();
+  const batch = ticketPrintQueue.then(async () => {
+    if (paper === "tm-t88iv") {
+      await printEpsonTickets(ticketPrintContent(slips), signal);
+      return;
+    }
+    // A thermal driver can cut at the end of each job, even when it prints all pages on one roll.
+    const jobs = paper === "thermal" ? slips.map(slip => [slip]) : [slips];
+    for (const job of jobs) await printBrowserTickets(job, paper, signal);
+  });
+  ticketPrintQueue = batch.catch(() => undefined);
+  return batch;
+}
+
+function ticketPrintContent(slips: Element[]) {
   const printArea = document.createElement("div");
   printArea.className = "receipt thermal-ticket";
   printArea.style.maxWidth = "none";
   printArea.append(...slips);
+  return printArea;
+}
+
+function printBrowserTickets(slips: Element[], paper: "thermal" | "a4", signal: AbortSignal) {
   const slipPages = `@media print {
     body > .receipt.thermal-ticket > article { page: auto; break-after: auto; }
     body > .receipt.thermal-ticket > article + article { break-before: page; }
   }`;
-  const batch = ticketPrintQueue.then(() => paper === "tm-t88iv" ? printEpsonTickets(printArea, signal) : printDocument(printArea, {
+  return printDocument(ticketPrintContent(slips), {
     title: slips.length > 1 ? "Madina Express tickets" : slips[0].getAttribute("aria-label") ?? "Madina Express ticket",
     width: paper === "a4" ? "210mm" : "80mm",
     pageCss: paper === "a4"
@@ -23,14 +41,12 @@ export function printTicketBatch(source: HTMLElement, paper: TicketPaper, signal
          @media print { body > .receipt.thermal-ticket { margin-inline: auto !important; } }
          ${slipPages}`
       : body => {
-        const heightPx = Math.max(...Array.from(body.querySelectorAll(".thermal-ticket > article"), slip => slip.scrollHeight));
+        const heightPx = body.querySelector(".thermal-ticket > article")!.scrollHeight;
         const heightMm = Math.max(81, Math.ceil(heightPx * 25.4 / 96) + 2);
         return `@page { size: 80mm ${heightMm}mm; margin: 0; } ${slipPages}`;
       },
     signal,
-  }));
-  ticketPrintQueue = batch.catch(() => undefined);
-  return batch;
+  });
 }
 
 export async function printDocument(content: HTMLElement, { title, width, pageCss, signal }: {
