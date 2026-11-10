@@ -153,7 +153,7 @@
 .operations-document.document-terminal-thermal .document-signatures { padding-top:15px; }
 .operations-document.document-terminal-thermal .document-footer { margin-top:5px;padding-top:3px; }
 @media print {
- .operations-document.document-terminal-a4.report-a4 { page:madina-voucher-a4;width:194mm!important; }
+ .operations-document.document-terminal-a4.report-a4 { page:madina-voucher-a4;width:194mm!important;padding:0!important; }
 }
 .operations-document.document-terminal-a4.document-dense .document-table th,
 .operations-document.document-terminal-a4.document-dense .document-table td { font-size:8.5px!important;line-height:1.1;padding:0 2px!important; }
@@ -168,6 +168,14 @@
 .operations-document.document-terminal-thermal .thermal-passenger b { font-size:9.5px;line-height:1.1; }
 .operations-document.document-terminal-thermal .thermal-passenger strong small { font-size:8px; }
 @media print {
- body.printing-thermal .report-preview-shell,
- body.printing-thermal .operations-document.report-thermal { width:74mm!important;max-width:74mm!important; }
+  /* The report frame defines a single paper size for every page in its job. */
+  body > .print-document.operations-document:is(.report-a4, .report-thermal) {
+    page: auto !important;
+    width: auto !important;
+    padding: 0 !important;
+    break-after: auto;
+  }
+  body > .print-document.operations-document.report-thermal { padding: 3mm !important; }
+  .operations-document.document-cnic .document-table th,
+  .operations-document.document-cnic .document-table td { padding: 1px 4px !important; line-height: 1.15; }
 }

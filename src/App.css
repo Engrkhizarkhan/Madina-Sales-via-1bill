@@ -4616,14 +4616,6 @@ td small {
     box-shadow: none !important;
     break-after: avoid;
   }
-  body.printing-a4 .report-landscape {
-    width: 297mm !important;
-    min-height: 210mm !important;
-  }
-  body.printing-thermal .report-thermal {
-    width: 80mm !important;
-    min-height: 0 !important;
-  }
 }
 
 /* Recurring trips, vehicle forms and operational documents */

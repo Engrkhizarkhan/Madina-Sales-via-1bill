@@ -5,7 +5,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { presentationText } from "./presentation-text";
 import { inDateRange, type DateRange } from "./booking-filters";
 import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
-import { printTicketSlip } from "./print-ticket";
+import { printDocument, printTicketSlip } from "./print-document";
 import {
   ArrowLeft,
   ArrowRight,
@@ -3581,16 +3581,12 @@ function ReportModal({
   routes: RouteRecord[];
   onClose: () => void;
 }) {
-  const documentRef=useRef<HTMLElement>(null);
-  const [thermalHeight,setThermalHeight]=useState(297);
-  useEffect(()=>{
-    if(report.kind!=='terminal-thermal')return;
-    let active=true;
-    void document.fonts.ready.then(()=>{if(active&&documentRef.current)setThermalHeight(Math.ceil(documentRef.current.scrollHeight/3.7795275591)+8);});
-    return()=>{active=false;};
-  },[report.kind,bookings,runs]);
+  const documentRef = useRef<HTMLElement>(null);
+  const printRun = useRef<AbortController | null>(null);
+  useEffect(() => () => printRun.current?.abort(), []);
   const [printedAt, setPrintedAt] = useState(() => new Date());
   const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState("");
   const baseTrip = trips.find((item) => item.id === report.tripId);
   if (!baseTrip) return null;
   const trip = tripOnDate(baseTrip, report.date, runs);
@@ -3639,19 +3635,28 @@ function ReportModal({
   }[report.kind];
   const thermal = report.kind === "terminal-thermal";
   const printReport = async () => {
-    const printClass = thermal ? "printing-thermal" : "printing-a4";
-    const cleanup = () => document.body.classList.remove(printClass);
+    if (!documentRef.current || printRun.current) return;
+    const run = new AbortController();
+    printRun.current = run;
     setPrinting(true);
+    setPrintError("");
     try {
-      await document.fonts.load('12px "Noto Nastaliq Urdu"');
-      await document.fonts.ready;
       flushSync(() => setPrintedAt(new Date()));
-      document.body.classList.add(printClass);
-      window.addEventListener("afterprint", cleanup, { once: true });
-      window.print();
+      const source = documentRef.current;
+      if (!source) return;
+      await printDocument(source.cloneNode(true) as HTMLElement, {
+        title,
+        width: thermal ? "80mm" : voucher ? "210mm" : "297mm",
+        pageCss: thermal
+          ? body => `@page { size: 80mm ${Math.ceil(body.firstElementChild!.scrollHeight * 25.4 / 96) + 2}mm; margin: 0; }`
+          : `@page { size: A4 ${voucher ? "portrait" : "landscape"}; margin: 8mm; }`,
+        signal: run.signal,
+      });
+    } catch {
+      if (!run.signal.aborted) setPrintError("The browser could not open this report for printing. Try again.");
     } finally {
-      cleanup();
-      setPrinting(false);
+      printRun.current = null;
+      if (!run.signal.aborted) setPrinting(false);
     }
   };
   return (
@@ -3689,9 +3694,9 @@ function ReportModal({
           </div>
         </div>
         {voucherStale && <p className="form-error">Save the current voucher summary on the ticketing page before printing. Collections may have changed.</p>}
-        {thermal&&<style>{`@page madina-operations-thermal { size:80mm ${thermalHeight}mm; margin:5mm 3mm; }`}</style>}
+        {printError && <p className="form-error" role="alert">{printError}</p>}
         <article ref={documentRef}
-          className={`print-document operations-document document-${report.kind} ${rows.length>50?"document-dense":""} ${thermal ? "report-thermal" : "report-a4 report-landscape"}`}
+          className={`print-document operations-document document-${report.kind} ${rows.length>50?"document-dense":""} ${thermal ? "report-thermal" : voucher ? "report-a4" : "report-a4 report-landscape"}`}
         >
           <header className="document-header">
             <div>
