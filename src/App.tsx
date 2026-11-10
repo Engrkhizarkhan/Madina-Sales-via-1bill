@@ -1514,6 +1514,7 @@ function ManagementApp({
     [trips, setTrips] = useState<TripRecord[]>([]),
     [runs, setRuns] = useState<TripRun[]>([]),
     [saleTarget, setSaleTarget] = useState<{ tripId: string; date: string; mode?: "Ticket" | "Reservation" } | null>(null),
+    [newCounterSchedule, setNewCounterSchedule] = useState<{ date: string; defaults?: Partial<TripRecord> } | null>(null),
     [routes, setRoutes] = useState<RouteRecord[]>([]),
     [crew, setCrew] = useState<CrewRecord[]>([]),
     [staffUsers, setStaffUsers] = useState<StaffUser[]>([]),
@@ -1700,6 +1701,7 @@ function ManagementApp({
       dataVersion.current++;
       setTrips((current) => isNew ? [result.trip, ...current] : current.map((item) => item.id === trip.id ? result.trip : item));
       showToast("Recurring trip saved.");
+      return result.trip;
     } catch (error) {
       failure(error);
       throw error;
@@ -1775,6 +1777,9 @@ function ManagementApp({
   const startSale = (tripId: string, date: string) => {
     setSaleTarget({ tripId, date }); changeView("sale");
   };
+  const canManageSchedules = ["admin", "manager", "dispatcher"].includes(user.role);
+  const activeRoutes = routes.filter(route => !route.deleted && route.status === "Active");
+  const canAddSchedule = canManageSchedules && activeRoutes.length > 0 && fleet.some(bus => !bus.deleted && bus.isTemplate && bus.status !== "Retired");
   const openReport = (
     kind: ReportKind,
     tripId: string,
@@ -1938,7 +1943,12 @@ function ManagementApp({
               userName={user.name}
             />
           )}
-          {activeView === "sale" && (!trips.some(t=>!t.deleted) || !routes.some(r=>!r.deleted) || !fleet.some(b=>!b.deleted) ? <EmptyState title="Add a schedule first" text="Create a route, bus and roster entry before selling tickets." /> : (
+          {activeView === "sale" && (!trips.some(t=>!t.deleted) || !routes.some(r=>!r.deleted) || !fleet.some(b=>!b.deleted) ? (
+            <section className="surface counter-selector">
+              <EmptyState title="Add a departure first" text="Choose a route, bus layout and recurring departure time to open seat booking." />
+              {canAddSchedule && <button type="button" className="secondary-button" onClick={() => setNewCounterSchedule({ date: today })}><Plus size={16}/> Add departure</button>}
+            </section>
+          ) : (
             <BookingWorkspace
               key={saleTarget ? `${saleTarget.tripId}-${saleTarget.date}-${saleTarget.mode}` : "sale"}
               initialSelection={saleTarget}
@@ -1946,6 +1956,8 @@ function ManagementApp({
               onTransition={transitionTrip}
               onRefresh={refreshData} refreshing={refreshing} lastUpdated={lastUpdated} refreshError={refreshError}
               onCounterSave={saveCounter}
+              onAddDeparture={canAddSchedule ? (date, defaults) => setNewCounterSchedule({ date, defaults }) : undefined}
+              onDeleteDeparture={canManageSchedules ? deleteTrip : undefined}
               onPrint={booking => {setReceiptBatch([]);setReceipt(booking);}}
               onCancel={cancelBooking}
               onConfirm={confirmReservation}
@@ -1991,7 +2003,7 @@ function ManagementApp({
               trips={trips}
               fleet={fleet}
               routes={routes}
-              onSave={saveTrip}
+              onSave={async trip => { await saveTrip(trip); }}
               onDelete={deleteTrip}
               onReport={openReport}
             />
@@ -2051,6 +2063,19 @@ function ManagementApp({
           )}
         </main>
       </div>
+      {newCounterSchedule && (
+        <TripFormModal
+          fleet={fleet}
+          routes={activeRoutes}
+          defaults={{ ...newCounterSchedule.defaults, departure: "" }}
+          onClose={() => setNewCounterSchedule(null)}
+          onSave={async draft => {
+            const saved = await saveTrip(draft);
+            setNewCounterSchedule(null);
+            startSale(saved.id, newCounterSchedule.date < today ? today : newCounterSchedule.date);
+          }}
+        />
+      )}
       {receipt && (
         <ReceiptModal
           key={receipt.id}
@@ -2194,7 +2219,7 @@ function SettlementNote({ title, text }: { title: string; text: string }) {
   );
 }
 
-function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onSave,showToast,paymentMode,onCounterSave,onPrint,onCancel,onConfirm,onRefund,onUpdate,onReport,onTransition,onRefresh,refreshing,lastUpdated,refreshError,readOnly}: {
+function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onSave,showToast,paymentMode,onCounterSave,onAddDeparture,onDeleteDeparture,onPrint,onCancel,onConfirm,onRefund,onUpdate,onReport,onTransition,onRefresh,refreshing,lastUpdated,refreshError,readOnly}: {
   bookings: Booking[]; trips: TripRecord[]; fleet: BusRecord[]; routes: RouteRecord[]; runs: TripRun[];
   onTransition:(id:string,action:DepartureAction,date:string,notes?:string,options?:DepartureOptions)=>Promise<void>;
   readOnly:boolean;
@@ -2202,6 +2227,8 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   initialSelection: {tripId:string;date:string;mode?:"Ticket"|"Reservation"}|null;
   onSave: (booking:Booking)=>Promise<void>; showToast:(message:string)=>void; paymentMode:string;
   onCounterSave:(id:string,date:string,changes:CounterChanges)=>Promise<TripRun>;
+  onAddDeparture?: (date: string, defaults: Partial<TripRecord>) => void;
+  onDeleteDeparture?: (id: string) => Promise<void>;
   onPrint:(booking:Booking)=>void; onCancel:(id:string)=>Promise<void>;
   onConfirm:(id:string,method:PaymentMethod,reference:string,details?:Partial<Booking>)=>Promise<void>;
   onRefund:(id:string,refund:RefundTransaction)=>Promise<void>; onUpdate:(booking:Booking)=>Promise<void>;
@@ -2222,6 +2249,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const [action,setAction] = useState<"payment"|"refund"|"edit"|null>(null);
   const [search,setSearch] = useState("");
   const [departureDirty,setDepartureDirty] = useState(false);
+  const [departureToRemove, setDepartureToRemove] = useState<TripRecord | null>(null);
   const passengerForm = useRef<HTMLFormElement>(null);
   const trip = tripOnDate(trips.find(t=>t.id===tripId) ?? defaultTrip,date,runs);
   const bus = tripBus(trip,fleet), route = tripRoute(trip,routes);
@@ -2248,6 +2276,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const discount = mode === "Ticket" ? Math.min(passenger.discount, fareTotal) : 0;
   const total = Math.round((fareTotal - discount) * 100) / 100;
   const choices = tripsOnDate(trips, date, runs).filter(t=>t.active && t.routeId===routeId && t.days.includes(serviceDayFor(date)));
+  const selectedDeparture = choices.find(item => item.id === tripId);
   const paymentBlocked = busy || unavailable || departureDirty || !choices.some(item => item.id === tripId);
   const collectFromSeat = (seat: number) => {
     if (paymentBlocked || document.querySelector('[role="dialog"][aria-modal="true"]')) return false;
@@ -2294,6 +2323,10 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
         <label><span>Travel date</span><input type="date" value={date} onChange={e=>{if(e.target.value)choose(tripId,e.target.value);}}/></label>
       </div>
       <div className="departure-times" aria-label="Departure times">{choices.map(t=><button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{t.departure}</strong><small>{tripBus(t,fleet).model} · {t.status}</small></button>)}{!choices.length&&<p>No departures for this route and date.</p>}</div>
+      {(onAddDeparture || onDeleteDeparture) && <div className="departure-roster-actions">
+        {onAddDeparture && <button type="button" className="secondary-button" disabled={busy} onClick={() => onAddDeparture(date, { routeId, busId: bus.layoutId || bus.id, arrival: trip.arrival, days: trip.days })}><Plus size={15}/> Add departure</button>}
+        {onDeleteDeparture && selectedDeparture && <button type="button" className="danger-button" disabled={busy} onClick={() => setDepartureToRemove(selectedDeparture)}><Trash2 size={15}/> Remove {selectedDeparture.departure} departure</button>}
+      </div>}
       <CounterDeparture key={`${runId}-${bus.id}-${bus.layoutId}-${bus.registration}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} route={route} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setFareEdits({});setFocusedId(null);return saved;}}/>
     </section>
     <DepartureControls key={`departure-${runId}`} trip={trip} bus={bus} date={date} reservedCount={reserved.size} onTransition={(action,notes,options)=>onTransition(trip.id,action,date,notes,options)}/>
@@ -2352,6 +2385,19 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
     {focused&&action==="payment"&&<CollectPaymentModal booking={focused} route={route} bus={bus} paymentMode={paymentMode} onClose={()=>setAction(null)} onConfirm={async(method,reference,details)=>{await onConfirm(focused.id,method,reference,details);setAction(null);}}/>}
     {focused&&action==="refund"&&<RefundModal booking={focused} onClose={()=>setAction(null)} onRefund={onRefund}/>}
     {focused&&action==="edit"&&<BookingEditModal booking={focused} onClose={()=>setAction(null)} onSave={async b=>{await onUpdate(b);setAction(null);}}/>}
+    {departureToRemove && onDeleteDeparture && <ConfirmDeleteModal
+      title="Remove recurring departure?"
+      item={`${routeLabel(route)} · ${trips.find(item => item.id === departureToRemove.id)?.departure ?? departureToRemove.departure}`}
+      text="This removes the recurring time from the roster and stops future sales. Existing tickets and journey history are retained."
+      onClose={() => setDepartureToRemove(null)}
+      onConfirm={async () => {
+        await onDeleteDeparture(departureToRemove.id);
+        setDepartureToRemove(null);
+        const next = choices.find(item => item.id !== departureToRemove.id);
+        if (next) choose(next.id);
+        else { reset(); setFocusedId(null); setDepartureDirty(false); }
+      }}
+    />}
   </div>;
 }
 
@@ -3179,12 +3225,14 @@ function FleetView({fleet,onSave,onDelete}:{fleet:BusRecord[];onSave:(bus:BusRec
 
 function TripFormModal({
   trip,
+  defaults,
   fleet,
   routes,
   onClose,
   onSave,
 }: {
   trip?: TripRecord;
+  defaults?: Partial<TripRecord>;
   fleet: BusRecord[];
   routes: RouteRecord[];
   onClose: () => void;
@@ -3192,12 +3240,11 @@ function TripFormModal({
 }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const activeRoutes = routes.filter(route => !route.deleted && route.status === "Active");
+  const layouts = fleet.filter(bus => !bus.deleted && bus.isTemplate && bus.status !== "Retired");
   const [draft, setDraft] = useState<TripRecord>(
     trip ?? {
       id: "new-trip",
-      routeId: routes[0].id,
-      busId:
-        fleet.find((bus) => bus.status === "Ready")?.id ?? fleet[0]?.id ?? "",
       departure: "08:00",
       arrival: "14:00",
       driver: "",
@@ -3207,6 +3254,9 @@ function TripFormModal({
       days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
       active: true,
       runNumber: 1,
+      ...defaults,
+      routeId: activeRoutes.find(route => route.id === defaults?.routeId)?.id ?? activeRoutes[0]?.id ?? "",
+      busId: layouts.find(bus => bus.id === defaults?.busId)?.id ?? layouts.find(bus => bus.status === "Ready")?.id ?? layouts[0]?.id ?? "",
     },
   );
   const update = <K extends keyof TripRecord>(key: K, value: TripRecord[K]) =>
@@ -3248,9 +3298,7 @@ function TripFormModal({
               value={draft.routeId}
               onChange={(event) => update("routeId", event.target.value)}
             >
-              {routes
-                .filter((route) => !route.deleted&&route.status === "Active")
-                .map((route) => (
+              {activeRoutes.map((route) => (
                   <option value={route.id} key={route.id}>
                     {routeLabel(route)}
                   </option>
@@ -3261,6 +3309,7 @@ function TripFormModal({
             <span>Departure</span>
             <input
               type="time"
+              required
               value={draft.departure}
               onChange={(event) => update("departure", event.target.value)}
             />
@@ -3269,6 +3318,7 @@ function TripFormModal({
             <span>Arrival</span>
             <input
               type="time"
+              required
               value={draft.arrival}
               onChange={(event) => update("arrival", event.target.value)}
             />
@@ -3279,9 +3329,7 @@ function TripFormModal({
               value={draft.busId}
               onChange={(event) => update("busId", event.target.value)}
             >
-              {fleet
-                .filter((bus) => !bus.deleted&&bus.isTemplate&&bus.status !== "Retired")
-                .map((bus) => (
+              {layouts.map((bus) => (
                   <option value={bus.id} key={bus.id}>
                     {bus.model} · {bus.seats} seats
                   </option>
@@ -5628,7 +5676,7 @@ function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
   const ticket=ticketPresentation(booking),seats=seatList(booking.seats,booking.service);
   return <>
     <article className="passenger-receipt" aria-label={`Passenger receipt seat ${seats}`}>
-      <header className="thermal-heading"><h2>MADINA EXPRESS</h2><p className="ticket-contact">0311-777-2299 / 0315-777-2299</p></header>
+      <header className="thermal-heading"><div className="ticket-brand-mark">SKD</div><h2>MADINA EXPRESS</h2><p className="ticket-contact">0311-777-2299 / 0315-777-2299</p></header>
       <div className="ticket-bus-type"><span>BUS Type</span><strong>{booking.service}</strong></div>
       <div className="ticket-departure"><dl><div className="ticket-seat-number"><dt>SEAT NO #</dt><dd>{seats}</dd></div><div><dt>Departure</dt><dd>{booking.time}</dd></div><div><dt>Travel date</dt><dd>{ticketDate(booking.date)}</dd></div></dl><QRCodeSVG value={`MADINA EXPRESS\nTicket: ${booking.ticketNo}\nSeat: ${seats}`} size={76} level="M" marginSize={2} title="Ticket reference"/></div>
       <table className="thermal-details"><tbody>

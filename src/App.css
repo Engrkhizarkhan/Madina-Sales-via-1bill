@@ -5964,6 +5964,7 @@ td small {
   font-variant-numeric: tabular-nums;
 }
 .passenger-receipt, .conductor-token { padding: 5mm 3mm; }
+.thermal-heading .ticket-brand-mark { width: max-content; margin: 0 auto 4px; border: 1.5px solid #000; border-radius: 3px; padding: 3px 6px 3px 8px; color: #000; font: 900 14px/1 Arial, sans-serif; letter-spacing: .14em; }
 .thermal-ticket .thermal-heading h2 { font: 700 23px/1.15 Arial, sans-serif; letter-spacing: .3px; white-space: nowrap; }
 .thermal-ticket .thermal-heading > p { margin: 3px 0; font-size: 11px; }
 .thermal-heading > strong { font-size: 15px; font-weight: 600; }
@@ -6068,6 +6069,7 @@ td small {
 .departure-times button { border:1px solid #ccdaea; background:#f4f8fd; color:#335d8d; border-radius:7px; min-width:94px; padding:9px 16px; display:grid; gap:3px; }
 .departure-times button.active { background:#153f70; color:white; border-color:#153f70; }
 .departure-times strong { font-size:19px; }.departure-times small { font-size:10px; }
+.departure-roster-actions { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
 .counter-manual { border-top:1px solid #e6edf5; padding-top:14px; display:flex; gap:12px; align-items:end; flex-wrap:wrap; }
 .counter-manual label { width:180px; }.counter-manual .form-error { flex-basis:100%; }
 .seat-statistics { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin:16px 0; }
