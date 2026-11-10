@@ -72,13 +72,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ currentPassword, newPassword }),
     }).then(rememberCsrf),
-  unlockFinance: (password: string) =>
+  unlockFinance: (pin: string) =>
     request<{ unlocked: boolean; expiresIn: number }>("/auth/finance-unlock", {
       method: "POST",
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ pin }),
     }),
   financeStatus: () =>
-    request<{ unlocked: boolean }>("/finance/status"),
+    request<{ unlocked: boolean; pinConfigured: boolean; expiresIn: number }>("/finance/status"),
+  setFinancePin: (pin: string, currentPassword: string) =>
+    request<{ ok: boolean }>("/finance/pin", { method: "PUT", body: JSON.stringify({ pin, currentPassword }) }),
   lookupJourney: <T>(reference: string, phone: string) =>
     request<{ journey: T }>("/public/ticket-lookup", {
       method: "POST",
@@ -175,4 +177,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(user),
     }),
+  updateUser: <T>(id: number, user: unknown) =>
+    request<{ user: T }>(`/users/${id}`, { method: "PUT", body: JSON.stringify(user) }),
+  deleteUser: (id: number) =>
+    request<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
+  terminalAccess: () =>
+    request<{ enforced: boolean; terminals: { slot: number; enrolled: boolean }[] }>("/users/terminal-access"),
 };

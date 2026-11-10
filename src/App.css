@@ -6309,3 +6309,27 @@ td small {
   .lookup-form .search-journey { grid-column: auto; }
   .lookup-result dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.staff-access-settings { min-width: 0; }
+.staff-accounts, .terminal-slots { margin: 12px 0; padding: 0; list-style: none; }
+.staff-accounts li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.staff-accounts li small { display: block; color: var(--muted); }
+.staff-account-actions { display: flex; gap: 10px; }
+.terminal-setup { margin-top: 16px; padding-top: 10px; border-top: 1px solid var(--line); }
+.terminal-setup h3 { margin: 0; font-size: 15px; }
+.terminal-setup p, .terminal-setup li, .terminal-setup details { font-size: 13px; }
+.terminal-setup details { margin-top: 10px; }
+.terminal-setup summary { cursor: pointer; font-weight: 650; }
+.terminal-setup code, .terminal-setup pre { overflow-wrap: anywhere; }
+.terminal-setup pre { padding: 10px; background: var(--green-50); white-space: pre-wrap; }
+.terminal-slots { display: flex; flex-wrap: wrap; gap: 8px; }
+.terminal-slots li { padding: 4px 8px; background: var(--green-50); border-radius: 5px; }

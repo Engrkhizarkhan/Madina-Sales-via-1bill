@@ -18,3 +18,9 @@ export function shortPaymentReference(reference: string): string {
   if (oneBill) return `1BILL-${oneBill[1].slice(0, 8)}`;
   return text.length > 24 ? `${text.slice(0, 12)}…${text.slice(-8)}` : text;
 }
+
+export function shortRouteCode(id: string): string {
+  const code = presentationText(id).toUpperCase();
+  const generated = code.match(/^ROUTE-([0-9A-F]{32})$/);
+  return generated ? `ROUTE-${generated[1].slice(0, 8)}` : code;
+}

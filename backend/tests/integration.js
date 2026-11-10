@@ -178,8 +178,10 @@ try {
   check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...originalAssignment,expected:changedAssignment},csrf)).status === 409,'replacement bus cannot remove sold seat numbers');
   await request('POST',`/buses/${createdBusId}`,busResult.body.bus,csrf);
   check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...originalAssignment,expected:changedAssignment},csrf)).status === 200,'operator can restore original assignment while departure is open');
-  check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Card", paymentReference: "", discount: 0 }, csrf)).status === 422,
-    "counter non-cash sale requires a payment reference");
+  check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Bank transfer", paymentReference: "", discount: 0 }, csrf)).status === 422,
+    "counter bank transfer requires a payment reference");
+  check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed",
+    paymentMethod: "Card", paymentReference: "CARD-QA" }, csrf)).status === 422, "card payments cannot be created");
   check((await request("POST", "/bookings", { ...bookingRequest, bookingStatus: "Confirmed", paymentMethod: "Cash", discount: 0 }, csrf)).status === 409, "database prevents duplicate trip seats");
   const csrfFailure = await request("POST", `/bookings/${booking.id}/refunds`, { amount: 1, method: "Cash", reason: "Other" });
   check(csrfFailure.status === 403 && csrfFailure.body.error.code === "csrf_failed", "authenticated state changes require CSRF");
@@ -217,9 +219,21 @@ try {
 
   const locked = await request("GET", "/expenses");
   check(locked.status === 403 && locked.body.error.code === "finance_locked", "finance remains locked by default");
-  check((await request("POST", "/auth/finance-unlock", { password: "wrong-password" }, csrf)).status === 422, "wrong finance password is rejected");
-  const unlocked = await request("POST", "/auth/finance-unlock", { password: testAdminPassword }, csrf);
-  check(unlocked.status === 200 && unlocked.body.unlocked, "administrator password unlocks finance");
+  const financePin = "017395";
+  check((await request("GET", "/finance/status")).body.pinConfigured === false, "finance starts without a PIN");
+  check((await request("POST", "/auth/finance-unlock", { pin: financePin }, csrf)).status === 409, "finance must be configured in Settings");
+  check((await request("PUT", "/finance/pin", { pin: financePin, currentPassword: "wrong-password" }, csrf)).status === 422,
+    "changing the finance PIN requires the administrator password");
+  check((await request("PUT", "/finance/pin", { pin: financePin, currentPassword: testAdminPassword }, csrf)).status === 200,
+    "administrator sets the finance PIN");
+  check((await request("POST", "/auth/finance-unlock", { pin: "908769" }, csrf)).status === 422, "wrong finance PIN is rejected");
+  const unlocked = await request("POST", "/auth/finance-unlock", { pin: financePin }, csrf);
+  check(unlocked.status === 200 && unlocked.body.unlocked && unlocked.body.expiresIn === 900, "finance PIN unlocks access for 15 minutes");
+  const newFinancePin = "046178";
+  check((await request("PUT", "/finance/pin", { pin: newFinancePin, currentPassword: testAdminPassword }, csrf)).status === 200 &&
+    (await request("GET", "/expenses")).status === 403, "PIN changes revoke existing finance unlocks");
+  check((await request("POST", "/auth/finance-unlock", { pin: financePin }, csrf)).status === 422, "old finance PIN no longer works");
+  check((await request("POST", "/auth/finance-unlock", { pin: newFinancePin }, csrf)).status === 200, "updated PIN unlocks finance");
 
   createdExpenseReference = `NODE-EXP-${Date.now()}`;
   const expense = await request("POST", "/expenses", { date: new Date().toISOString().slice(0, 10), category: "Terminal", description: "Automated Node expense", amount: 100, paymentMethod: "Cash", reference: createdExpenseReference, notes: "Cleanup expected" }, csrf);
@@ -245,8 +259,8 @@ try {
   check(heldToday.status === 201, "boarding departure accepts counter reservations");
   createdBookings.push(heldToday.body.booking.id);
   check((await request("POST", `/trips/${createdTripId}/transition`, {action:"depart",date:runDate},csrf)).status === 409, "departure requires operator to resolve unpaid reservations");
-  const paidToday = await request("POST", `/bookings/${heldToday.body.booking.id}/confirm`, {paymentMethod:"Card",paymentReference:"QA-CARD"},csrf);
-  check(paidToday.status === 200 && paidToday.body.booking.paymentMethod === "Card", "counter collects a reservation by verified card reference");
+  const paidToday = await request("POST", `/bookings/${heldToday.body.booking.id}/confirm`, {paymentMethod:"Bank transfer",paymentReference:"QA-BANK"},csrf);
+  check(paidToday.status === 200 && paidToday.body.booking.paymentMethod === "Bank transfer", "counter collects a reservation by verified bank reference");
   const departed = await request("POST", `/trips/${createdTripId}/transition`, {action:"depart",date:runDate},csrf);
   check(departed.status === 200 && departed.body.trip.departedAt && departed.body.trip.snapshot.passengers.length === 1, "departure records timestamp and immutable passenger manifest");
   check((await request('PUT',`/trips/${createdTripId}/assignment`,{date:runDate,...changedAssignment,expected:originalAssignment},csrf)).status === 409,'departed bus assignments cannot be rewritten');
@@ -281,10 +295,12 @@ try {
   check((await request('DELETE',`/routes/${createdRouteId}`,undefined,csrf)).status===200,'route deletion archives referenced schedules and retains tickets');
   const qaUsername = `node-counter-${Date.now()}`;
   const qaPassword = "NodeCounter!2026";
-  const staff = await request("POST", "/users", { name: "Automated Node Counter", email: `${qaUsername}@example.invalid`, username: qaUsername, role: "counter", password: qaPassword }, csrf);
-  check(staff.status === 201 && staff.body.user.role === "counter", "administrator creates a scoped staff user");
+  const staff = await request("POST", "/users", { name: "Automated Node Counter", username: qaUsername, role: "counter", password: qaPassword }, csrf);
+  check(staff.status === 201 && staff.body.user.role === "counter" && !staff.body.user.forcePasswordChange &&
+    !("email" in staff.body.user), "administrator creates a username-only staff account with a working password");
   createdUserId = Number(staff.body.user.id);
-  await pool.execute("UPDATE users SET force_password_change = 0 WHERE id = ?", [createdUserId]);
+  const terminalAccess = await request("GET", "/users/terminal-access");
+  check(terminalAccess.status === 200 && terminalAccess.body.terminals.length === 3, "admin can see the three terminal slots");
   check((await request("POST", "/auth/logout", {}, csrf)).status === 200, "logout invalidates Node.js session");
   cookie = "";
   check((await request("GET", "/admin/bootstrap")).status === 401, "logged-out session cannot access operations");
@@ -298,7 +314,36 @@ try {
   check((await request("GET", "/finance/status")).status === 403, "staff cannot view finance");
   check((await request("POST", "/auth/finance-unlock", { password: qaPassword }, counterCsrf)).status === 403, "staff cannot unlock finance");
   check((await request("POST", `/bookings/${booking.id}/refunds`, { amount: 1, method: "Cash", reason: "Other" }, counterCsrf)).status === 422, "counter refunds still reject amounts exceeding the remaining balance");
-  await request("POST", "/auth/logout", {}, counterCsrf);
+  check((await request("GET", "/users/terminal-access")).status === 403, "staff cannot read terminal administration");
+  check((await request("PUT", `/users/${createdUserId}`, { name: "Unauthorized", username: qaUsername, role: "manager" }, counterCsrf)).status === 403,
+    "staff cannot edit their access role");
+  const oldStaffCookie = cookie;
+  cookie = "";
+  const adminAgain = await request("POST", "/auth/login", { identity: testAdminUsername, password: testAdminPassword });
+  const adminCookie = cookie;
+  const adminCsrf = adminAgain.body.csrfToken;
+  check((await request("DELETE", `/users/${testAdminId}`, undefined, adminCsrf)).status === 403, "main admin cannot be deleted through Staff access");
+  const updatedUsername = `${qaUsername}-edit`;
+  const updatedPassword = "NodeCounter!Updated2026";
+  const edited = await request("PUT", `/users/${createdUserId}`, {
+    name: "Updated Counter", username: updatedUsername, role: "manager", password: updatedPassword,
+  }, adminCsrf);
+  check(edited.status === 200 && edited.body.user.username === updatedUsername && edited.body.user.role === "manager",
+    "admin can update staff details and reset the password");
+  cookie = oldStaffCookie;
+  check((await request("GET", "/auth/me")).status === 401, "staff edits invalidate the prior session");
+  cookie = "";
+  check((await request("POST", "/auth/login", { identity: updatedUsername, password: qaPassword })).status === 401, "previous staff password is rejected");
+  check((await request("POST", "/auth/login", { identity: updatedUsername, password: updatedPassword })).status === 200,
+    "updated staff password works without a reset screen");
+  const updatedStaffCookie = cookie;
+  cookie = adminCookie;
+  check((await request("DELETE", `/users/${createdUserId}`, undefined, adminCsrf)).status === 200 &&
+    !(await request("GET", "/admin/bootstrap")).body.users.some(user => user.id === createdUserId), "admin removes staff from the active list");
+  cookie = updatedStaffCookie;
+  check((await request("GET", "/auth/me")).status === 401, "deleted staff sessions stop working");
+  cookie = "";
+  check((await request("POST", "/auth/login", { identity: updatedUsername, password: updatedPassword })).status === 401, "deleted staff cannot sign in again");
 
   console.log(`\n${passed} Node.js integration checks passed.`);
 } finally {
@@ -331,6 +376,7 @@ try {
       await pool.execute("DELETE FROM users WHERE id = ?", [createdUserId]);
     }
     if (testAdminId) {
+      await pool.execute("DELETE FROM settings WHERE setting_key = 'finance_pin_hash' AND updated_by = ?", [testAdminId]);
       await pool.execute("DELETE FROM api_sessions WHERE user_id = ?", [testAdminId]);
       await pool.execute("DELETE FROM users WHERE id = ?", [testAdminId]);
     }

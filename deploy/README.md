@@ -96,7 +96,7 @@ The main administrator can create staff accounts under **Settings**. Staff requi
 
 ### Enroll a terminal PC
 
-1. Copy `terminal-enrollment.inf` to the terminal PC. While signed in to the Windows account used for ticketing, open Command Prompt in that folder and run `certreq -new -user terminal-enrollment.inf terminal.req`. The private key stays in that Windows user's TPM. Enrollment requires a working TPM and a Chromium browser using the same Windows account.
+1. Copy `Madina-Express-Terminal-Setup.inf` to the terminal PC. While signed in to the Windows account used for ticketing, open Command Prompt in that folder and run `certreq -new -user Madina-Express-Terminal-Setup.inf terminal.req`. The private key stays in that Windows user's TPM. Enrollment requires a working TPM and a Chromium browser using the same Windows account.
 2. Retrieve `terminal.req` directly from that PC and transfer the request to the server via SSH. Use slot 1, 2, or 3. Verify which PC produced the request before signing it.
 
    ```bash

@@ -1,3 +1,4 @@
+import { readdir } from "node:fs/promises";
 import express from "express";
 import bcrypt from "bcryptjs";
 import { limitAttempts, sessionHash, terminalDevice, verifyAdminCode } from "./access.js";
@@ -11,7 +12,7 @@ import {
 import {
   audit, cancelBooking, confirmReservation, createBooking, createExpense,
   createStaffUser, deleteBus, deleteCrew, deleteRoute, deleteTrip, refundBooking, saveBus, saveCrew, saveRoute, saveTrip,
-  transitionTrip, updateBooking, assignDeparture, saveCounterDeparture,
+  transitionTrip, updateBooking, assignDeparture, saveCounterDeparture, updateStaffUser, removeStaffUser,
 } from "./operations.js";
 
 const app = express();
@@ -53,7 +54,7 @@ const readSessionToken = (req) => (req.get("cookie") || "").split(/;\s*/)
   .find((item) => item.startsWith(`${sessionCookie}=`))
   ?.slice(sessionCookie.length + 1).match(/^[0-9a-f]{64}$/)?.[0];
 const publicUser = (user) => ({
-  id: Number(user.id), name: user.name, email: user.email, username: user.username,
+  id: Number(user.id), name: user.name, username: user.username,
   role: user.role, forcePasswordChange: Boolean(user.force_password_change),
 });
 const cookieOptions = {
@@ -66,8 +67,10 @@ async function loadSession(req) {
   const device = terminalDevice(req);
   const [records] = await pool.execute(
     `SELECT s.token_hash, s.csrf_token, s.finance_unlocked_until, s.expires_at,
-            (s.finance_unlocked_until IS NOT NULL AND s.finance_unlocked_until > NOW()) finance_unlocked,
-            u.id, u.name, u.email, u.username, u.role, u.active, u.force_password_change
+            (s.finance_unlocked_until > NOW() AND EXISTS (
+              SELECT 1 FROM settings WHERE setting_key = 'finance_pin_hash'
+            )) finance_unlocked,
+            u.id, u.name, u.username, u.role, u.active, u.force_password_change
      FROM api_sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash IN (?, ?) AND s.expires_at > NOW()
        AND s.created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR) LIMIT 1`,
@@ -99,17 +102,16 @@ const requireCsrf = (req) => {
   }
 };
 
-async function createSession(req, res, user) {
-  await pool.execute("DELETE FROM api_sessions WHERE expires_at <= NOW()");
+async function createSession(connection, req, user) {
+  await connection.execute("DELETE FROM api_sessions WHERE expires_at <= NOW()");
   const token = randomToken();
   const csrf = randomToken();
-  await pool.execute(
+  await connection.execute(
     `INSERT INTO api_sessions (token_hash, user_id, csrf_token, last_activity, expires_at, ip_address, user_agent)
      VALUES (?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 8 HOUR), ?, ?)`,
     [sessionHash(token, user.role, terminalDevice(req)), user.id, csrf, String(req.ip || "unknown").slice(0, 64), String(req.get("user-agent") || "").slice(0, 255)],
   );
-  res.cookie(sessionCookie, token, cookieOptions);
-  return csrf;
+  return { token, csrfToken: csrf };
 }
 
 app.get("/health", asyncRoute(async (_req, res) => {
@@ -120,14 +122,14 @@ app.get("/health", asyncRoute(async (_req, res) => {
 app.post("/auth/login", asyncRoute(async (req, res) => {
   limitAttempts("login", req, 35, 15 * 60_000);
   const { identity: input, password, otp } = req.body || {};
-  if (typeof input !== "string" || !input.trim() || input.length > 190 ||
+  if (typeof input !== "string" || !input.trim() || input.length > 80 ||
       typeof password !== "string" || !password || Buffer.byteLength(password) > 72) {
     fail("The username or password is incorrect.", 401, "invalid_credentials");
   }
   const identity = input.trim().toLowerCase();
   const [records] = await pool.execute(
-    "SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1",
-    [identity, identity],
+    "SELECT id, name, username, role, active, password_hash, force_password_change FROM users WHERE username = ? LIMIT 1",
+    [identity],
   );
   const user = records[0];
   if (!user || !user.active || !(await passwordMatches(password, user.password_hash))) {
@@ -135,17 +137,27 @@ app.post("/auth/login", asyncRoute(async (req, res) => {
     fail("The username or password is incorrect.", 401, "invalid_credentials");
   }
   if (config.restrictStaffDevices && user.role !== "admin" && !terminalDevice(req)) {
-    fail("Use an enrolled terminal PC to sign in to this account.", 403, "terminal_required");
+    fail("Sign in from an approved terminal PC. Ask your administrator to enroll the PC in Settings → Staff access.", 403, "terminal_required");
   }
   if (user.role === "admin" && !verifyAdminCode(otp)) {
     fail("Enter a current code from the administrator's authenticator app.", 401, "authenticator_required");
   }
   const oldSession = await loadSession(req);
-  if (oldSession) await pool.execute("DELETE FROM api_sessions WHERE token_hash = ?", [oldSession.token_hash]);
-  await pool.execute("UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = NOW() WHERE id = ?", [user.id]);
-  const csrfToken = await createSession(req, res, user);
-  await audit("auth.login", "user", user.id, null, { success: true }, user.id, req);
-  res.json({ user: publicUser(user), csrfToken });
+  const session = await transaction(async (connection) => {
+    const [[current]] = await connection.execute(
+      "SELECT id, name, username, role, active, password_hash, force_password_change FROM users WHERE id = ? FOR UPDATE", [user.id],
+    );
+    if (!current?.active || current.password_hash !== user.password_hash || current.username !== user.username || current.role !== user.role) {
+      fail("The username or password is incorrect.", 401, "invalid_credentials");
+    }
+    if (oldSession) await connection.execute("DELETE FROM api_sessions WHERE token_hash = ?", [oldSession.token_hash]);
+    await connection.execute("UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = NOW() WHERE id = ?", [current.id]);
+    const created = await createSession(connection, req, current);
+    await audit("auth.login", "user", current.id, null, { success: true }, current.id, req, connection);
+    return { ...created, user: publicUser(current) };
+  });
+  res.cookie(sessionCookie, session.token, cookieOptions);
+  res.json({ user: session.user, csrfToken: session.csrfToken });
 }));
 
 app.get("/public/bootstrap", asyncRoute(async (_req, res) => {
@@ -239,25 +251,74 @@ app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
   });
 }));
 
+const financePinKey = "finance_pin_hash";
+async function financePinHash(executor, lock = false) {
+  const [[record]] = await executor.execute(
+    `SELECT JSON_UNQUOTE(setting_value) AS pin_hash FROM settings WHERE setting_key = ? ${lock ? "FOR SHARE" : ""}`,
+    [financePinKey],
+  );
+  return record?.pin_hash;
+}
+
 app.post("/auth/finance-unlock", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
   limitAttempts("finance", req, 20, 15 * 60_000);
-  requireFields(req.body, ["password"]);
-  const [records] = await pool.execute("SELECT password_hash FROM users WHERE id = ? AND role = 'admin' AND active = 1 LIMIT 1", [req.user.id]);
-  if (!(await passwordMatches(String(req.body.password), records[0]?.password_hash || ""))) {
+  const pin = req.body?.pin;
+  if (typeof pin !== "string" || !/^\d{6,10}$/.test(pin)) fail("Enter the finance PIN.", 422, "invalid_pin");
+  const unlocked = await transaction(async (connection) => {
+    const hash = await financePinHash(connection, true);
+    if (!hash) fail("Set a finance PIN in Settings first.", 409, "finance_pin_not_set");
+    if (!(await passwordMatches(pin, hash))) return false;
+    const [result] = await connection.execute(
+      "UPDATE api_sessions SET finance_unlocked_until = DATE_ADD(NOW(), INTERVAL 15 MINUTE) WHERE token_hash = ?",
+      [req.sessionTokenHash],
+    );
+    if (!result.affectedRows) fail("Please sign in again.", 401, "unauthenticated");
+    await audit("finance.unlocked", "user", req.user.id, null, { duration_minutes: 15 }, req.user.id, req, connection);
+    return true;
+  });
+  if (!unlocked) {
     await audit("finance.unlock_failed", "user", req.user.id, null, { success: false }, req.user.id, req);
-    fail("The administrator password is incorrect.", 422, "invalid_password");
+    fail("The finance PIN is incorrect.", 422, "invalid_pin");
   }
-  await pool.execute("UPDATE api_sessions SET finance_unlocked_until = DATE_ADD(NOW(), INTERVAL 15 MINUTE) WHERE token_hash = ?", [req.sessionTokenHash]);
-  await audit("finance.unlocked", "user", req.user.id, null, { duration_minutes: 15 }, req.user.id, req);
   res.json({ unlocked: true, expiresIn: 900 });
 }));
 
 const financeUnlocked = (req) => Boolean(Number(req.session.finance_unlocked));
-app.get("/finance/status", (req, res) => {
+app.get("/finance/status", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
-  res.json({ unlocked: Boolean(financeUnlocked(req)) });
-});
+  const pinConfigured = Boolean(await financePinHash(pool));
+  const expiresIn = pinConfigured && financeUnlocked(req)
+    ? Math.max(0, Math.floor((Date.parse(isoDateTime(req.session.finance_unlocked_until)) - Date.now()) / 1000)) : 0;
+  res.json({ unlocked: expiresIn > 0, expiresIn, pinConfigured });
+}));
+
+app.put("/finance/pin", asyncRoute(async (req, res) => {
+  requireRole(req.user, ["admin"]);
+  limitAttempts("finance-pin-change", req, 15, 15 * 60_000);
+  const { pin, currentPassword } = req.body || {};
+  if (typeof pin !== "string" || !/^\d{6,10}$/.test(pin)) {
+    fail("Use a finance PIN with 6–10 digits.", 422, "invalid_pin");
+  }
+  if (typeof currentPassword !== "string" || !currentPassword || Buffer.byteLength(currentPassword) > 72) {
+    fail("Enter your current administrator password.", 422, "invalid_password");
+  }
+  const hash = await bcrypt.hash(pin, 12);
+  await transaction(async (connection) => {
+    const [[admin]] = await connection.execute("SELECT password_hash FROM users WHERE id = ? AND active = 1 FOR UPDATE", [req.user.id]);
+    if (!admin || !(await passwordMatches(currentPassword, admin.password_hash))) {
+      fail("The administrator password is incorrect.", 422, "invalid_password");
+    }
+    await connection.execute(
+      `INSERT INTO settings (setting_key, setting_value, updated_by) VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE setting_value = ?, updated_by = ?`,
+      [financePinKey, JSON.stringify(hash), req.user.id, JSON.stringify(hash), req.user.id],
+    );
+    await connection.execute("UPDATE api_sessions SET finance_unlocked_until = NULL WHERE finance_unlocked_until IS NOT NULL");
+    await audit("finance.pin_changed", "user", req.user.id, null, null, req.user.id, req, connection);
+  });
+  res.json({ ok: true });
+}));
 
 app.post("/bookings", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter"]);
@@ -311,12 +372,12 @@ app.delete("/crew/:id", asyncRoute(async (req, res) => { requireRole(req.user, [
 
 app.get("/expenses", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
-  if (!financeUnlocked(req)) fail("Enter the administrator password to view finance.", 403, "finance_locked");
+  if (!financeUnlocked(req)) fail("Enter the finance PIN to view finance.", 403, "finance_locked");
   res.json({ expenses: await fetchExpenses() });
 }));
 app.post("/expenses", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
-  if (!financeUnlocked(req)) fail("Enter the administrator password to view finance.", 403, "finance_locked");
+  if (!financeUnlocked(req)) fail("Enter the finance PIN to view finance.", 403, "finance_locked");
   res.status(201).json({ expense: await createExpense(req.body, req.user, req) });
 }));
 
@@ -326,6 +387,28 @@ app.get("/audit", asyncRoute(async (req, res) => {
   res.json({ events });
 }));
 app.post("/users", asyncRoute(async (req, res) => { requireRole(req.user, ["admin"]); res.status(201).json({ user: await createStaffUser(req.body, req.user, req) }); }));
+
+app.put("/users/:id", asyncRoute(async (req, res) => {
+  requireRole(req.user, ["admin"]);
+  res.json({ user: await updateStaffUser(req.params.id, req.body, req.user, req) });
+}));
+app.delete("/users/:id", asyncRoute(async (req, res) => {
+  requireRole(req.user, ["admin"]);
+  await removeStaffUser(req.params.id, req.user, req);
+  res.json({ ok: true });
+}));
+app.get("/users/terminal-access", asyncRoute(async (req, res) => {
+  requireRole(req.user, ["admin"]);
+  const files = config.restrictStaffDevices
+    ? await readdir("/etc/nginx/madina-terminal-devices").catch(error => {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      })
+    : [];
+  res.json({ enforced: config.restrictStaffDevices, terminals: [1, 2, 3].map(slot => ({
+    slot, enrolled: files.includes(`terminal-${slot}.conf`),
+  })) });
+}));
 
 app.use((_req, _res, next) => next(new ApiError("API route not found.", 404, "not_found")));
 app.use((error, _req, res, _next) => {

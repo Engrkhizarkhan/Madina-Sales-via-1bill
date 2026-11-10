@@ -101,7 +101,7 @@ export async function createBooking(data, user, isPublic, req) {
     await releaseExpiredReservations(connection, tripRunId);
 
     const paymentMethod = reserved ? "Cash" : String(data.paymentMethod || "Cash");
-    allowed(paymentMethod, ["Cash", "Card", "Bank transfer", "1Bill"], "paymentMethod");
+    allowed(paymentMethod, ["Cash", "Bank transfer", "1Bill"], "paymentMethod");
     if (paymentMethod === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or card.", 409, "payment_unavailable");
     let paymentReference = String(data.paymentReference || "").trim();
     if (!reserved && paymentMethod !== "Cash" && !paymentReference) fail("A verified payment reference is required.", 422, "validation_error");
@@ -203,7 +203,7 @@ export async function confirmReservation(id, data, user, req) {
     );
     const row = records[0];
     if (!row || row.booking_status !== "Reserved" || (row.expires_at && Date.parse(isoDateTime(row.expires_at)) <= Date.now())) fail("Active reservation not found.", 404, "not_found");
-    const method = allowed(String(data.paymentMethod || "Cash"), ["Cash", "Card", "Bank transfer", "1Bill"], "paymentMethod");
+    const method = allowed(String(data.paymentMethod || "Cash"), ["Cash", "Bank transfer", "1Bill"], "paymentMethod");
     if (method === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or card.", 409, "payment_unavailable");
     let reference = String(data.paymentReference || "").trim();
     if (method !== "Cash" && !reference) fail("A verified payment reference is required.", 422, "validation_error");
@@ -250,7 +250,7 @@ export async function refundBooking(id, data, user, req) {
     const remaining = Math.round((Number(row.paid) - Number(sums[0].total)) * 100) / 100;
     const amount = decimal(data.amount, "amount", 0.01);
     if (amount > remaining) fail("Refund amount exceeds the remaining paid balance.", 422, "refund_too_large");
-    const method = allowed(String(data.method), ["Cash", "Card", "Bank transfer", "1Bill"], "method");
+    const method = allowed(String(data.method), ["Cash", "Bank transfer", "1Bill"], "method");
     const reason = allowed(String(data.reason), ["Passenger request", "Trip cancelled", "Duplicate payment", "Service disruption", "Other"], "reason");
     let reference = String(data.reference || "").trim();
     if (method !== "Cash" && !reference) fail("A refund reference is required for non-cash refunds.", 422, "validation_error");
@@ -517,7 +517,7 @@ export async function createExpense(data, user, req) {
   requireFields(data, ["date", "category", "description", "amount", "paymentMethod"]);
   const amount = decimal(data.amount, "amount", 0.01);
   const category = allowed(String(data.category), ["Terminal", "Fuel", "Maintenance", "Driver advance", "Refreshment", "Utilities", "Salary", "Other"], "category");
-  const method = allowed(String(data.paymentMethod), ["Cash", "Card", "Bank transfer"], "paymentMethod");
+  const method = allowed(String(data.paymentMethod), ["Cash", "Bank transfer"], "paymentMethod");
   if (!validDate(data.date)) fail("Choose a valid expense date.", 422, "validation_error");
   const description = String(data.description).trim();
   if (description.length > 255) fail("Expense description is too long.", 422, "validation_error");
@@ -537,25 +537,72 @@ export async function createExpense(data, user, req) {
   });
 }
 
-export async function createStaffUser(data, user, req) {
-  requireFields(data, ["name", "email", "username", "role", "password"]);
-  const role = allowed(String(data.role), ["manager", "counter", "dispatcher", "finance"], "role");
-  const email = String(data.email).trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail("Enter a valid email address.", 422, "validation_error");
-  const username = String(data.username).trim().toLowerCase();
+function staffAccountDetails(data) {
+  requireFields(data, ["name", "username", "role"]);
+  const name = typeof data.name === "string" ? data.name.trim() : "";
+  if (!name || name.length > 120) fail("Enter a staff name up to 120 characters.", 422, "validation_error");
+  const username = typeof data.username === "string" ? data.username.trim().toLowerCase() : "";
   if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
-    fail("Username must be 3-40 characters using letters, numbers, dots, dashes or underscores.", 422, "validation_error");
+    fail("Username must be 3–40 characters using letters, numbers, dots, dashes or underscores.", 422, "validation_error");
   }
-  const password = String(data.password);
-  if (password.length < 12 || Buffer.byteLength(password) > 72 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
-    fail("Use at least 12 characters with upper-case, lower-case, number and symbol.", 422, "weak_password");
+  const role = allowed(data.role, ["manager", "counter", "dispatcher", "finance"], "role");
+  return { name, username, role };
+}
+
+async function staffPasswordHash(password) {
+  if (typeof password !== "string" || password.length < 12 || Buffer.byteLength(password) > 72 ||
+      !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
+    fail("Use 12–72 characters with upper-case, lower-case, number and symbol.", 422, "weak_password");
   }
-  const result = await query(pool,
-    "INSERT INTO users (name, email, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, ?, 1)",
-    [String(data.name).trim(), email, username, await bcrypt.hash(password, 12), role]);
-  const created = (await fetchUsers()).find((item) => item.id === Number(result.insertId));
-  await audit("user.created", "user", result.insertId, null, created, user.id, req);
-  return created;
+  return bcrypt.hash(password, 12);
+}
+
+export async function createStaffUser(data, user, req) {
+  const { name, username, role } = staffAccountDetails(data);
+  const hash = await staffPasswordHash(data.password);
+  return transaction(async (connection) => {
+    const result = await query(connection,
+      "INSERT INTO users (name, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, 0)",
+      [name, username, hash, role]);
+    const [created] = await fetchUsers(connection, result.insertId);
+    await audit("user.created", "user", result.insertId, null, created, user.id, req, connection);
+    return created;
+  });
+}
+
+async function lockStaffAccount(connection, id) {
+  if (!/^[1-9][0-9]{0,19}$/.test(id)) fail("Staff account not found.", 404, "not_found");
+  const [account] = await query(connection, "SELECT role FROM users WHERE id = ? AND active = 1 FOR UPDATE", [id]);
+  if (!account) fail("Staff account not found.", 404, "not_found");
+  if (account.role === "admin") fail("Manage the administrator password in Account security.", 403, "admin_protected");
+  const [staff] = await fetchUsers(connection, id);
+  return staff;
+}
+
+export async function updateStaffUser(id, data, user, req) {
+  const { name, username, role } = staffAccountDetails(data);
+  const hash = data.password == null || data.password === "" ? null : await staffPasswordHash(data.password);
+  return transaction(async (connection) => {
+    const before = await lockStaffAccount(connection, id);
+    await query(connection,
+      "UPDATE users SET name = ?, username = ?, role = ?, password_hash = COALESCE(?, password_hash), force_password_change = 0 WHERE id = ?",
+      [name, username, role, hash, id]);
+    if (hash || username !== before.username || role !== before.role) {
+      await query(connection, "DELETE FROM api_sessions WHERE user_id = ?", [id]);
+    }
+    const [after] = await fetchUsers(connection, id);
+    await audit("user.updated", "user", id, before, { ...after, passwordChanged: Boolean(hash) }, user.id, req, connection);
+    return after;
+  });
+}
+
+export async function removeStaffUser(id, user, req) {
+  return transaction(async (connection) => {
+    const before = await lockStaffAccount(connection, id);
+    await query(connection, "UPDATE users SET active = 0 WHERE id = ?", [id]);
+    await query(connection, "DELETE FROM api_sessions WHERE user_id = ?", [id]);
+    await audit("user.removed", "user", id, before, { active: false }, user.id, req, connection);
+  });
 }
 
 // Date-specific counter edits. The recurring timetable remains the starting point.

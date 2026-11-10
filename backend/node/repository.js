@@ -35,10 +35,14 @@ export async function fetchCrew(executor = pool) {
   return result.map((row) => ({ ...row, id: Number(row.id) }));
 }
 
-export async function fetchUsers(executor = pool) {
-  const result = await rows("SELECT id, name, email, username, role, active, force_password_change, last_login_at, created_at FROM users ORDER BY name", [], executor);
+export async function fetchUsers(executor = pool, id = null) {
+  const result = await rows(
+    `SELECT id, name, username, role, active, force_password_change, last_login_at, created_at
+     FROM users WHERE active = 1 ${id === null ? "" : "AND id = ?"} ORDER BY name`,
+    id === null ? [] : [id], executor,
+  );
   return result.map((row) => ({
-    id: Number(row.id), name: row.name, email: row.email, username: row.username, role: row.role,
+    id: Number(row.id), name: row.name, username: row.username, role: row.role,
     active: Boolean(row.active), forcePasswordChange: Boolean(row.force_password_change),
     lastLoginAt: isoDateTime(row.last_login_at), createdAt: isoDateTime(row.created_at),
   }));

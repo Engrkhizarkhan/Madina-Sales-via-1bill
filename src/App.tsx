@@ -3,7 +3,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import { flushSync } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { downloadReservationPdf } from "./reservation-pdf";
-import { presentationText, shortPaymentReference } from "./presentation-text";
+import { presentationText, shortPaymentReference, shortRouteCode } from "./presentation-text";
 import { inDateRange, type DateRange } from "./booking-filters";
 import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
 import { printDocument, printTicketBatch, type TicketPaper } from "./print-document";
@@ -223,7 +223,6 @@ type Booking = {
 type StaffUser = {
   id: number;
   name: string;
-  email: string;
   username: string;
   role: "admin" | "manager" | "counter" | "dispatcher" | "finance";
   forcePasswordChange: boolean;
@@ -1456,7 +1455,7 @@ function SectionTitle({
 }
 
 function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
-  const [email, setEmail] = useState(""),
+  const [username, setUsername] = useState(""),
     [password, setPassword] = useState(""),
     [otp, setOtp] = useState(""),
     [requiresOtp, setRequiresOtp] = useState(false),
@@ -1464,11 +1463,11 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     [signingIn, setSigningIn] = useState(false);
   const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!email || !password) return;
+    if (!username || !password) return;
     setSigningIn(true);
     setLoginNotice("");
     try {
-      await api.login<{ user: StaffUser }>(email, password, otp);
+      await api.login<{ user: StaffUser }>(username, password, otp);
       onNavigate("/manage");
     } catch (error) {
       if (error instanceof ApiError && error.code === "authenticator_required") setRequiresOtp(true);
@@ -1492,10 +1491,10 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           <p className="login-business">Madina Express Operations</p>
           <h2>Welcome back</h2>
           <label>
-            <span>Email or username</span>
+            <span>Username</span>
             <input
-              value={email}
-              onChange={(event) => { setEmail(event.target.value); setRequiresOtp(false); setOtp(""); }}
+              value={username}
+              onChange={(event) => { setUsername(event.target.value); setRequiresOtp(false); setOtp(""); }}
               placeholder="Enter your username"
               autoComplete="username"
             />
@@ -1631,7 +1630,6 @@ function ManagementApp({
     [routes, setRoutes] = useState<RouteRecord[]>([]),
     [crew, setCrew] = useState<CrewRecord[]>([]),
     [staffUsers, setStaffUsers] = useState<StaffUser[]>([]),
-    [financeUnlocked, setFinanceUnlocked] = useState(false),
     [receipt, setReceipt] = useState<Booking | null>(null),
     [receiptBatch, setReceiptBatch] = useState<Booking[]>([]),
     [automaticPrints, setAutomaticPrints] = useState<AutomaticPrintRequest[]>([]),
@@ -1676,7 +1674,7 @@ function ManagementApp({
     try{
       const result=await api.adminBootstrap<AdminBootstrap>();
       if(version!==dataVersion.current)return;
-      setBookings(result.bookings);setTrips(result.trips);setRuns(result.runs);setFleet(result.fleet);setRoutes(result.routes);setCrew(result.crew);
+      setBookings(result.bookings);setTrips(result.trips);setRuns(result.runs);setFleet(result.fleet);setRoutes(result.routes);setCrew(result.crew);setStaffUsers(result.users);
       setLastUpdated(new Date().toLocaleTimeString("en-GB",{timeZone:"Asia/Karachi"}));setRefreshError("");
     }catch(e){setRefreshError(e instanceof Error?e.message:"Live updates unavailable. Refresh to retry.");}
     finally{refreshingRef.current=false;setRefreshing(false);}
@@ -2132,18 +2130,12 @@ function ManagementApp({
             <RoutesView fleet={fleet} routes={routes} onSave={saveRoute} onDelete={deleteRoute} />
           )}
           {activeView === "finance" && (
-            <FinanceProtected
-              unlocked={financeUnlocked}
-              onUnlocked={() => setFinanceUnlocked(true)}
-            >
+            <FinanceProtected onOpenSettings={() => changeView("settings")}>
               <FinanceView bookings={bookings} />
             </FinanceProtected>
           )}
           {activeView === "expenses" && (
-            <FinanceProtected
-              unlocked={financeUnlocked}
-              onUnlocked={() => setFinanceUnlocked(true)}
-            >
+            <FinanceProtected onOpenSettings={() => changeView("settings")}>
               <ExpensesView showToast={showToast} />
             </FinanceProtected>
           )}
@@ -2168,9 +2160,14 @@ function ManagementApp({
               onUserChange={onUserChange}
               paymentMode={paymentMode}
               staffUsers={staffUsers}
-              onUserCreated={(created) =>
-                setStaffUsers((current) => [created, ...current])
-              }
+              onStaffSaved={(staff) => {
+                dataVersion.current++;
+                setStaffUsers(current => [...current.filter(account => account.id !== staff.id), staff]);
+              }}
+              onStaffRemoved={(id) => {
+                dataVersion.current++;
+                setStaffUsers(current => current.filter(account => account.id !== id));
+              }}
               showToast={showToast}
             />
           )}
@@ -2478,7 +2475,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
               ))}
               <MoneyField label="Total discount" value={discount} onChange={value => update("discount", Math.min(value, fareTotal))} />
             </>}
-            {mode==="Ticket"&&<><label><span>Payment</span><select value={passenger.paymentMethod} onChange={e=>update("paymentMethod",e.target.value as PaymentMethod)}><option>Cash</option><option>Card</option><option>Bank transfer</option>{paymentMode!=="disabled"&&<option>1Bill</option>}</select></label>{passenger.paymentMethod!=="Cash"&&<label><span>Payment reference *</span><input required value={passenger.paymentReference} onChange={e=>update("paymentReference",e.target.value)}/></label>}</>}
+            {mode==="Ticket"&&<><label><span>Payment</span><select value={passenger.paymentMethod} onChange={e=>update("paymentMethod",e.target.value as PaymentMethod)}><option>Cash</option><option>Bank transfer</option>{paymentMode!=="disabled"&&<option>1Bill</option>}</select></label>{passenger.paymentMethod!=="Cash"&&<label><span>Payment reference *</span><input required value={passenger.paymentReference} onChange={e=>update("paymentReference",e.target.value)}/></label>}</>}
           </div></fieldset>
           <div className="counter-total"><span>{chosenSeats.length ? `Seat ${seatList(chosenSeats,bus.service)}`:"Select seats"}<small>{mode==="Ticket"?"One ticket + token per seat":"Hold only · no ticket issued"}</small></span><strong>{money(total)}</strong></div>
           {departureDirty&&<p className="pending-departure" role="status">Save bus / time before issuing or reserving seats.</p>}{unavailable&&<p className="form-error">{trip.salesPaused?"Seat sales are paused. Resume sales above to continue.":"This departure is closed for booking."}</p>}{error&&<p className="form-error" role="alert">{error}</p>}
@@ -2717,7 +2714,7 @@ function RefundModal({
 }) {
   const available = refundableBalance(booking);
   const [amount, setAmount] = useState(available);
-  const [method, setMethod] = useState<PaymentMethod>(booking.paymentMethod);
+  const [method, setMethod] = useState<PaymentMethod>(booking.paymentMethod === "Card" ? "Bank transfer" : booking.paymentMethod);
   const [reason, setReason] = useState<RefundReason>("Passenger request");
   const [reference, setReference] = useState("");
   const [notes, setNotes] = useState("");
@@ -2741,7 +2738,7 @@ function RefundModal({
             return;
           }
           if (method !== "Cash" && !reference.trim()) {
-            setError("Enter the bank, card or 1Bill refund reference.");
+            setError("Enter the refund transaction reference.");
             return;
           }
           if (busy) return;
@@ -2814,7 +2811,7 @@ function RefundModal({
                 setError("");
               }}
             >
-              {(["Cash", "1Bill", "Card", "Bank transfer"] as PaymentMethod[]).map(
+              {(["Cash", "1Bill", "Bank transfer"] as PaymentMethod[]).map(
                 (option) => (
                   <option key={option}>{option}</option>
                 ),
@@ -3224,7 +3221,6 @@ function CollectPaymentModal({
             <span>Payment method</span>
             <select value={method} onChange={(event) => setMethod(event.target.value as PaymentMethod)}>
               <option>Cash</option>
-              <option>Card</option>
               <option>Bank transfer</option>
               <option disabled={paymentMode === "disabled"}>1Bill{paymentMode === "disabled" ? " (coming soon)" : ""}</option>
             </select>
@@ -4093,7 +4089,7 @@ function RoutesView({
       (filter === "Active routes"
         ? route.status === "Active"
         : route.status === "Paused") &&
-      `${route.from} ${route.to} ${route.boarding}`
+      `${route.from} ${route.to} ${route.boarding} ${shortRouteCode(route.id)} ${route.id}`
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
@@ -4140,7 +4136,7 @@ function RoutesView({
                 <tr key={r.id}>
                   <td>
                     <strong>{routeLabel(r)}</strong>
-                    <small>Route code · {presentationText(r.id).toUpperCase()}</small>
+                    <small title={r.id}>Route code · {shortRouteCode(r.id)}</small>
                   </td>
                   <td>
                     <strong>{r.distance}</strong>
@@ -4211,68 +4207,93 @@ function RoutesView({
   );
 }
 
-function FinanceProtected({
-  unlocked,
-  onUnlocked,
-  children,
-}: {
-  unlocked: boolean;
-  onUnlocked: () => void;
+function FinanceProtected({ onOpenSettings, children }: {
+  onOpenSettings: () => void;
   children: React.ReactNode;
 }) {
-  const [password, setPassword] = useState("");
-  const [checking, setChecking] = useState(!unlocked);
+  const [pin, setPin] = useState("");
+  const [pinConfigured, setPinConfigured] = useState<boolean | null>(null);
+  const [unlockedUntil, setUnlockedUntil] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const accessVersion = useRef(0);
+
   useEffect(() => {
-    if (unlocked) return;
-    api.financeStatus()
-      .then((result) => {
-        if (result.unlocked) onUnlocked();
-      })
-      .catch(() => undefined)
-      .finally(() => setChecking(false));
-  }, [onUnlocked, unlocked]);
-  if (unlocked) return <>{children}</>;
+    let active = true;
+    const refresh = async () => {
+      const version = accessVersion.current;
+      try {
+        const status = await api.financeStatus();
+        if (!active || version !== accessVersion.current) return;
+        setPinConfigured(status.pinConfigured);
+        setUnlockedUntil(status.unlocked ? Date.now() + status.expiresIn * 1000 : 0);
+      } catch (error) {
+        if (active && version === accessVersion.current) {
+          setUnlockedUntil(0);
+          setError(error instanceof Error ? error.message : "Finance status is unavailable.");
+        }
+      }
+    };
+    void refresh();
+    const interval = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!unlockedUntil) return;
+    const expiry = window.setTimeout(() => setUnlockedUntil(0), Math.max(0, unlockedUntil - Date.now()));
+    return () => window.clearTimeout(expiry);
+  }, [unlockedUntil]);
+
+  if (unlockedUntil > 0) return <>{children}</>;
   return (
     <div className="finance-lock-page">
-      <div className="finance-blur-preview" aria-hidden="true">
-        <div /><div /><div /><div />
-      </div>
-      <form
-        className="finance-unlock-card"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setSubmitting(true);
-          setError("");
-          try {
-            await api.unlockFinance(password);
-            onUnlocked();
-          } catch (unlockError) {
-            setError(unlockError instanceof Error ? unlockError.message : "Finance could not be unlocked.");
-          } finally {
-            setSubmitting(false);
-          }
-        }}
-      >
+      <div className="finance-blur-preview" aria-hidden="true"><div /><div /><div /><div /></div>
+      <form className="finance-unlock-card" onSubmit={async event => {
+        event.preventDefault();
+        if (!pinConfigured || submitting) return;
+        accessVersion.current++;
+        setSubmitting(true);
+        setError("");
+        try {
+          const result = await api.unlockFinance(pin);
+          accessVersion.current++;
+          setUnlockedUntil(Date.now() + result.expiresIn * 1000);
+          setPin("");
+        } catch (error) {
+          if (error instanceof ApiError && error.code === "finance_pin_not_set") setPinConfigured(false);
+          setError(error instanceof Error ? error.message : "Finance could not be unlocked.");
+        } finally {
+          setSubmitting(false);
+        }
+      }}>
         <span className="finance-lock-icon"><LockKeyhole size={25} /></span>
         <h1>Finance is locked</h1>
-        <p>Enter the main administrator password. Access remains unlocked for 15 minutes.</p>
-        <label>
-          <span>Administrator password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="current-password"
-            disabled={checking || submitting}
-            required
-          />
-        </label>
-        {error && <p className="form-error">{error}</p>}
-        <button className="primary-button" type="submit" disabled={checking || submitting}>
-          <KeyRound size={16} /> {checking ? "Checking…" : submitting ? "Unlocking…" : "Unlock finance"}
-        </button>
+        {pinConfigured === false ? (
+          <>
+            <p>Set a finance PIN in Settings to open Finance and Expenses.</p>
+            <button className="primary-button" type="button" onClick={onOpenSettings}>Open settings</button>
+          </>
+        ) : (
+          <>
+            <p>Enter your finance PIN to unlock Finance and Expenses for 15 minutes.</p>
+            <label>
+              <span>Finance PIN</span>
+              <input type="password" inputMode="numeric" pattern="[0-9]{6,10}" maxLength={10}
+                value={pin} onChange={event => setPin(event.target.value)} autoComplete="off"
+                disabled={!pinConfigured || submitting} required />
+            </label>
+            <button className="primary-button" type="submit" disabled={!pinConfigured || submitting}>
+              <KeyRound size={16} /> {submitting ? "Unlocking…" : pinConfigured === null && !error ? "Checking…" : "Unlock finance"}
+            </button>
+          </>
+        )}
+        {error && <p className="form-error" role="alert">{error}</p>}
       </form>
     </div>
   );
@@ -4371,7 +4392,7 @@ function ExpensesView({ showToast }: { showToast: (message: string) => void }) {
           <label><span>Category</span><select value={draft.category} onChange={(e) => updateDraft("category", e.target.value)}>{["Terminal", "Fuel", "Maintenance", "Driver advance", "Refreshment", "Utilities", "Salary", "Other"].map((item) => <option key={item}>{item}</option>)}</select></label>
           <label className="span-2"><span>Description</span><input value={draft.description} onChange={(e) => updateDraft("description", e.target.value)} placeholder="What was this expense for?" required /></label>
           <label><span>Amount</span><input type="number" min="0.01" step="0.01" value={draft.amount} onChange={(e) => updateDraft("amount", Number(e.target.value))} required /></label>
-          <label><span>Paid by</span><select value={draft.paymentMethod} onChange={(e) => updateDraft("paymentMethod", e.target.value)}><option>Cash</option><option>Card</option><option>Bank transfer</option></select></label>
+          <label><span>Paid by</span><select value={draft.paymentMethod} onChange={(e) => updateDraft("paymentMethod", e.target.value)}><option>Cash</option><option>Bank transfer</option></select></label>
           <label><span>Reference</span><input value={draft.reference} onChange={(e) => updateDraft("reference", e.target.value)} placeholder={draft.paymentMethod === "Cash" ? "Optional" : "Required"} /></label>
           <label><span>Notes</span><input value={draft.notes} onChange={(e) => updateDraft("notes", e.target.value)} placeholder="Optional" /></label>
           <button className="primary-button" type="submit"><Plus size={16} /> Save expense</button>
@@ -4614,7 +4635,8 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
             title="Payment breakdown"
             text="Share of collected revenue"
           />
-          {(["Cash", "1Bill", "Card", "Bank transfer"] as PaymentMethod[]).map(
+          {(["Cash", "1Bill", "Card", "Bank transfer"] as PaymentMethod[])
+            .filter(method => method !== "Card" || settled.some(booking => booking.paymentMethod === "Card")).map(
             (m) => {
               const amount = byMethod(m),
                 pct = total
@@ -4995,14 +5017,16 @@ function SettingsView({
   onUserChange,
   paymentMode,
   staffUsers,
-  onUserCreated,
+  onStaffSaved,
+  onStaffRemoved,
   showToast,
 }: {
   user: StaffUser;
   onUserChange: (user: StaffUser) => void;
   paymentMode: string;
   staffUsers: StaffUser[];
-  onUserCreated: (user: StaffUser) => void;
+  onStaffSaved: (user: StaffUser) => void;
+  onStaffRemoved: (id: number) => void;
   showToast: (message: string) => void;
 }) {
   const [autoPrint, setAutoPrint] = useState(autoPrintEnabled);
@@ -5012,15 +5036,7 @@ function SettingsView({
     [currentPassword, setCurrentPassword] = useState(""),
     [newPassword, setNewPassword] = useState(""),
     [confirmPassword, setConfirmPassword] = useState(""),
-    [savingPassword, setSavingPassword] = useState(false),
-    [newStaff, setNewStaff] = useState({
-      name: "",
-      email: "",
-      username: "",
-      role: "counter" as StaffUser["role"],
-      password: "",
-    }),
-    [creatingStaff, setCreatingStaff] = useState(false);
+    [savingPassword, setSavingPassword] = useState(false);
   const changePassword = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (newPassword !== confirmPassword) {
@@ -5039,20 +5055,6 @@ function SettingsView({
       showToast(error instanceof Error ? error.message : "Password change failed.");
     } finally {
       setSavingPassword(false);
-    }
-  };
-  const createStaff = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setCreatingStaff(true);
-    try {
-      const result = await api.createUser<StaffUser>(newStaff);
-      onUserCreated(result.user);
-      setNewStaff({ name: "", email: "", username: "", role: "counter", password: "" });
-      showToast(`${result.user.name} can now sign in.`);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : "Staff account could not be created.");
-    } finally {
-      setCreatingStaff(false);
     }
   };
   return (
@@ -5095,52 +5097,11 @@ function SettingsView({
             </span>
           </div>
         </section>
-        {user.role === "admin" && (
-          <section className="surface settings-card">
-            <SettingsTitle
-              icon={<UsersRound size={19} />}
-              title="Staff access"
-              text={`${staffUsers.length} sign-in account${staffUsers.length === 1 ? "" : "s"}`}
-              status
-            />
-            <form className="settings-fields" onSubmit={createStaff}>
-              <label>
-                <span>Full name</span>
-                <input required value={newStaff.name} onChange={(event) => setNewStaff({ ...newStaff, name: event.target.value })} />
-              </label>
-              <label>
-                <span>Email</span>
-                <input type="email" required value={newStaff.email} onChange={(event) => setNewStaff({ ...newStaff, email: event.target.value })} />
-              </label>
-              <label>
-                <span>Username</span>
-                <input required value={newStaff.username} onChange={(event) => setNewStaff({ ...newStaff, username: event.target.value })} />
-              </label>
-              <label>
-                <span>Role</span>
-                <select value={newStaff.role} onChange={(event) => setNewStaff({ ...newStaff, role: event.target.value as StaffUser["role"] })}>
-                  <option value="manager">Manager</option>
-                  <option value="counter">Counter agent</option>
-                  <option value="dispatcher">Dispatcher</option>
-                  <option value="finance">Finance</option>
-                </select>
-              </label>
-              <label className="span-2">
-                <span>Temporary password</span>
-                <input type="password" minLength={12} required value={newStaff.password} onChange={(event) => setNewStaff({ ...newStaff, password: event.target.value })} />
-              </label>
-              <button className="primary-button span-2" type="submit" disabled={creatingStaff}>
-                <Plus size={15} /> {creatingStaff ? "Creating…" : "Create staff account"}
-              </button>
-            </form>
-            <div className="integration-list">
-              {staffUsers.slice(0, 5).map((account) => (
-                <span key={account.id}>
-                  <i /> {account.name} <b>{account.role}</b>
-                </span>
-              ))}
-            </div>
-          </section>
+        {user.role === "admin" && !user.forcePasswordChange && (
+          <>
+            <StaffAccessSettings staffUsers={staffUsers} onSaved={onStaffSaved} onRemoved={onStaffRemoved} showToast={showToast} />
+            <FinancePinSettings showToast={showToast} />
+          </>
         )}
         <section className="surface settings-card">
           <SettingsTitle
@@ -5343,6 +5304,196 @@ function SettingsView({
         />
       )}
     </div>
+  );
+}
+
+const staffRoles = {
+  counter: "Counter agent",
+  manager: "Manager",
+  dispatcher: "Dispatcher",
+  finance: "Finance",
+};
+type StaffRole = keyof typeof staffRoles;
+const emptyStaffDraft = { name: "", username: "", role: "counter" as StaffRole, password: "" };
+
+function StaffAccessSettings({ staffUsers, onSaved, onRemoved, showToast }: {
+  staffUsers: StaffUser[];
+  onSaved: (user: StaffUser) => void;
+  onRemoved: (id: number) => void;
+  showToast: (message: string) => void;
+}) {
+  const [draft, setDraft] = useState(emptyStaffDraft);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState<StaffUser | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [terminalAccess, setTerminalAccess] = useState<Awaited<ReturnType<typeof api.terminalAccess>>>();
+  const [terminalError, setTerminalError] = useState("");
+  const loadTerminals = useCallback(() => api.terminalAccess()
+    .then(result => {
+      setTerminalAccess(result);
+      setTerminalError("");
+    })
+    .catch(() => setTerminalError("Could not check enrollment. Try Refresh.")), []);
+  useEffect(() => { void loadTerminals(); }, [loadTerminals]);
+
+  const reset = () => {
+    setEditing(null);
+    setDraft(emptyStaffDraft);
+  };
+  const staff = staffUsers.filter(account => account.role !== "admin").sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <section className="surface settings-card staff-access-settings">
+      <SettingsTitle icon={<UsersRound size={19} />} title="Staff access"
+        text={`${staff.length} staff account${staff.length === 1 ? "" : "s"} · Administrator access is managed separately.`} />
+      <form className="settings-fields" aria-label={editing ? "Edit staff account" : "Create staff account"} onSubmit={async event => {
+        event.preventDefault();
+        if (saving) return;
+        setSaving(true);
+        try {
+          const result = editing === null ? await api.createUser<StaffUser>(draft) : await api.updateUser<StaffUser>(editing, draft);
+          onSaved(result.user);
+          showToast(editing === null ? `${result.user.name} was added.` : `Saved ${result.user.name}.`);
+          reset();
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Staff account could not be saved.");
+        } finally {
+          setSaving(false);
+        }
+      }}>
+        <label>
+          <span>Full name</span>
+          <input required maxLength={120} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} />
+        </label>
+        <label>
+          <span>Username</span>
+          <input required minLength={3} maxLength={40} autoComplete="off" value={draft.username}
+            onChange={event => setDraft({ ...draft, username: event.target.value })} />
+        </label>
+        <label>
+          <span>Role</span>
+          <select value={draft.role} onChange={event => setDraft({ ...draft, role: event.target.value as StaffRole })}>
+            {Object.entries(staffRoles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>{editing === null ? "Password" : "New password (optional)"}</span>
+          <input type="password" autoComplete="new-password" minLength={12} maxLength={72} required={editing === null}
+            value={draft.password} onChange={event => setDraft({ ...draft, password: event.target.value })} />
+        </label>
+        {editing !== null && <small className="span-2">Leave the new password blank to keep the current one.</small>}
+        <div className="span-2 view-actions">
+          <button className="primary-button" type="submit" disabled={saving}>
+            {editing === null ? <Plus size={15} /> : <Check size={15} />}
+            {saving ? "Saving…" : editing === null ? "Create staff account" : "Save staff changes"}
+          </button>
+          {editing !== null && <button className="secondary-button" type="button" disabled={saving} onClick={reset}>Cancel edit</button>}
+        </div>
+      </form>
+      <ul className="staff-accounts">
+        {staff.map(account => (
+          <li key={account.id}>
+            <div><strong>{account.name}</strong><small>{account.username} · {staffRoles[account.role as StaffRole]}</small></div>
+            <div className="staff-account-actions">
+              <button className="text-action" type="button" disabled={saving} aria-label={`Edit ${account.name}`} onClick={() => {
+                setEditing(account.id);
+                setDraft({ name: account.name, username: account.username, role: account.role as StaffRole, password: "" });
+              }}>Edit</button>
+              <button className="text-action" type="button" disabled={saving} aria-label={`Delete ${account.name}`}
+                onClick={() => setDeleting(account)}>Delete</button>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <div className="terminal-setup">
+        <h3>Terminal PCs</h3>
+        <p>Staff can use any enrolled PC in its enrolled Windows profile. The main admin can sign in remotely.</p>
+        {terminalAccess && !terminalAccess.enforced && <p>Device checks are disabled in this environment.</p>}
+        {terminalAccess && <ul className="terminal-slots">
+          {terminalAccess.terminals.map(terminal => (
+            <li key={terminal.slot}>PC {terminal.slot} · <strong>{terminal.enrolled ? "Enrolled" : "Pending setup"}</strong></li>
+          ))}
+        </ul>}
+        {terminalError && <p className="form-error" role="alert">{terminalError}</p>}
+        <div className="view-actions">
+          <a className="secondary-button" href={`${appBase}/Madina-Express-Terminal-Setup.inf`} download>Download Windows setup file</a>
+          <button className="secondary-button" type="button" onClick={() => void loadTerminals()}>Refresh</button>
+        </div>
+        <details>
+          <summary>How to enroll a terminal PC</summary>
+          <ol>
+            <li>On the terminal PC, sign in to the Windows profile used at the counter and download the setup file.</li>
+            <li>Open Command Prompt in that folder and run <code>certreq -new -user Madina-Express-Terminal-Setup.inf terminal.req</code>.</li>
+            <li>Copy the request to the production server and sign it through SSH. Use slot 1, 2, or 3 for that PC.</li>
+            <li>Copy the signed certificate to the same Windows profile. Run <code>certreq -accept -user terminal-1.cer</code> for PC 1, then restart the browser and choose the terminal certificate at sign-in.</li>
+          </ol>
+          <p>Example for PC 1, from the administrator’s computer after copying the request from that PC.</p>
+          <pre>{`scp terminal.req root@62.171.173.11:/root/terminal-1.req
+ssh root@62.171.173.11 'bash /opt/madina-express/deploy/issue-terminal-certificate.sh 1 /root/terminal-1.req'
+scp root@62.171.173.11:/root/madina-terminal-ca/terminal-1.cer .`}</pre>
+        </details>
+      </div>
+      {deleting && (
+        <ConfirmDeleteModal title="Delete staff account" item={deleting.name}
+          text="This ends the staff member’s access and signs them out. Their ticket and audit history stays available."
+          onClose={() => setDeleting(null)} onConfirm={async () => {
+            await api.deleteUser(deleting.id);
+            if (editing === deleting.id) reset();
+            onRemoved(deleting.id);
+            showToast(`${deleting.name} was removed.`);
+            setDeleting(null);
+          }} />
+      )}
+    </section>
+  );
+}
+
+function FinancePinSettings({ showToast }: { showToast: (message: string) => void }) {
+  const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [password, setPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  return (
+    <section className="surface settings-card">
+      <SettingsTitle icon={<LockKeyhole size={19} />} title="Finance PIN"
+        text="Set or update the 6–10 digit code for Finance and Expenses." />
+      <form className="settings-fields" onSubmit={async event => {
+        event.preventDefault();
+        if (saving) return;
+        if (pin !== confirmPin) { showToast("The finance PINs do not match."); return; }
+        setSaving(true);
+        try {
+          await api.setFinancePin(pin, password);
+          setPin("");
+          setConfirmPin("");
+          setPassword("");
+          showToast("Finance PIN saved. Finance access has been locked again.");
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "The finance PIN could not be saved.");
+        } finally {
+          setSaving(false);
+        }
+      }}>
+        <label className="span-2">
+          <span>Current administrator password</span>
+          <input type="password" autoComplete="current-password" value={password} required
+            onChange={event => setPassword(event.target.value)} />
+        </label>
+        <label>
+          <span>New finance PIN</span>
+          <input type="password" inputMode="numeric" pattern="[0-9]{6,10}" maxLength={10} autoComplete="off"
+            value={pin} onChange={event => setPin(event.target.value)} required />
+        </label>
+        <label>
+          <span>Confirm finance PIN</span>
+          <input type="password" inputMode="numeric" pattern="[0-9]{6,10}" maxLength={10} autoComplete="off"
+            value={confirmPin} onChange={event => setConfirmPin(event.target.value)} required />
+        </label>
+        <button className="primary-button span-2" type="submit" disabled={saving}><KeyRound size={15} />
+          {saving ? "Saving…" : "Save finance PIN"}
+        </button>
+      </form>
+    </section>
   );
 }
 

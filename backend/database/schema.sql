@@ -4,7 +4,7 @@ SET time_zone = '+05:00';
 CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(120) NOT NULL,
-  email VARCHAR(190) NOT NULL UNIQUE,
+  email VARCHAR(190) NULL UNIQUE,
   username VARCHAR(80) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   role ENUM('admin','manager','counter','dispatcher','finance') NOT NULL DEFAULT 'counter',
