@@ -1,5 +1,12 @@
 # Run from the Windows profile used for ticketing.
 $ErrorActionPreference = 'Stop'
+$windowsVersion = [Environment]::OSVersion.Version
+if ($windowsVersion.Major -lt 10) {
+    throw 'Windows 7 and Windows 8 are not compatible. Use a Windows 10 or Windows 11 PC.'
+}
+if ($PSVersionTable.PSVersion -lt [Version]'5.1') {
+    throw 'Windows PowerShell 5.1 or later is required.'
+}
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $setup = Get-Content (Join-Path $PSScriptRoot 'setup.json') -Raw | ConvertFrom-Json
 $certificatePath = Join-Path $PSScriptRoot 'terminal-ca.cer'

@@ -6,11 +6,13 @@ The cloud deployment only prepares installer support. **Offline operation starts
 
 ## Before installation
 
-- Use 64-bit Windows 10/11 on the main PC. Keep it powered on, connected by Ethernet, and awake during counter hours. A UPS for it and the router is recommended.
+Windows 11 is preferred for a new setup. Keep Windows 10 covered by applicable ongoing security updates, such as Extended Security Updates (ESU); regular Home/Pro support ended in October 2025. See [Microsoft lifecycle guidance](https://support.microsoft.com/en-us/windows/deployment/updates-lifecycle/what-does-it-mean-if-windows-isn-t-supported).
+
+- Use 64-bit Windows 10 version 1809 or later, or Windows 11, with Windows PowerShell 5.1 on the main PC. Windows 7/8 cannot host this server. One of the Windows 10 counter PCs can host it while continuing to serve as a counter. Keep it powered on, connected by Ethernet, and awake during counter hours. A UPS for it and the router is recommended.
 - Connect all three PCs to the same trusted router/LAN. They need no internet connection to reach each other.
 - Reserve the main PC's IPv4 address in the router's DHCP settings. Run `ipconfig` to find it. The installer checks that the supplied private address belongs to the main PC and embeds it in HTTPS and child setup files.
 - The main PC installer needs administrator elevation and internet for the first installation. Allow roughly 3 GB for downloaded runtimes, installation and initial data; additional space is needed for the database, logs, 30 daily backups and binary logs. Keep at least 10 GB free and monitor usage.
-- Child PC enrollment uses the Windows TPM and a non-exportable key in the counter's Windows user profile. Enable TPM if enrollment reports it is unavailable. Do not copy certificates or share exported private keys.
+- Child PCs also need Windows 10/11 and PowerShell 5.1. Upgrade a Windows 7 PC before enrolling it. Child PC enrollment uses the Windows TPM and a non-exportable key in the counter's Windows user profile. Enable TPM if enrollment reports it is unavailable. Do not copy certificates or share exported private keys.
 - Finish or pause counter work during initial transfer. Downloading the installer alone changes no booking authority. Starting data transfer pauses cloud writes until activation finishes.
 
 ## Install the main PC

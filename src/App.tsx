@@ -5400,7 +5400,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
       }}>Revoke access</button>}
     </li>)}</ul>}
     <details><summary>Installation steps</summary><ol>
-      <li>Use a fixed private IPv4 address for the main Windows 10/11 PC. Connect all three PCs to the same trusted router.</li>
+      <li>Use a 64-bit Windows 10/11 main PC with PowerShell 5.1 and a fixed private IPv4 address. Windows 7 cannot run the installer. Connect the PCs to the same trusted router.</li>
       <li>Download the main installer here, extract the ZIP, and run Install-Main-PC.cmd on the main PC. Enter its local IPv4 address when asked and approve Windows elevation.</li>
       <li>Open the local address shown by setup, sign in as admin with your authenticator, and return to Settings.</li>
       <li>Create a separate PC 1, PC 2 and PC 3 setup file. Run each one in the Windows profile used at that counter, including PC 1 on the main PC. The saved main IP is included.</li>

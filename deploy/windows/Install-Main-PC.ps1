@@ -1,5 +1,15 @@
 # First installation requires an elevated PowerShell window and internet.
 $ErrorActionPreference = 'Stop'
+$windowsVersion = [Environment]::OSVersion.Version
+if ($windowsVersion.Major -lt 10) {
+    throw 'Windows 7 and Windows 8 are not compatible. Use a Windows 10 or Windows 11 PC.'
+}
+if ($PSVersionTable.PSVersion -lt [Version]'5.1') {
+    throw 'Windows PowerShell 5.1 or later is required.'
+}
+if ($windowsVersion.Major -eq 10 -and $windowsVersion.Build -lt 17763) {
+    throw 'The main PC requires Windows 10 version 1809 or later, or Windows 11.'
+}
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 if (-not [Environment]::Is64BitOperatingSystem) { throw 'A 64-bit Windows 10 or 11 main PC is required.' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -46,7 +56,7 @@ Download-Checked $manifest.node $nodeZip
 Download-Checked $manifest.mysql $mysqlZip
 Download-Checked $manifest.vcRuntime $vc
 $vcProcess = Start-Process -FilePath $vc -ArgumentList '/install', '/quiet', '/norestart' -PassThru -Wait
-if ($vcProcess.ExitCode -notin @(0, 1638, 3010)) { throw 'Microsoft Visual C++ runtime installation failed.' }
+if (@(0, 1638, 3010) -notcontains $vcProcess.ExitCode) { throw 'Microsoft Visual C++ runtime installation failed.' }
 if (-not (Test-Path (Join-Path $base 'runtime\node.exe'))) {
     Expand-Archive -Path $nodeZip -DestinationPath $downloads -Force
     Move-Item (Join-Path $downloads $manifest.node.folder) (Join-Path $base 'runtime')
