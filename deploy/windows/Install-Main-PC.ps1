@@ -1,5 +1,6 @@
 # First installation requires an elevated PowerShell window and internet.
 $ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 if (-not [Environment]::Is64BitOperatingSystem) { throw 'A 64-bit Windows 10 or 11 main PC is required.' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = New-Object Security.Principal.WindowsPrincipal($identity)

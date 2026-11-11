@@ -1,5 +1,6 @@
 # Run from the Windows profile used for ticketing.
 $ErrorActionPreference = 'Stop'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $setup = Get-Content (Join-Path $PSScriptRoot 'setup.json') -Raw | ConvertFrom-Json
 $certificatePath = Join-Path $PSScriptRoot 'terminal-ca.cer'
 if ((Get-FileHash $certificatePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $setup.caFingerprint) {
