@@ -189,7 +189,7 @@ def abort(payload, config):
 
 def main():
     if os.geteuid() != 0 or len(sys.argv) != 2:
-        raise ValueError("This command requires its restricted sudo rule.")
+        raise ValueError("This command requires the root terminal control service.")
     ROOT.mkdir(parents=True, exist_ok=True)
     os.chmod(ROOT, 0o750)
     os.chown(ROOT, 0, SERVICE_GID)
