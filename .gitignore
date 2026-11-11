@@ -30,3 +30,5 @@ output/playwright/
 *.njsproj
 *.sln
 *.sw?
+
+backend/.terminal/

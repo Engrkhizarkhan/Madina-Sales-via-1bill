@@ -258,6 +258,7 @@ type PublicJourney = Pick<PublicReservation, "route" | "destination" | "boarding
     expiresAt: string | null;
   };
 type PublicBootstrap = {
+  terminalAvailable?: boolean;
   trips: TripRecord[];
   fleet: BusRecord[];
   routes: RouteRecord[];
@@ -701,11 +702,13 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     [publicRoutes, setPublicRoutes] = useState<RouteRecord[]>([]),
     [occupancy, setOccupancy] = useState<PublicOccupancy[]>([]),
     [tripRuns, setTripRuns] = useState<TripRun[]>([]),
-    [loadError, setLoadError] = useState("");
+    [loadError, setLoadError] = useState(""),
+    [terminalAvailable, setTerminalAvailable] = useState(true);
   useEffect(() => {
     api
       .publicBootstrap<PublicBootstrap>()
       .then((result) => {
+        setTerminalAvailable(result.terminalAvailable !== false);
         setPublicTrips(result.trips);
         setPublicFleet(result.fleet);
         setPublicRoutes(result.routes);
@@ -732,7 +735,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
   useEffect(() => {
     let active = true;
     const refresh = () => api.publicTripRuns<TripRun>(date)
-      .then((result) => { if (active) { setTripRuns(result.runs); setOccupancy(result.occupancy as PublicOccupancy[]); setPublicFleet(result.fleet as BusRecord[]); setPublicTrips(result.trips as TripRecord[]); setPublicRoutes(result.routes as RouteRecord[]); setLoadError(""); } })
+      .then((result) => { if (active) { setTerminalAvailable(result.terminalAvailable !== false); setTripRuns(result.runs); setOccupancy(result.occupancy as PublicOccupancy[]); setPublicFleet(result.fleet as BusRecord[]); setPublicTrips(result.trips as TripRecord[]); setPublicRoutes(result.routes as RouteRecord[]); setLoadError(""); } })
       .catch(() => { if (active) setLoadError("Availability could not be refreshed. Please try again."); });
     void refresh();
     const timer = window.setInterval(refresh, 15000);
@@ -873,6 +876,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             </div>
           </div>
           {loadError && <p className="form-error">{loadError}</p>}
+          {!terminalAvailable && <p className="form-error" role="status">The terminal is temporarily offline. Timetables remain available; please contact the counter to reserve.</p>}
           <form
             className="public-search"
             onSubmit={(event) => {
@@ -982,8 +986,9 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                   </div>
                   <button
                     type="button"
-                    disabled={trip.seats === 0}
-                    onClick={() =>
+                    disabled={trip.seats === 0 || !terminalAvailable}
+                    onClick={() => {
+                      if (!terminalAvailable) { setLoadError("The terminal is temporarily offline. Please contact the counter."); return; }
                       setCheckoutTrip({
                         route: trip.route,
                         destination:to,
@@ -992,8 +997,8 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
                         time: trip.time,
                         fare: trip.fare,
                         occupiedSeats: trip.occupiedSeats,
-                      })
-                    }
+                      });
+                    }}
                   >
                     Choose seats <ArrowRight size={14} />
                   </button>
@@ -2043,6 +2048,7 @@ function ManagementApp({
             </button>
           </div>
         </header>
+        <TerminalConnectionBanner />
         <main className="admin-main">
           {activeView === "dashboard" && (
             <DashboardView
@@ -5108,6 +5114,7 @@ function SettingsView({
         {user.role === "admin" && !user.forcePasswordChange && (
           <>
             <StaffAccessSettings staffUsers={staffUsers} onSaved={onStaffSaved} onRemoved={onStaffRemoved} showToast={showToast} />
+            <TerminalServerSettings showToast={showToast} />
             <FinancePinSettings showToast={showToast} />
           </>
         )}
@@ -5324,6 +5331,85 @@ const staffRoles = {
 type StaffRole = keyof typeof staffRoles;
 const emptyStaffDraft = { name: "", username: "", role: "counter" as StaffRole, password: "" };
 
+function TerminalConnectionBanner() {
+  const [connection, setConnection] = useState<{ local: boolean; connected: boolean; replicated: boolean }>();
+  useEffect(() => {
+    let active = true;
+    const check = () => api.terminalConnection().then(result => { if (active) setConnection(result); }).catch(() => undefined);
+    void check();
+    const timer = window.setInterval(check, 15000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, []);
+  if (!connection?.local || (connection.connected && connection.replicated)) return null;
+  return <div className="terminal-connection-notice" role="status"><ShieldCheck size={16} />
+    {connection.connected ? "Working locally · cloud backup is catching up." : "Working locally · internet connection unavailable. Seats and payments continue on this terminal network."}
+  </div>;
+}
+
+function TerminalServerSettings({ showToast }: { showToast: (message: string) => void }) {
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof api.terminalStatus>>>();
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [devices, setDevices] = useState<Awaited<ReturnType<typeof api.terminalAccess>>>();
+  const refresh = useCallback(async () => {
+    try {
+      const [state, terminals] = await Promise.all([api.terminalStatus(), api.terminalAccess()]);
+      setStatus(state); setDevices(terminals);
+    } catch (error) { showToast(error instanceof Error ? error.message : "Could not check the terminal server."); }
+  }, [showToast]);
+  useEffect(() => {
+    const initial = window.setTimeout(() => void refresh(), 0);
+    const timer = window.setInterval(() => void refresh(), 15000);
+    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
+  }, [refresh]);
+  const download = async (slot?: number) => {
+    if (busy) return;
+    if (!password) { showToast("Enter your current administrator password to create a setup file."); return; }
+    setBusy(true);
+    try {
+      if (slot) await api.terminalPcSetup(slot, password);
+      else await api.mainPcSetup(password);
+      setPassword("");
+      showToast(slot ? `PC ${slot} setup downloaded. Use it within 30 minutes.` : "Main PC setup downloaded. Extract the ZIP on the main Windows PC.");
+      await refresh();
+    } catch (error) { showToast(error instanceof Error ? error.message : "Setup file could not be created."); }
+    finally { setBusy(false); }
+  };
+  const local = status?.mode === "terminal";
+  return <section className="surface settings-card">
+    <SettingsTitle icon={<ShieldCheck size={19} />} title="Main PC & offline access"
+      text={local ? "All counters use this local server, including during internet outages." : "Install one local server on the main Windows PC, then enroll the three counter profiles."} />
+    {status && <div className="policy-box"><RefreshCw size={17} /><span>
+      <strong>{local ? status.connected ? "Cloud connected" : "Working locally · cloud disconnected" : status.phase === "preparing" ? "Main PC setup in progress" : "Cloud server active"}</strong>
+      <small>{local ? `${status.localOrigin} · ${status.replicated ? "Cloud copy syncing" : "Cloud copy awaiting connection"}${status.secondsBehind != null ? ` · ${status.secondsBehind}s behind` : ""}` : "Downloading setup keeps the cloud running. Starting the installer transfers booking authority to the main PC."}</small>
+    </span></div>}
+    <div className="settings-fields"><label className="span-2"><span>Current administrator password</span>
+      <input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} />
+    </label></div>
+    <div className="view-actions">
+      {local ? [1, 2, 3].map(slot => <button className="secondary-button" key={slot} disabled={busy} onClick={() => void download(slot)}>PC {slot} setup</button>) :
+        <button className="primary-button" disabled={busy || !status || status.mode !== "cloud"} onClick={() => void download()}>{busy ? "Preparing setup…" : "Download main PC installer"}</button>}
+      <button className="secondary-button" disabled={busy} onClick={() => void refresh()}>Refresh status</button>
+    </div>
+    {local && <ul className="terminal-slots">{devices?.terminals.map(device => <li key={device.slot}>
+      PC {device.slot} · <strong>{device.enrolled ? "Enrolled" : "Pending setup"}</strong>{device.enrolled && <button className="text-action" disabled={busy} onClick={async () => {
+        setBusy(true);
+        try { await api.revokeTerminal(device.slot); await refresh(); showToast(`PC ${device.slot} access revoked.`); }
+        catch (error) { showToast(error instanceof Error ? error.message : "Could not revoke this PC."); }
+        finally { setBusy(false); }
+      }}>Revoke access</button>}
+    </li>)}</ul>}
+    <details><summary>Installation steps</summary><ol>
+      <li>Use a fixed private IPv4 address for the main Windows 10/11 PC. Connect all three PCs to the same trusted router.</li>
+      <li>Download the main installer here, extract the ZIP, and run Install-Main-PC.cmd on the main PC. Enter its local IPv4 address when asked and approve Windows elevation.</li>
+      <li>Open the local address shown by setup, sign in as admin with your authenticator, and return to Settings.</li>
+      <li>Create a separate PC 1, PC 2 and PC 3 setup file. Run each one in the Windows profile used at that counter, including PC 1 on the main PC. The saved main IP is included.</li>
+      <li>Use the new Madina Express Counter desktop shortcut. Keep the main PC awake. Its server starts after reboot.</li>
+    </ol><p>Child setup files expire after 30 minutes and require a TPM. Staff need both their account password and an enrolled PC. The admin can sign in remotely while the terminal is online.</p>
+    <p>During internet outages, the counters continue locally. Public reservations pause and the cloud catches up after reconnection. The main PC stores daily backups for 30 days.</p></details>
+  </section>;
+}
+
 function StaffAccessSettings({ staffUsers, onSaved, onRemoved, showToast }: {
   staffUsers: StaffUser[];
   onSaved: (user: StaffUser) => void;
@@ -5423,23 +5509,7 @@ function StaffAccessSettings({ staffUsers, onSaved, onRemoved, showToast }: {
           ))}
         </ul>}
         {terminalError && <p className="form-error" role="alert">{terminalError}</p>}
-        <div className="view-actions">
-          <a className="secondary-button" href={`${appBase}/Madina-Express-Terminal-Setup.inf`} download>Download Windows setup file</a>
-          <button className="secondary-button" type="button" onClick={() => void loadTerminals()}>Refresh</button>
-        </div>
-        <details>
-          <summary>How to enroll a terminal PC</summary>
-          <ol>
-            <li>On the terminal PC, sign in to the Windows profile used at the counter and download the setup file.</li>
-            <li>Open Command Prompt in that folder and run <code>certreq -new -user Madina-Express-Terminal-Setup.inf terminal.req</code>.</li>
-            <li>Copy the request to the production server and sign it through SSH. Use slot 1, 2, or 3 for that PC.</li>
-            <li>Copy the signed certificate to the same Windows profile. Run <code>certreq -accept -user terminal-1.cer</code> for PC 1, then restart the browser and choose the terminal certificate at sign-in.</li>
-          </ol>
-          <p>Example for PC 1, from the administrator’s computer after copying the request from that PC.</p>
-          <pre>{`scp terminal.req root@62.171.173.11:/root/terminal-1.req
-ssh root@62.171.173.11 'bash /opt/madina-express/deploy/issue-terminal-certificate.sh 1 /root/terminal-1.req'
-scp root@62.171.173.11:/root/madina-terminal-ca/terminal-1.cer .`}</pre>
-        </details>
+        <p>Use Main PC &amp; offline access in Settings to install the main server and generate a separate setup file for each counter.</p>
       </div>
       {deleting && (
         <ConfirmDeleteModal title="Delete staff account" item={deleting.name}

@@ -22,7 +22,7 @@ server {
     listen [::]:443 ssl http2 default_server;
     server_name __PUBLIC_HOST__;
     include /etc/nginx/snippets/madina-common.conf;
-    location ~ ^/api/(health|public/(bootstrap|trip-runs|bookings|ticket-lookup))$ {
+    location ~ ^/api/(health|terminal-sync/(register|bootstrap|activate|status|abort|public-status)|public/(bootstrap|trip-runs|bookings|ticket-lookup))$ {
         include /etc/nginx/snippets/madina-api.conf;
         proxy_set_header X-Madina-Device "";
     }

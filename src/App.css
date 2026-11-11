@@ -6333,3 +6333,5 @@ td small {
 .terminal-setup pre { padding: 10px; background: var(--green-50); white-space: pre-wrap; }
 .terminal-slots { display: flex; flex-wrap: wrap; gap: 8px; }
 .terminal-slots li { padding: 4px 8px; background: var(--green-50); border-radius: 5px; }
+
+.terminal-connection-notice { display:flex; align-items:center; gap:8px; padding:9px 18px; background:#fff2ca; color:#634900; font-size:13px; border-bottom:1px solid #eadbaf; }

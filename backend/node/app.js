@@ -1,3 +1,7 @@
+import { terminalAdminRouter, terminalEnrollmentRouter, terminalSyncRouter } from "../terminal/routes.js";
+import { cloudAuthorityGuard, terminalState } from "../terminal/state.js";
+import { localTerminalGuard } from "../terminal/certificates.js";
+import { terminalReady } from "../terminal/runtime.js";
 import { readdir } from "node:fs/promises";
 import express from "express";
 import bcrypt from "bcryptjs";
@@ -18,6 +22,7 @@ import {
 const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", config.trustProxy);
+app.use(localTerminalGuard);
 
 app.use((req, res, next) => {
   const origin = req.get("origin");
@@ -46,6 +51,17 @@ app.use((req, _res, next) => {
   if (req.url === "/index.php") req.url = "/";
   else if (req.url.startsWith("/index.php/")) req.url = req.url.slice(10);
   next();
+});
+
+app.use("/terminal-sync", terminalSyncRouter);
+app.use("/terminal", terminalEnrollmentRouter);
+app.use(cloudAuthorityGuard);
+app.use((req, res, next) => {
+  if (!config.terminal.local || req.path === "/health") return next();
+  void terminalReady().then(ready => {
+    if (ready) return next();
+    res.status(503).json({ error: { code: "terminal_starting", message: "The main PC is completing its initial connection. Please wait." } });
+  }).catch(next);
 });
 
 const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -116,7 +132,8 @@ async function createSession(connection, req, user) {
 
 app.get("/health", asyncRoute(async (_req, res) => {
   await pool.query("SELECT 1");
-  res.json({ status: "ok", database: "connected", runtime: "node", time: new Date().toISOString(), paymentMode: config.paymentMode });
+  res.json({ status: "ok", database: "connected", runtime: "node", time: new Date().toISOString(), paymentMode: config.paymentMode,
+    ...(config.terminal.local ? { installationId: process.env.TERMINAL_INSTALLATION_ID } : {}) });
 }));
 
 app.post("/auth/login", asyncRoute(async (req, res) => {
@@ -162,7 +179,7 @@ app.post("/auth/login", asyncRoute(async (req, res) => {
 
 app.get("/public/bootstrap", asyncRoute(async (_req, res) => {
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  res.json({ fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), occupancy: await publicOccupancy(pakistanDate()) });
+  res.json({ fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), occupancy: await publicOccupancy(pakistanDate()), terminalAvailable: !["preparing", "active"].includes((await terminalState()).phase) });
 }));
 
 app.get("/public/trip-runs", asyncRoute(async (req, res) => {
@@ -171,7 +188,7 @@ app.get("/public/trip-runs", asyncRoute(async (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("Choose a valid travel date.", 422, "validation_error");
   const runs = await fetchTripRuns(date);
   res.json({ runs: runs.map((run) => ({ id: run.id, tripId: run.tripId, date: run.date, runNumber: run.runNumber,
-    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(date), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true) });
+    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(date), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), terminalAvailable: !["preparing", "active"].includes((await terminalState()).phase) });
 }));
 
 app.post("/public/bookings", asyncRoute(async (req, res) => {
@@ -205,6 +222,8 @@ app.use(asyncRoute(async (req, _res, next) => {
   }
   next();
 }));
+
+app.use("/terminal", terminalAdminRouter);
 
 app.get("/auth/me", asyncRoute(async (req, res) => res.json({ user: publicUser(req.user), csrfToken: req.session.csrf_token })));
 
@@ -399,6 +418,12 @@ app.delete("/users/:id", asyncRoute(async (req, res) => {
 }));
 app.get("/users/terminal-access", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
+  if (config.terminal.local) {
+    const [devices] = await pool.execute("SELECT slot FROM terminal_devices WHERE expires_at > NOW()");
+    return res.json({ enforced: true, terminals: [1, 2, 3].map(slot => ({
+      slot, enrolled: devices.some(device => device.slot === slot),
+    })) });
+  }
   const files = config.restrictStaffDevices
     ? await readdir("/etc/nginx/madina-terminal-devices").catch(error => {
         if (error.code === "ENOENT") return [];

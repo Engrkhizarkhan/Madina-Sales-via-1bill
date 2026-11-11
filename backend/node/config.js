@@ -16,7 +16,22 @@ if ((adminOtp || restrictStaffDevices || adminTotpPaused) && !/^[0-9a-f]{40}$/i.
   throw new Error("ADMIN_TOTP_HEX must be a 20-byte hexadecimal key when production staff access is enabled.");
 }
 
+const terminalRole = process.env.TERMINAL_ROLE || "standalone";
+if (!["standalone", "cloud", "terminal"].includes(terminalRole)) throw new Error("Invalid TERMINAL_ROLE.");
+const terminalDirectory = process.env.TERMINAL_DIRECTORY || resolve("backend", ".terminal");
+if (terminalRole === "terminal" && (!/^[0-9a-f]{64}$/.test(process.env.TERMINAL_RELAY_KEY || "") ||
+    !process.env.TERMINAL_LOCAL_ORIGIN || !process.env.TERMINAL_CLOUD_ORIGIN)) {
+  throw new Error("The local terminal configuration is incomplete.");
+}
+
 export const config = {
+  terminal: {
+    local: terminalRole === "terminal", cloud: terminalRole === "cloud", directory: terminalDirectory,
+    localOrigin: process.env.TERMINAL_LOCAL_ORIGIN || "",
+    cloudOrigin: process.env.TERMINAL_CLOUD_ORIGIN || "",
+    relayKey: process.env.TERMINAL_RELAY_KEY || "",
+    httpsPort: Number(process.env.TERMINAL_HTTPS_PORT || 8443),
+  },
   restrictStaffDevices,
   adminTotpPaused,
   adminOtpKey: adminOtp ? Buffer.from(adminOtp, "hex") : null,

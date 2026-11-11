@@ -45,16 +45,43 @@ async function request<T>(
   return payload as T;
 }
 
+async function downloadSetup(path: string, currentPassword: string, filename: string) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST", credentials: "include",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": sessionStorage.getItem(csrfKey) || "" },
+    body: JSON.stringify({ currentPassword }),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new ApiError(payload?.error?.message || "The setup file could not be created.", response.status);
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url; link.download = filename; link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+export type TerminalStatus = {
+  mode: "terminal" | "cloud" | "standalone";
+  phase?: string; localOrigin?: string; connected?: boolean; replicated?: boolean;
+  secondsBehind?: number | null; replicationError?: boolean; checkedAt?: string;
+};
+
 function rememberCsrf<T extends { csrfToken?: string }>(payload: T): T {
   if (payload.csrfToken) sessionStorage.setItem(csrfKey, payload.csrfToken);
   return payload;
 }
 
 export const api = {
+  terminalConnection: () => request<{ local: boolean; connected: boolean; replicated: boolean }>("/terminal/connection"),
+  terminalStatus: () => request<TerminalStatus>("/terminal/status"),
+  mainPcSetup: (password: string) => downloadSetup("/terminal/package", password, "Madina-Express-Main-PC.zip"),
+  terminalPcSetup: (slot: number, password: string) => downloadSetup(`/terminal/devices/${slot}/package`, password, `Madina-Express-PC-${slot}.zip`),
+  revokeTerminal: (slot: number) => request<{ ok: boolean }>(`/terminal/devices/${slot}`, { method: "DELETE" }),
   health: () => request<{ status: string; database: string }>("/health"),
   publicBootstrap: <T>() => request<T>("/public/bootstrap"),
   publicTripRuns: <T>(date: string) =>
-    request<{ runs: T[]; occupancy: unknown[]; fleet: unknown[]; trips: unknown[]; routes: unknown[] }>(`/public/trip-runs?date=${encodeURIComponent(date)}`),
+    request<{ terminalAvailable?: boolean; runs: T[]; occupancy: unknown[]; fleet: unknown[]; trips: unknown[]; routes: unknown[] }>(`/public/trip-runs?date=${encodeURIComponent(date)}`),
   adminBootstrap: <T>() => request<T>("/admin/bootstrap"),
   me: <T>() =>
     request<T & { csrfToken?: string }>("/auth/me").then(rememberCsrf),

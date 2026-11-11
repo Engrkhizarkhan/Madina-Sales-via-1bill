@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "server": "node backend/node/server.js",
-    "server:check": "node --check backend/node/server.js && node --check backend/node/app.js && node --check backend/node/operations.js && node --check backend/node/repository.js",
+    "server:check": "node --check backend/node/server.js && node --check backend/node/app.js && node --check backend/node/operations.js && node --check backend/node/repository.js && node --check backend/terminal/routes.js && node --check backend/terminal/certificates.js && node --check backend/terminal/runtime.js && node --check backend/terminal/web.js",
     "db:install": "node backend/scripts/install.js",
     "db:backup": "node backend/scripts/backup.js",
     "test:counter": "node backend/tests/counter-workflow.js",
@@ -16,20 +16,25 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "db:migrate": "node backend/scripts/migrate.js",
-    "test:services": "node backend/tests/route-services.js"
+    "test:services": "node backend/tests/route-services.js",
+    "test:terminal": "node --test backend/tests/terminal-security.js",
+    "test:enrollment": "node backend/tests/terminal-enrollment.js"
   },
   "dependencies": {
     "@openai/sites-vite-plugin": "^0.2.0",
+    "@peculiar/x509": "3.1.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "fflate": "0.8.3",
     "html-to-image": "1.11.13",
     "lucide-react": "^1.38.0",
     "mysql2": "^3.24.4",
     "pdf-lib": "1.17.1",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "reflect-metadata": "0.2.2"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -14,6 +14,10 @@ if [[ -n $(git status --porcelain) ]]; then
   exit 1
 fi
 
+if [[ -f /var/lib/madina-express/terminal/state.json ]] && python3 -c 'import json,sys; sys.exit(0 if json.load(open("/var/lib/madina-express/terminal/state.json")).get("phase") in ("preparing","active") else 1)'; then
+  echo "The main terminal PC owns this database. Update that PC first; follow deploy/TERMINAL-SETUP.md." >&2
+  exit 1
+fi
 git pull --ff-only origin main
 timedatectl set-timezone Asia/Karachi
 if ! cmp -s "$PROJECT_DIR/deploy/mysql.cnf" /etc/mysql/mysql.conf.d/madina-express.cnf; then

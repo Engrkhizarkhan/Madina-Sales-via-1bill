@@ -1,0 +1,85 @@
+# The main PC is the sole writer. Its SSH tunnel is bound to cloud loopback only.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name madinaexpress.duckdns.org staff.madinaexpress.duckdns.org;
+    server_tokens off;
+    location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type text/plain; }
+    location / {
+        if ($host = staff.madinaexpress.duckdns.org) { return 301 https://staff.madinaexpress.duckdns.org$request_uri; }
+        return 301 https://madinaexpress.duckdns.org$request_uri;
+    }
+}
+server {
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    server_name madinaexpress.duckdns.org;
+    include /etc/nginx/snippets/madina-common.conf;
+    location ~ ^/api/(health|terminal-sync/(register|bootstrap|activate|status|abort|public-status))$ {
+        include /etc/nginx/snippets/madina-api.conf;
+        proxy_set_header X-Madina-Device "";
+    }
+    location ~ ^/api/public/(bootstrap|trip-runs|ticket-lookup)$ {
+        rewrite ^/api(/.*)$ $1 break;
+        proxy_pass http://127.0.0.1:3201;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Madina-Relay-Key __RELAY_KEY__;
+        proxy_set_header X-Madina-Client-Cert "";
+        proxy_connect_timeout 2s;
+        proxy_intercept_errors on;
+        error_page 502 504 = @cloud_read;
+    }
+    location = /api/public/bookings {
+        rewrite ^/api(/.*)$ $1 break;
+        proxy_pass http://127.0.0.1:3201;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Madina-Relay-Key __RELAY_KEY__;
+        proxy_set_header X-Madina-Client-Cert "";
+        proxy_connect_timeout 2s;
+        proxy_intercept_errors on;
+        error_page 502 504 = @terminal_unavailable;
+    }
+    location @cloud_read {
+        proxy_pass http://127.0.0.1:3101;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Madina-Device "";
+    }
+    location @terminal_unavailable {
+        default_type application/json;
+        return 503 '{"error":{"code":"terminal_unavailable","message":"The terminal is temporarily offline. Please contact the counter or try again shortly."}}';
+    }
+    location /api/ { return 404; }
+    location ~* ^/(login|manage)(/|$) { return 404; }
+    location / { try_files $uri $uri/ /index.html; }
+}
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name staff.madinaexpress.duckdns.org;
+    include /etc/nginx/snippets/madina-common.conf;
+    ssl_verify_client optional_no_ca;
+    location = / { return 302 /login; }
+    location /api/ {
+        rewrite ^/api(/.*)$ $1 break;
+        proxy_pass http://127.0.0.1:3201;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Madina-Relay-Key __RELAY_KEY__;
+        proxy_set_header X-Madina-Client-Cert $ssl_client_escaped_cert;
+        proxy_connect_timeout 2s;
+        proxy_intercept_errors on;
+        error_page 502 504 = @terminal_unavailable;
+    }
+    location @terminal_unavailable {
+        default_type application/json;
+        return 503 '{"error":{"code":"terminal_unavailable","message":"The terminal is temporarily offline. At the counter, open the main PC’s local address."}}';
+    }
+    location / { try_files $uri $uri/ /index.html; }
+}

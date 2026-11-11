@@ -19,6 +19,7 @@ export function limitAttempts(scope, req, limit, windowMs) {
 }
 
 export function terminalDevice(req) {
+  if (config.terminal.local) return req.verifiedTerminal || "";
   if (req.socket.remoteAddress !== "127.0.0.1") return "";
   const device = req.get("X-Madina-Device") || "";
   return /^terminal-[1-3]$/.test(device) ? device : "";
