@@ -35,6 +35,9 @@ else
 fi
 rsync -a --delete "$PROJECT_DIR/dist/" /var/www/madina-express/
 chown -R root:root /var/www/madina-express
+if grep -q '^TERMINAL_ROLE=cloud$' "$PROJECT_DIR/backend/.env"; then
+  bash "$PROJECT_DIR/deploy/prepare-terminal-support.sh"
+fi
 sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/deploy/madina-express-backup.service" > /etc/systemd/system/madina-express-backup.service
 install -m 0644 "$PROJECT_DIR/deploy/madina-express-backup.timer" /etc/systemd/system/madina-express-backup.timer
 systemctl daemon-reload
