@@ -19,8 +19,8 @@ import json, pathlib, re
 path = pathlib.Path('/var/lib/madina-express/terminal/private.json')
 if path.exists():
     config = json.loads(path.read_text())
-    key = config.get('publicKey', '')
-    if re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/=]{50,100}(?: [A-Za-z0-9._ -]{1,100})?', key):
+    key = ' '.join(config.get('publicKey', '').split()[:2])
+    if re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/=]{50,100}', key):
         print('restrict,port-forwarding,permitlisten="127.0.0.1:3201",permitlisten="127.0.0.1:13306",command="/bin/false" ' + key)
 PY
 chmod 0755 /usr/local/libexec/madina-terminal-authorized-key

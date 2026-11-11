@@ -61,10 +61,10 @@ def prepare():
 def register(payload, config):
     state = read_json(STATE, {})
     installation_id = payload.get("installationId", "")
-    key = payload.get("publicKey", "").strip()
+    key = " ".join(str(payload.get("publicKey", "")).split()[:2])
     if not re.fullmatch(r"[0-9a-f-]{36}", installation_id):
         raise ValueError("Invalid installation identifier.")
-    if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]{50,100}(?: [A-Za-z0-9._ -]{1,100})?", key):
+    if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/=]{50,100}", key):
         raise ValueError("An Ed25519 public key is required.")
     if config.get("installationId") and (
             config["installationId"] != installation_id or config["publicKey"] != key):
