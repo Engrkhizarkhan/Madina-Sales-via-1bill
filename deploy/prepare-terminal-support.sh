@@ -67,8 +67,10 @@ cp "$PROJECT_DIR/package.json" "$PROJECT_DIR/package-lock.json" "$staging/"
 (cd "$staging" && npm ci --omit=dev --ignore-scripts >/dev/null)
 rsync -a --exclude '.env*' --exclude .terminal --exclude backups --exclude __pycache__ --exclude tests "$PROJECT_DIR/backend/" "$staging/backend/"
 cp -a "$PROJECT_DIR/dist" "$staging/dist"
+cp -a "$PROJECT_DIR/shared" "$staging/shared"
 mkdir -p "$staging/deploy"
 cp -a "$PROJECT_DIR/deploy/windows" "$staging/deploy/windows"
+(cd "$staging" && DB_NAME=terminal_package_qa DB_USER=qa DB_PASSWORD=qa TERMINAL_ROLE=standalone ADMIN_TOTP_HEX= ADMIN_TOTP_PAUSED=false RESTRICT_STAFF_DEVICES=false node --input-type=module -e 'await import("./backend/node/app.js"); console.log("Installer application import verified.")')
 (cd "$staging" && zip -q -r "$STATE_DIR/base.next.zip" .)
 chown root:madina-express "$STATE_DIR/base.next.zip"
 chmod 0640 "$STATE_DIR/base.next.zip"
