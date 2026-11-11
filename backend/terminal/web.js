@@ -17,6 +17,13 @@ export async function startTerminalWeb(app) {
   });
   web.use("/api", app);
   web.get("/", (_req, res) => res.redirect("/manage"));
+  web.get("/Madina-Express-Counter.cmd", async (_req, res, next) => {
+    try {
+      const template = await readFile(resolve("dist/Madina-Express-Counter.cmd"), "utf8");
+      res.type("text/plain").attachment("Madina-Express-Counter.cmd")
+        .send(template.replaceAll("https://staff.madinaexpress.duckdns.org", config.terminal.localOrigin));
+    } catch (error) { next(error); }
+  });
   web.use(express.static(resolve("dist"), { dotfiles: "deny", index: false }));
   web.get(["/login", "/manage"], (_req, res) => res.sendFile(resolve("dist/index.html")));
   web.use((_req, res) => res.sendStatus(404));
