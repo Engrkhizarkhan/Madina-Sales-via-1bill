@@ -10,7 +10,7 @@
     "folder": "mysql-8.0.46-winx64"
   },
   "vcRuntime": {
-    "url": "https://madinaexpress.duckdns.org/terminal-runtime/vc-redist-cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b.exe",
+    "url": "https://staff.madinaexpress.duckdns.org/terminal-runtime/vc-redist-cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b.exe",
     "sha256": "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b"
   }
 }

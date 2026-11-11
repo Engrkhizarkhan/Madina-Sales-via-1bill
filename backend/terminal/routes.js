@@ -132,7 +132,7 @@ terminalAdminRouter.post("/package", route(async (req, res) => {
     await copyFile(resolve("deploy/windows/Install-Main-PC.cmd"), join(temporary, "Install-Main-PC.cmd"));
     await copyFile(resolve("deploy/windows/runtime.json"), join(temporary, "runtime.json"));
     await writeFile(join(temporary, "setup.json"), JSON.stringify({
-      token: setup.installToken, knownHost: setup.knownHost, cloudOrigin: "https://madinaexpress.duckdns.org",
+      token: setup.installToken, knownHost: setup.knownHost, cloudOrigin: "https://staff.madinaexpress.duckdns.org",
     }), { mode: 0o600 });
     await runProcess("zip", ["-0", "-q", join(temporary, "main-pc.zip"), "application.zip", "Install-Main-PC.ps1",
       "Install-Main-PC.cmd", "runtime.json", "setup.json"], { cwd: temporary });

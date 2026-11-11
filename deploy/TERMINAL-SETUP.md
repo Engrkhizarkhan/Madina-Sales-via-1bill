@@ -37,6 +37,8 @@ Windows 11 is preferred for a new setup. Keep Windows 10 covered by applicable o
 
 A child installer only accepts the main IP embedded by the main installation. It cannot silently redirect a trusted certificate to a different server. Keep the original reserved IP. An IP change requires an administrator-assisted certificate/configuration update and regenerated child installers.
 
+If setup reports "The remote name could not be resolved", download a fresh installer ZIP from the staff site and extract it into a new folder. Current installers use the staff hostname for runtime downloads and cloud synchronization. Keep the original installation data in ProgramData when retrying; verified runtime downloads are reused.
+
 ## Test at the terminal
 
 - From all three shortcuts, open the same date/departure. Make a reservation on PC 2 and check it appears on PC 1 and PC 3 after the seat refresh (within about five seconds).
