@@ -67,3 +67,7 @@ Once active, `deploy/update.sh` refuses the old cloud-only database install path
 JavaScript certificate/relay/device tests, isolated API and booking workflow tests, MySQL source/replica outage-and-reconnect tests, frontend build/lint, dependency audit, and installer PowerShell syntax parsing are run before release. These do not replace the physical Windows/LAN/printer acceptance steps above.
 
 The database topology follows [MySQL GTID replication](https://dev.mysql.com/doc/refman/8.0/en/replication-gtids.html); portable MySQL service installation follows [MySQL Windows services](https://dev.mysql.com/doc/refman/8.0/en/windows-start-service.html).
+
+## Testing Nginx configurations safely
+
+Alternate Nginx test instances must set their own PID, proxy/body/cache temporary paths and worker user. Do not let a test instance use the production `/var/lib/nginx` paths: Nginx can change their ownership while starting or checking configuration. Production API downloads stream without proxy disk buffering. If a browser reports a content-length mismatch, inspect the Nginx error log and temporary-directory ownership before retrying.

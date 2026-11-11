@@ -66,6 +66,7 @@ terminalSyncRouter.post("/bootstrap", route(async (req, res) => {
       adminOtpHex: config.adminOtpKey?.toString("hex") || "",
     }), { mode: 0o600 });
     await runProcess("zip", ["-0", "-q", join(temporary, "bootstrap.zip"), "database.sql", "settings.json"], { cwd: temporary });
+    res.set("X-Accel-Buffering", "no");
     res.download(join(temporary, "bootstrap.zip"), "bootstrap.zip", () => void rm(temporary, { recursive: true, force: true }));
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
@@ -137,6 +138,7 @@ terminalAdminRouter.post("/package", route(async (req, res) => {
     await runProcess("zip", ["-0", "-q", join(temporary, "main-pc.zip"), "application.zip", "Install-Main-PC.ps1",
       "Install-Main-PC.cmd", "runtime.json", "setup.json"], { cwd: temporary });
     await audit("terminal.installer_downloaded", "user", req.user.id, null, null, req.user.id, req);
+    res.set("X-Accel-Buffering", "no");
     res.download(join(temporary, "main-pc.zip"), "Madina-Express-Main-PC.zip", () => void rm(temporary, { recursive: true, force: true }));
   } catch (error) {
     await rm(temporary, { recursive: true, force: true });
@@ -164,6 +166,7 @@ terminalAdminRouter.post("/devices/:slot/package", route(async (req, res) => {
       slot, token, localOrigin: config.terminal.localOrigin, caFingerprint: createHash("sha256").update(ca).digest("hex"),
     })),
   });
+  res.set("X-Accel-Buffering", "no");
   res.type("application/zip").attachment(`Madina-Express-PC-${slot}.zip`).send(Buffer.from(archive));
 }));
 terminalAdminRouter.delete("/devices/:slot", route(async (req, res) => {
