@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 022
 [[ $EUID -eq 0 ]] || { echo 'Run as root.' >&2; exit 1; }
 PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE_DIR=/var/lib/madina-express/terminal

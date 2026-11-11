@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 022
 
 if [[ ${EUID} -ne 0 ]]; then
   echo "Run this updater with sudo." >&2
