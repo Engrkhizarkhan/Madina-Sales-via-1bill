@@ -6335,3 +6335,6 @@ td small {
 .terminal-slots li { padding: 4px 8px; background: var(--green-50); border-radius: 5px; }
 
 .terminal-connection-notice { display:flex; align-items:center; gap:8px; padding:9px 18px; background:#fff2ca; color:#634900; font-size:13px; border-bottom:1px solid #eadbaf; }
+.settings-card, .settings-title > div, .settings-fields > label, .policy-box > span { min-width: 0; }
+.settings-card { overflow-wrap: anywhere; }
+.settings-fields input, .settings-fields select { min-width: 0; max-width: 100%; }

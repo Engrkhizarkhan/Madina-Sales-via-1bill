@@ -4,7 +4,8 @@ set -euo pipefail
 PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE_DIR=/var/lib/madina-express/terminal
 install -d -m 0750 -o root -g madina-express "$STATE_DIR"
-apt-get install -y zip >/dev/null
+install -d -m 0755 -o root -g root /usr/local/libexec
+DEBIAN_FRONTEND=noninteractive apt-get install -y zip >/dev/null
 install -m 0755 -o root -g root "$PROJECT_DIR/deploy/terminal-control.py" /usr/local/libexec/madina-terminal-control
 install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-terminal.conf.template" "$STATE_DIR/nginx-terminal.conf.template"
 if ! id madina-terminal >/dev/null 2>&1; then
