@@ -6338,3 +6338,6 @@ td small {
 .settings-card, .settings-title > div, .settings-fields > label, .policy-box > span { min-width: 0; }
 .settings-card { overflow-wrap: anywhere; }
 .settings-fields input, .settings-fields select { min-width: 0; max-width: 100%; }
+
+.thermal-ticket .ticket-booking-promo { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid #000; color: #000; font: 11px/1.35 Arial, sans-serif; text-align: center; }
+.thermal-ticket .ticket-booking-promo strong { font-weight: 700; }

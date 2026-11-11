@@ -6031,6 +6031,7 @@ function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
       </tbody></table>
       {!ticket.canBoard&&<div className="thermal-payment-status"><strong>{ticket.status}</strong></div>}
       <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>روانگی سے دس منٹ پہلے پہنچیں۔ ٹکٹ کی تاریخ، وقت اور سیٹ نمبر چیک کریں۔ اصل شناختی کارڈ ہمراہ رکھیں۔</p></div>
+      <p className="ticket-booking-promo">Book online: <strong>MadinaExpress.pk</strong></p>
     </article>
     {ticket.canBoard && <article className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
       <header><strong>MADINA EXPRESS</strong><span>BOARDING TOKEN</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
