@@ -15,7 +15,7 @@ Object.assign(process.env, {
   TERMINAL_RELAY_KEY: 'ab'.repeat(32), TERMINAL_LOCAL_ORIGIN: 'https://192.168.1.20:8443',
   TERMINAL_CLOUD_ORIGIN: 'https://example.invalid', TERMINAL_INSTALLATION_ID: 'security-test',
 });
-const { createTerminalCertificates, signTerminalRequest, localTerminalGuard } = await import('../terminal/certificates.js');
+const { createTerminalCertificates, renewTerminalServerCertificate, signTerminalRequest, localTerminalGuard } = await import('../terminal/certificates.js');
 const { terminalReady } = await import('../terminal/runtime.js');
 const { pool } = await import('../node/db.js');
 const { terminalDevice, sessionHash } = await import('../node/access.js');
@@ -45,6 +45,15 @@ test('certificate, relay and staff device boundaries', async t => {
     approvedFingerprint = client.fingerprint;
     await t.test('device certificate verifies and has client authentication use', () => {
       assert.ok(certificate.verify(ca.publicKey)); assert.ok(certificate.keyUsage.includes('1.3.6.1.5.5.7.3.2'));
+    });
+    await t.test('moving the server to another LAN preserves the CA and enrolled client certificate', async () => {
+      const oldCa = await readFile(join(directory, 'tls/ca.crt'), 'utf8');
+      await renewTerminalServerCertificate(join(directory, 'tls'), '192.168.7.42');
+      const moved = new X509Certificate(await readFile(join(directory, 'tls/server.crt')));
+      assert.equal(moved.checkIP('192.168.7.42'), '192.168.7.42');
+      assert.equal(moved.checkIP('192.168.1.20'), undefined);
+      assert.equal(await readFile(join(directory, 'tls/ca.crt'), 'utf8'), oldCa);
+      assert.ok(moved.verify(ca.publicKey)); assert.ok(certificate.verify(ca.publicKey));
     });
     await t.test('malformed enrollment requests are rejected', async () => {
       await assert.rejects(signTerminalRequest('invalid CSR', 1), error => error.status === 422);

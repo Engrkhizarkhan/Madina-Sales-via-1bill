@@ -8,7 +8,7 @@ import struct
 import subprocess
 import sys
 
-ACTIONS = frozenset(('prepare', 'register', 'freeze', 'activate', 'abort', 'status'))
+ACTIONS = frozenset(('prepare', 'register', 'freeze', 'activate', 'abort', 'status', 'reset'))
 MAX_REQUEST = 16384
 
 def main():

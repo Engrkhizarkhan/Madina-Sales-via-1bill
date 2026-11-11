@@ -20,9 +20,6 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $base = Join-Path $env:ProgramData 'MadinaExpress'
 $application = Join-Path $base 'application'
 $data = Join-Path $base 'data'
-if (Test-Path (Join-Path $data 'ready.json')) {
-    throw 'This main PC is already active. Keep its local data and use the update instructions.'
-}
 $setup = Get-Content (Join-Path $PSScriptRoot 'setup.json') -Raw | ConvertFrom-Json
 $manifest = Get-Content (Join-Path $PSScriptRoot 'runtime.json') -Raw | ConvertFrom-Json
 $mainIp = Read-Host 'Enter this main PC local IPv4 address (for example 192.168.1.20)'
@@ -35,13 +32,43 @@ if (-not (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -eq
 }
 $confirmed = Read-Host 'All counters will use this main PC. Reserve this IP in the router. Continue? Type YES'
 if ($confirmed -cne 'YES') { throw 'Setup stopped before changing the server.' }
+# Never import over an old running source. A reset is allowed only before cloud activation.
+if (Test-Path (Join-Path $application 'backend\.env')) {
+    $cloudState = Invoke-RestMethod -Uri ($setup.cloudOrigin + '/api/terminal-sync/public-status') -TimeoutSec 20
+    if (@('standalone', 'provisioned') -notcontains $cloudState.phase) {
+        throw 'Cancel the unfinished setup in cloud Settings first. An active main PC must be recovered without resetting its data.'
+    }
+    if ((Read-Host 'Previous installation found. Type RESET to archive it and start fresh') -cne 'RESET') { throw 'Previous installation retained.' }
+    Stop-ScheduledTask -TaskName 'Madina Express Terminal Server' -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    $oldNode = Join-Path $base 'runtime\node.exe'
+    Get-CimInstance Win32_Process | Where-Object {
+        ($_.ExecutablePath -eq $oldNode -and $_.CommandLine -match 'backend[\\/]node[\\/]server\.js') -or
+        ($_.Name -eq 'ssh.exe' -and $_.CommandLine -like '*madina-terminal@62.171.173.11*')
+    } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    if (Get-Service MadinaTerminalMySQL -ErrorAction SilentlyContinue) {
+        Stop-Service MadinaTerminalMySQL -Force
+        & sc.exe delete MadinaTerminalMySQL | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'The previous database service could not be removed.' }
+        [GC]::Collect()
+        [GC]::WaitForPendingFinalizers()
+        Start-Sleep -Seconds 2
+    }
+    $archive = $base + '-previous-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+    Move-Item $base $archive
+    Write-Host "Previous local installation retained in $archive. It cannot connect using the revoked pairing."
+}
 New-Item -ItemType Directory -Force $base, $data, (Join-Path $base 'downloads') | Out-Null
 & icacls.exe $base /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)M' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Windows could not protect the installation directory.' }
 $downloads = Join-Path $base 'downloads'
 function Download-Checked($entry, $destination) {
     if (-not (Test-Path $destination) -or (Get-FileHash $destination -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) {
-        Invoke-WebRequest -UseBasicParsing -Uri $entry.url -OutFile $destination
+        for ($downloadAttempt = 1; $downloadAttempt -le 3; $downloadAttempt++) {
+            Write-Host ("Downloading " + [IO.Path]::GetFileName($destination) + " (attempt $downloadAttempt/3)")
+            try { Invoke-WebRequest -UseBasicParsing -Uri $entry.url -OutFile $destination -TimeoutSec 600; break }
+            catch { if ($downloadAttempt -eq 3) { throw }; Start-Sleep -Seconds 3 }
+        }
     }
     if ((Get-FileHash $destination -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) {
         Remove-Item $destination -Force
@@ -87,11 +114,12 @@ $registration = @{
     installationId = $installation.installationId
     publicKey = [IO.File]::ReadAllText($keyPath + '.pub')
 } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri ($setup.cloudOrigin + '/api/terminal-sync/register') -Headers $headers -ContentType 'application/json' -Body $registration | Out-Null
+Invoke-RestMethod -Method Post -Uri ($setup.cloudOrigin + '/api/terminal-sync/register') -Headers $headers -ContentType 'application/json' -Body $registration -TimeoutSec 30 | Out-Null
 
-Write-Host 'Transferring the current database. Cloud writes pause until this main PC is ready.'
+Write-Host 'Transferring the current database. Cloud booking changes pause; remote admin login remains available.'
+Write-Host 'If setup fails, open cloud Settings and cancel unfinished setup before retrying.'
 $bootstrapZip = Join-Path $data 'bootstrap.zip'
-Invoke-WebRequest -UseBasicParsing -Method Post -Uri ($setup.cloudOrigin + '/api/terminal-sync/bootstrap') -Headers $headers -ContentType 'application/json' -Body (@{ installationId = $installation.installationId } | ConvertTo-Json) -OutFile $bootstrapZip
+Invoke-WebRequest -UseBasicParsing -Method Post -Uri ($setup.cloudOrigin + '/api/terminal-sync/bootstrap') -Headers $headers -ContentType 'application/json' -Body (@{ installationId = $installation.installationId } | ConvertTo-Json) -OutFile $bootstrapZip -TimeoutSec 180
 $bootstrap = Join-Path $data 'bootstrap'
 Expand-Archive -Path $bootstrapZip -DestinationPath $bootstrap -Force
 $settings = Get-Content (Join-Path $bootstrap 'settings.json') -Raw | ConvertFrom-Json
@@ -181,7 +209,7 @@ $origin = "https://${mainIp}:8443"
 $environment = @"
 APP_ENV=production
 APP_URL=$origin
-ALLOWED_ORIGINS=$origin,https://madinaexpress.duckdns.org,https://staff.madinaexpress.duckdns.org
+ALLOWED_ORIGINS=$origin,https://localhost:8443,https://madinaexpress.duckdns.org,https://staff.madinaexpress.duckdns.org
 DB_HOST=127.0.0.1
 DB_PORT=3310
 DB_NAME=madina_express
@@ -254,9 +282,24 @@ for ($attempt = 0; $attempt -lt 30; $attempt++) {
 if (-not $localReady) {
     throw "The local app did not start. Check $base\logs\server-error.log and run the main PC repair from the staff site. Your imported database is retained."
 }
+Write-Host 'Local HTTPS is ready. Verifying the secure cloud connection and database synchronization.'
+$paired = $false
+for ($attempt = 0; $attempt -lt 60; $attempt++) {
+    $readyFile = Join-Path $data 'ready.json'
+    if (Test-Path $readyFile) {
+        $readyState = Get-Content $readyFile -Raw | ConvertFrom-Json
+        if ($readyState.installationId -eq $installation.installationId) { $paired = $true; break }
+    }
+    if (($attempt % 10) -eq 0) { Write-Host 'Waiting for cloud acknowledgement; remote admin login remains available.' }
+    Start-Sleep -Seconds 2
+}
+if (-not $paired) {
+    throw "The local service started but cloud pairing is incomplete. Check $base\logs\server-error.log and $data\connection.json. Remote admin login remains available. Do not start taking bookings until setup is confirmed."
+}
 Remove-Item $init, $import, $bootstrapZip -Force
 Remove-Item $bootstrap -Recurse -Force
 Write-Host "Main PC service installed. Open $origin/login to sign in as admin."
 Write-Host 'Allow its first cloud connection to complete. Then open Settings, generate PC 1 setup for this Windows profile, and PC 2 / PC 3 setup for the child PCs.'
 Write-Host 'Keep the main PC awake and reserve its IP in the router. The local server starts automatically after reboot.'
+Write-Host 'When moving to the terminal LAN, run Change-Main-PC-Network.cmd from the extracted setup to enter its new IP.'
 Start-Process ($origin + '/login')

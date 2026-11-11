@@ -28,7 +28,7 @@ export function runProcess(command, args, { input, cwd, timeout = 120000, maxOut
 }
 
 export function terminalControl(action, payload = {}) {
-  const actions = ["prepare", "register", "freeze", "activate", "abort", "status"];
+  const actions = ["prepare", "register", "freeze", "activate", "abort", "status", "reset"];
   if (!actions.includes(action) || !payload || typeof payload !== "object" || Array.isArray(payload)) {
     return Promise.reject(new Error("Invalid terminal-control request."));
   }

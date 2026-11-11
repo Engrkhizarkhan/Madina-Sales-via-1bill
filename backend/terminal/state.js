@@ -15,11 +15,11 @@ export async function terminalState() {
 export async function cloudAuthorityGuard(req, _res, next) {
   try {
     const state = await terminalState();
-    if (["preparing", "active"].includes(state.phase) &&
-        req.path !== "/health" && !req.path.startsWith("/terminal-sync/") &&
-        !["/public/bootstrap", "/public/trip-runs", "/public/ticket-lookup"].includes(req.path)) {
+    req.cloudReadOnly = ["preparing", "active"].includes(state.phase);
+    if (req.cloudReadOnly && !["GET", "HEAD"].includes(req.method) &&
+        !["/auth/login", "/auth/logout", "/auth/finance-unlock", "/public/ticket-lookup", "/terminal/cancel-setup"].includes(req.path)) {
       const { ApiError } = await import("../node/helpers.js");
-      return next(new ApiError("The terminal server is being connected. Use the terminal’s local address to continue.", 503, "terminal_unavailable"));
+      return next(new ApiError("The main PC is offline or being set up. You can view synced data here; make changes at the terminal's local address until it reconnects.", 503, "terminal_unavailable"));
     }
     next();
   } catch (error) { next(error); }

@@ -5,6 +5,7 @@ import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { join } from "node:path";
 import { config } from "../node/config.js";
+import { pool } from "../node/db.js";
 
 let stopped = false;
 let tunnel;
@@ -44,6 +45,13 @@ async function refreshStatus() {
   try {
     const ready = await terminalReady();
     const status = await callCloud(ready ? "status" : "activate");
+    if (Array.isArray(status.revokedSessions)) {
+      const hashes = status.revokedSessions.filter(hash => typeof hash === "string" && /^[a-f0-9]{64}$/.test(hash));
+      for (let index = 0; index < hashes.length; index += 100) {
+        const batch = hashes.slice(index, index + 100);
+        await pool.execute(`DELETE FROM api_sessions WHERE token_hash IN (${batch.map(() => "?").join(",")})`, batch);
+      }
+    }
     if (!ready && status.active) {
       await writeFile(join(config.terminal.directory, "ready.json"),
         JSON.stringify({ installationId: process.env.TERMINAL_INSTALLATION_ID }), { mode: 0o600 });

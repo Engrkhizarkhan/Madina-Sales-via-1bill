@@ -3,6 +3,8 @@ import { cloudAuthorityGuard, terminalState } from "../terminal/state.js";
 import { localTerminalGuard } from "../terminal/certificates.js";
 import { terminalReady } from "../terminal/runtime.js";
 import { readdir } from "node:fs/promises";
+import { resolve } from "node:path";
+import { CloudSessions } from "./cloud-sessions.js";
 import express from "express";
 import bcrypt from "bcryptjs";
 import { limitAttempts, sessionHash, terminalDevice, verifyAdminCode } from "./access.js";
@@ -77,10 +79,24 @@ const cookieOptions = {
   httpOnly: true, secure: config.secureCookies, sameSite: "lax", path: "/",
 };
 const passwordMatches = (password, hash) => bcrypt.compare(password, String(hash).replace(/^\$2y\$/, "$2b$"));
+const cloudSessions = new CloudSessions(process.env.CLOUD_SESSION_DIRECTORY || resolve("backend", ".cloud-sessions"));
 async function loadSession(req) {
   const token = readSessionToken(req);
   if (!token) return null;
   const device = terminalDevice(req);
+  const hash = sessionHash(token, "admin", device);
+  const saved = config.terminal.cloud ? await cloudSessions.read(hash) : null;
+  if (saved) {
+    const [[user]] = await pool.execute("SELECT id, name, username, role, active, password_hash, force_password_change FROM users WHERE id = ?", [saved.userId || 0]);
+    if (!cloudSessions.valid(saved, user)) return null;
+    const [[pin]] = await pool.execute("SELECT JSON_UNQUOTE(setting_value) pin_hash FROM settings WHERE setting_key = 'finance_pin_hash'");
+    req.cloudSession = saved;
+    req.sessionTokenHash = hash;
+    req.user = req.session = { ...user, token_hash: hash, csrf_token: saved.csrf,
+      finance_unlocked: saved.financeUntil > Date.now() && saved.financeVersion === pin?.pin_hash ? 1 : 0,
+      finance_unlocked_until: saved.financeUntil ? new Date(saved.financeUntil) : null };
+    return req.user;
+  }
   const [records] = await pool.execute(
     `SELECT s.token_hash, s.csrf_token, s.finance_unlocked_until, s.expires_at,
             (s.finance_unlocked_until > NOW() AND EXISTS (
@@ -96,7 +112,8 @@ async function loadSession(req) {
   if (!session || !session.active ||
       (config.restrictStaffDevices && session.role !== "admin" && !device) ||
       session.token_hash !== sessionHash(token, session.role, device)) return null;
-  await pool.execute("UPDATE api_sessions SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 8 HOUR) WHERE token_hash = ? AND last_activity < DATE_SUB(NOW(), INTERVAL 5 MINUTE)", [session.token_hash]);
+  if (req.cloudReadOnly && session.role !== "admin") return null;
+  if (!req.cloudReadOnly) await pool.execute("UPDATE api_sessions SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 8 HOUR) WHERE token_hash = ? AND last_activity < DATE_SUB(NOW(), INTERVAL 5 MINUTE)", [session.token_hash]);
   req.sessionTokenHash = session.token_hash;
   req.session = session;
   req.user = session;
@@ -159,7 +176,17 @@ app.post("/auth/login", asyncRoute(async (req, res) => {
   if (user.role === "admin" && !verifyAdminCode(otp)) {
     fail("Enter a current code from the administrator's authenticator app.", 401, "authenticator_required");
   }
+  if (req.cloudReadOnly) {
+    if (user.role !== "admin") fail("Use the terminal's local address to sign in as staff.", 403, "terminal_required");
+    const oldToken = readSessionToken(req);
+    if (oldToken) await cloudSessions.revoke(sessionHash(oldToken, "admin", ""));
+    const token = randomToken(), csrfToken = randomToken();
+    await cloudSessions.create(sessionHash(token, "admin", ""), user, csrfToken);
+    res.cookie(sessionCookie, token, cookieOptions);
+    return res.json({ user: publicUser(user), csrfToken });
+  }
   const oldSession = await loadSession(req);
+  if (req.cloudSession && oldSession) await cloudSessions.revoke(oldSession.token_hash);
   const session = await transaction(async (connection) => {
     const [[current]] = await connection.execute(
       "SELECT id, name, username, role, active, password_hash, force_password_change FROM users WHERE id = ? FOR UPDATE", [user.id],
@@ -228,8 +255,11 @@ app.use("/terminal", terminalAdminRouter);
 app.get("/auth/me", asyncRoute(async (req, res) => res.json({ user: publicUser(req.user), csrfToken: req.session.csrf_token })));
 
 app.post("/auth/logout", asyncRoute(async (req, res) => {
-  await audit("auth.logout", "user", req.user.id, null, { success: true }, req.user.id, req);
-  await pool.execute("DELETE FROM api_sessions WHERE token_hash = ?", [req.sessionTokenHash]);
+  if (req.cloudReadOnly || req.cloudSession) await cloudSessions.revoke(req.sessionTokenHash);
+  if (!req.cloudReadOnly) {
+    await audit("auth.logout", "user", req.user.id, null, { success: true }, req.user.id, req);
+    await pool.execute("DELETE FROM api_sessions WHERE token_hash = ?", [req.sessionTokenHash]);
+  }
   res.clearCookie(sessionCookie, cookieOptions);
   res.json({ ok: true });
 }));
@@ -266,7 +296,7 @@ app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
   res.json({
     bookings: await fetchBookings(), fleet: await fetchBuses(), trips: todayTrips, runs, routes: await fetchRoutes(),
     crew: await fetchCrew(), users: req.user.role === "admin" ? await fetchUsers() : [],
-    user: publicUser(req.user), paymentMode: config.paymentMode,
+    user: publicUser(req.user), paymentMode: config.paymentMode, readOnly: Boolean(req.cloudReadOnly),
   });
 }));
 
@@ -284,6 +314,20 @@ app.post("/auth/finance-unlock", asyncRoute(async (req, res) => {
   limitAttempts("finance", req, 20, 15 * 60_000);
   const pin = req.body?.pin;
   if (typeof pin !== "string" || !/^\d{6,10}$/.test(pin)) fail("Enter the finance PIN.", 422, "invalid_pin");
+  if (req.cloudReadOnly || req.cloudSession) {
+    const hash = await financePinHash(pool);
+    if (!hash) fail("Set a finance PIN in Settings first.", 409, "finance_pin_not_set");
+    if (!(await passwordMatches(pin, hash))) fail("The finance PIN is incorrect.", 422, "invalid_pin");
+    if (!req.cloudSession) {
+      const [[user]] = await pool.execute("SELECT id, role, password_hash FROM users WHERE id = ?", [req.user.id]);
+      await cloudSessions.create(req.sessionTokenHash, user, req.session.csrf_token);
+    }
+    await cloudSessions.change(req.sessionTokenHash, current => {
+      if (!current || current.revoked || current.expires <= Date.now()) fail("Please sign in again.", 401, "unauthenticated");
+      return { ...current, financeUntil: Date.now() + 900000, financeVersion: hash };
+    });
+    return res.json({ unlocked: true, expiresIn: 900 });
+  }
   const unlocked = await transaction(async (connection) => {
     const hash = await financePinHash(connection, true);
     if (!hash) fail("Set a finance PIN in Settings first.", 409, "finance_pin_not_set");
@@ -308,7 +352,7 @@ app.get("/finance/status", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
   const pinConfigured = Boolean(await financePinHash(pool));
   const expiresIn = pinConfigured && financeUnlocked(req)
-    ? Math.max(0, Math.floor((Date.parse(isoDateTime(req.session.finance_unlocked_until)) - Date.now()) / 1000)) : 0;
+    ? Math.max(0, Math.floor(((req.cloudSession?.financeUntil ?? Date.parse(isoDateTime(req.session.finance_unlocked_until))) - Date.now()) / 1000)) : 0;
   res.json({ unlocked: expiresIn > 0, expiresIn, pinConfigured });
 }));
 

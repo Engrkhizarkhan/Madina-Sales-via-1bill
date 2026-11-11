@@ -5,6 +5,7 @@ umask 022
 PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE_DIR=/var/lib/madina-express/terminal
 install -d -m 0750 -o root -g madina-express "$STATE_DIR"
+install -d -m 0700 -o madina-express -g madina-express /var/lib/madina-express/admin-sessions
 install -d -m 0755 -o root -g root /usr/local/libexec
 DEBIAN_FRONTEND=noninteractive apt-get install -y zip >/dev/null
 install -m 0755 -o root -g root "$PROJECT_DIR/deploy/terminal-control.py" /usr/local/libexec/madina-terminal-control
@@ -89,7 +90,7 @@ if [[ ! -f $runtime_file ]]; then
 fi
 printf '%s  %s\n' "$runtime_sha" "$runtime_file" | sha256sum -c -
 chmod 0644 "$runtime_file"
-for setting in TERMINAL_ROLE=cloud TERMINAL_DIRECTORY="$STATE_DIR" ADMIN_TOTP_PAUSED=false; do
+for setting in TERMINAL_ROLE=cloud TERMINAL_DIRECTORY="$STATE_DIR" ADMIN_TOTP_PAUSED=false CLOUD_SESSION_DIRECTORY=/var/lib/madina-express/admin-sessions; do
   key=${setting%%=*}
   if grep -q "^$key=" "$PROJECT_DIR/backend/.env"; then
     sed -i "s|^$key=.*|$setting|" "$PROJECT_DIR/backend/.env"

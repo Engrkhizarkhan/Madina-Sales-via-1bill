@@ -22,18 +22,26 @@ export async function createTerminalCertificates(directory, ip) {
     extensions: [new x509.BasicConstraintsExtension(true, 0, true),
       new x509.KeyUsagesExtension(x509.KeyUsageFlags.keyCertSign | x509.KeyUsageFlags.cRLSign, true)],
   });
+  await writeFile(join(directory, "ca.key"), pem("PRIVATE KEY", await webcrypto.subtle.exportKey("pkcs8", keys.privateKey)), { mode: 0o600 });
+  await writeFile(join(directory, "ca.crt"), ca.toString("pem"), { mode: 0o600 });
+  await renewTerminalServerCertificate(directory, ip);
+}
+
+export async function renewTerminalServerCertificate(directory, ip) {
+  const ca = new x509.X509Certificate(await readFile(join(directory, "ca.crt"), "utf8"));
+  const keyPem = await readFile(join(directory, "ca.key"), "utf8");
+  const privateKey = await webcrypto.subtle.importKey("pkcs8",
+    Buffer.from(keyPem.replace(/-----[^-]+-----|\s/g, ""), "base64"), algorithm, false, ["sign"]);
   const serverKeys = await webcrypto.subtle.generateKey({ ...algorithm, modulusLength: 2048 }, true, ["sign", "verify"]);
   const server = await x509.X509CertificateGenerator.create({
     serialNumber: serialNumber(), issuer: ca.subject, subject: "CN=Madina Express Terminal Server",
-    publicKey: serverKeys.publicKey, signingKey: keys.privateKey, signingAlgorithm: algorithm,
+    publicKey: serverKeys.publicKey, signingKey: privateKey, signingAlgorithm: algorithm,
     notBefore: new Date(Date.now() - 300000), notAfter: new Date(Date.now() + 365 * 86400000),
     extensions: [new x509.BasicConstraintsExtension(false, undefined, true),
       new x509.KeyUsagesExtension(x509.KeyUsageFlags.digitalSignature | x509.KeyUsageFlags.keyEncipherment, true),
       new x509.ExtendedKeyUsageExtension(["1.3.6.1.5.5.7.3.1"], true),
       new x509.SubjectAlternativeNameExtension([{ type: "ip", value: ip }, { type: "dns", value: "localhost" }])],
   });
-  await writeFile(join(directory, "ca.key"), pem("PRIVATE KEY", await webcrypto.subtle.exportKey("pkcs8", keys.privateKey)), { mode: 0o600 });
-  await writeFile(join(directory, "ca.crt"), ca.toString("pem"), { mode: 0o600 });
   await writeFile(join(directory, "server.key"), pem("PRIVATE KEY", await webcrypto.subtle.exportKey("pkcs8", serverKeys.privateKey)), { mode: 0o600 });
   await writeFile(join(directory, "server.crt"), server.toString("pem"), { mode: 0o600 });
 }

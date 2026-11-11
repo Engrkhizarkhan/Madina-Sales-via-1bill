@@ -197,7 +197,20 @@ def main():
     with (ROOT / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         action = sys.argv[1]
-        if action == "prepare":
+        if action == "reset":
+            state = read_json(STATE, {})
+            if state.get("phase") == "active":
+                raise ValueError("An active main PC requires a verified data recovery, not a setup reset.")
+            if replica_status().get("configured"):
+                sql("STOP REPLICA FOR CHANNEL 'madina_terminal'")
+            sql("SET PERSIST super_read_only=OFF")
+            sql("SET PERSIST read_only=OFF")
+            CONFIG.unlink(missing_ok=True)
+            (ROOT / "snapshot.sql").unlink(missing_ok=True)
+            subprocess.run(["pkill", "-u", "madina-terminal"], check=False)
+            write_json(STATE, {"phase": "standalone"})
+            result = {"cancelled": True}
+        elif action == "prepare":
             result = prepare()
         else:
             config = read_json(CONFIG, {})

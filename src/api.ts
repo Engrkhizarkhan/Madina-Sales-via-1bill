@@ -73,8 +73,9 @@ function rememberCsrf<T extends { csrfToken?: string }>(payload: T): T {
 }
 
 export const api = {
-  terminalConnection: () => request<{ local: boolean; connected: boolean; replicated: boolean }>("/terminal/connection"),
+  terminalConnection: () => request<{ local: boolean; connected: boolean; replicated: boolean; readOnly?: boolean }>("/terminal/connection"),
   terminalStatus: () => request<TerminalStatus>("/terminal/status"),
+  cancelTerminalSetup: (currentPassword: string) => request("/terminal/cancel-setup", { method: "POST", body: JSON.stringify({ currentPassword }) }),
   mainPcSetup: (password: string) => downloadSetup("/terminal/package", password, "Madina-Express-Main-PC.zip"),
   terminalPcSetup: (slot: number, password: string) => downloadSetup(`/terminal/devices/${slot}/package`, password, `Madina-Express-PC-${slot}.zip`),
   revokeTerminal: (slot: number) => request<{ ok: boolean }>(`/terminal/devices/${slot}`, { method: "DELETE" }),

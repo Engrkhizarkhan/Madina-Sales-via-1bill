@@ -13,6 +13,7 @@ import { limitAttempts } from "../node/access.js";
 import { terminalControl, runProcess } from "./process.js";
 import { terminalState } from "./state.js";
 import { signTerminalRequest } from "./certificates.js";
+import { CloudSessions } from "../node/cloud-sessions.js";
 
 const route = handler => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
 const bytes = value => new Uint8Array(Buffer.from(value));
@@ -53,7 +54,8 @@ for (const action of ["register", "activate", "abort"]) {
 terminalSyncRouter.post("/status", route(async (req, res) => {
   await authenticateInstaller(req);
   const state = await terminalControl("status");
-  res.json(state);
+  const sessions = new CloudSessions(process.env.CLOUD_SESSION_DIRECTORY || resolve("backend", ".cloud-sessions"));
+  res.json({ ...state, revokedSessions: await sessions.revokedHashes() });
 }));
 terminalSyncRouter.post("/bootstrap", route(async (req, res) => {
   await authenticateInstaller(req);
@@ -102,8 +104,14 @@ terminalEnrollmentRouter.post("/enroll", route(async (req, res) => {
 }));
 
 export const terminalAdminRouter = Router();
+terminalAdminRouter.post("/cancel-setup", route(async (req, res) => {
+  await confirmPassword(req);
+  if (!config.terminal.cloud) fail("Cancel setup from the cloud staff website.", 409, "cloud_required");
+  const state = await terminalControl("reset");
+  res.json(state);
+}));
 terminalAdminRouter.get("/connection", route(async (_req, res) => {
-  if (!config.terminal.local) return res.json({ local: false, connected: true, replicated: true });
+  if (!config.terminal.local) return res.json({ local: false, connected: !_req.cloudReadOnly, replicated: !_req.cloudReadOnly, readOnly: Boolean(_req.cloudReadOnly) });
   let status = {};
   try { status = JSON.parse(await readFile(join(config.terminal.directory, "connection.json"), "utf8")); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
@@ -132,11 +140,14 @@ terminalAdminRouter.post("/package", route(async (req, res) => {
     await copyFile(resolve("deploy/windows/Install-Main-PC.ps1"), join(temporary, "Install-Main-PC.ps1"));
     await copyFile(resolve("deploy/windows/Install-Main-PC.cmd"), join(temporary, "Install-Main-PC.cmd"));
     await copyFile(resolve("deploy/windows/runtime.json"), join(temporary, "runtime.json"));
+    for (const file of ["Change-Main-PC-Network.cmd", "Change-Main-PC-Network.ps1", "Change-Terminal-PC-Address.cmd", "Change-Terminal-PC-Address.ps1"]) {
+      await copyFile(resolve("deploy/windows", file), join(temporary, file));
+    }
     await writeFile(join(temporary, "setup.json"), JSON.stringify({
       token: setup.installToken, knownHost: setup.knownHost, cloudOrigin: "https://staff.madinaexpress.duckdns.org",
     }), { mode: 0o600 });
     await runProcess("zip", ["-0", "-q", join(temporary, "main-pc.zip"), "application.zip", "Install-Main-PC.ps1",
-      "Install-Main-PC.cmd", "runtime.json", "setup.json"], { cwd: temporary });
+      "Install-Main-PC.cmd", "runtime.json", "setup.json", "Change-Main-PC-Network.cmd", "Change-Main-PC-Network.ps1", "Change-Terminal-PC-Address.cmd", "Change-Terminal-PC-Address.ps1"], { cwd: temporary });
     await audit("terminal.installer_downloaded", "user", req.user.id, null, null, req.user.id, req);
     res.set("X-Accel-Buffering", "no");
     res.download(join(temporary, "main-pc.zip"), "Madina-Express-Main-PC.zip", () => void rm(temporary, { recursive: true, force: true }));
@@ -162,6 +173,8 @@ terminalAdminRouter.post("/devices/:slot/package", route(async (req, res) => {
     "Install-Terminal-PC.ps1": bytes(await readFile(resolve("deploy/windows/Install-Terminal-PC.ps1"))),
     "Install-Terminal-PC.cmd": bytes(await readFile(resolve("deploy/windows/Install-Terminal-PC.cmd"))),
     "terminal-ca.cer": new Uint8Array(ca),
+    "Change-Terminal-PC-Address.cmd": bytes(await readFile(resolve("deploy/windows/Change-Terminal-PC-Address.cmd"))),
+    "Change-Terminal-PC-Address.ps1": bytes(await readFile(resolve("deploy/windows/Change-Terminal-PC-Address.ps1"))),
     "setup.json": bytes(JSON.stringify({
       slot, token, localOrigin: config.terminal.localOrigin, caFingerprint: createHash("sha256").update(ca).digest("hex"),
     })),

@@ -265,6 +265,7 @@ type PublicBootstrap = {
   occupancy: PublicOccupancy[];
 };
 type AdminBootstrap = {
+  readOnly?: boolean;
   runs: TripRun[];
   bookings: Booking[];
   fleet: BusRecord[];
@@ -1647,7 +1648,8 @@ function ManagementApp({
     [toast, setToast] = useState(""),
     [loading, setLoading] = useState(true),
     [loadError, setLoadError] = useState(""),
-    [paymentMode, setPaymentMode] = useState("disabled");
+    [paymentMode, setPaymentMode] = useState("disabled"),
+    [cloudReadOnly, setCloudReadOnly] = useState(false);
   useEffect(() => {
     api
       .adminBootstrap<AdminBootstrap>()
@@ -1660,6 +1662,7 @@ function ManagementApp({
         setCrew(result.crew);
         setStaffUsers(result.users);
         setPaymentMode(result.paymentMode);
+        setCloudReadOnly(Boolean(result.readOnly));
         onUserChange(result.user);
       })
       .catch((error: unknown) =>
@@ -1678,6 +1681,7 @@ function ManagementApp({
     const version=dataVersion.current;
     try{
       const result=await api.adminBootstrap<AdminBootstrap>();
+      setCloudReadOnly(Boolean(result.readOnly));
       if(version!==dataVersion.current)return;
       setBookings(result.bookings);setTrips(result.trips);setRuns(result.runs);setFleet(result.fleet);setRoutes(result.routes);setCrew(result.crew);setStaffUsers(result.users);
       setLastUpdated(new Date().toLocaleTimeString("en-GB",{timeZone:"Asia/Karachi"}));setRefreshError("");
@@ -2069,7 +2073,7 @@ function ManagementApp({
             <BookingWorkspace
               key={saleTarget ? `${saleTarget.tripId}-${saleTarget.date}-${saleTarget.mode}` : "sale"}
               initialSelection={saleTarget}
-              readOnly={user.role==="dispatcher"}
+              readOnly={cloudReadOnly || user.role==="dispatcher"}
               onTransition={transitionTrip}
               onRefresh={refreshData} refreshing={refreshing} lastUpdated={lastUpdated} refreshError={refreshError}
               onCounterSave={saveCounter}
@@ -5332,7 +5336,7 @@ type StaffRole = keyof typeof staffRoles;
 const emptyStaffDraft = { name: "", username: "", role: "counter" as StaffRole, password: "" };
 
 function TerminalConnectionBanner() {
-  const [connection, setConnection] = useState<{ local: boolean; connected: boolean; replicated: boolean }>();
+  const [connection, setConnection] = useState<Awaited<ReturnType<typeof api.terminalConnection>>>();
   useEffect(() => {
     let active = true;
     const check = () => api.terminalConnection().then(result => { if (active) setConnection(result); }).catch(() => undefined);
@@ -5340,6 +5344,7 @@ function TerminalConnectionBanner() {
     const timer = window.setInterval(check, 15000);
     return () => { active = false; window.clearInterval(timer); };
   }, []);
+  if (connection?.readOnly) return <div className="terminal-connection-notice" role="status"><ShieldCheck size={16} />Main PC offline or being set up · viewing the last synced cloud data. Changes remain available on the local terminal network.</div>;
   if (!connection?.local || (connection.connected && connection.replicated)) return null;
   return <div className="terminal-connection-notice" role="status"><ShieldCheck size={16} />
     {connection.connected ? "Working locally · cloud backup is catching up." : "Working locally · internet connection unavailable. Seats and payments continue on this terminal network."}
@@ -5390,6 +5395,12 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
       {local ? [1, 2, 3].map(slot => <button className="secondary-button" key={slot} disabled={busy} onClick={() => void download(slot)}>PC {slot} setup</button>) :
         <button className="primary-button" disabled={busy || !status || status.mode !== "cloud"} onClick={() => void download()}>{busy ? "Preparing setup…" : "Download main PC installer"}</button>}
       <button className="secondary-button" disabled={busy} onClick={() => void refresh()}>Refresh status</button>
+      {!local && status?.phase === "preparing" && <button className="secondary-button" disabled={busy || !password} onClick={async () => {
+        setBusy(true);
+        try { await api.cancelTerminalSetup(password); setPassword(""); await refresh(); showToast("Unfinished setup cancelled. Download a fresh main PC installer."); }
+        catch (error) { showToast(error instanceof Error ? error.message : "Could not cancel setup."); }
+        finally { setBusy(false); }
+      }}>Cancel unfinished setup</button>}
     </div>
     {local && <ul className="terminal-slots">{devices?.terminals.map(device => <li key={device.slot}>
       PC {device.slot} · <strong>{device.enrolled ? "Enrolled" : "Pending setup"}</strong>{device.enrolled && <button className="text-action" disabled={busy} onClick={async () => {
@@ -5405,7 +5416,8 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
       <li>Open the local address shown by setup, sign in as admin with your authenticator, and return to Settings.</li>
       <li>Create a separate PC 1, PC 2 and PC 3 setup file. Run each one in the Windows profile used at that counter, including PC 1 on the main PC. The saved main IP is included.</li>
       <li>Use the new Madina Express Counter desktop shortcut. Keep the main PC awake. Its server starts after reboot.</li>
-    </ol><p>Child setup files expire after 30 minutes and require a TPM. Staff need both their account password and an enrolled PC. The admin can sign in remotely while the terminal is online.</p>
+      <li>When moving the same main PC to another LAN, run Change-Main-PC-Network.cmd from the retained main installer folder. On enrolled child PCs run Change-Terminal-PC-Address.cmd with the new main IP. Data and PC enrollment are preserved.</li>
+    </ol><p>Child setup files expire after 30 minutes and require a TPM. Staff need both their account password and an enrolled PC. The main admin can sign in remotely with the authenticator even when the main PC is offline; the cloud then shows the last synced data. Changes resume when the main PC reconnects.</p>
     <p>During internet outages, the counters continue locally. Public reservations pause and the cloud catches up after reconnection. The main PC stores daily backups for 30 days.</p></details>
   </section>;
 }
