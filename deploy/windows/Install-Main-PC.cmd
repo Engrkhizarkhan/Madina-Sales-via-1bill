@@ -1,7 +1,8 @@
 @echo off
-net session >nul 2>&1
+powershell.exe -NoProfile -Command "if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 0 } else { exit 1 }" >nul 2>&1
 if %errorlevel% neq 0 (
-  powershell.exe -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  set "MADINA_SETUP_COMMAND=%~f0"
+  powershell.exe -NoProfile -Command "Start-Process -FilePath $env:MADINA_SETUP_COMMAND -Verb RunAs"
   exit /b
 )
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-Main-PC.ps1"

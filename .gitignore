@@ -32,3 +32,5 @@ output/playwright/
 *.sw?
 
 backend/.terminal/
+
+__pycache__/
