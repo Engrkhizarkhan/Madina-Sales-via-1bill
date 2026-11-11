@@ -64,7 +64,7 @@ staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT
 cp "$PROJECT_DIR/package.json" "$PROJECT_DIR/package-lock.json" "$staging/"
 (cd "$staging" && npm ci --omit=dev --ignore-scripts >/dev/null)
-rsync -a --exclude .env --exclude .terminal --exclude __pycache__ --exclude tests "$PROJECT_DIR/backend/" "$staging/backend/"
+rsync -a --exclude '.env*' --exclude .terminal --exclude backups --exclude __pycache__ --exclude tests "$PROJECT_DIR/backend/" "$staging/backend/"
 cp -a "$PROJECT_DIR/dist" "$staging/dist"
 mkdir -p "$staging/deploy"
 cp -a "$PROJECT_DIR/deploy/windows" "$staging/deploy/windows"
