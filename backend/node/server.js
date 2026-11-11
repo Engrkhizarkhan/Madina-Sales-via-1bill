@@ -20,6 +20,7 @@ const releaseHolds = () => expireReservations().catch(error => {
 void releaseHolds();
 const expiryTimer = setInterval(releaseHolds, 60_000).unref();
 const terminalWeb = config.terminal.local ? await startTerminalWeb(app) : null;
+if (terminalWeb) console.log(`Madina Express local HTTPS listening at ${config.terminal.localOrigin}`);
 startTerminalRuntime();
 
 const shutdown = async (signal) => {

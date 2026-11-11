@@ -1,0 +1,21 @@
+name: Windows terminal service
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'deploy/windows/**'
+      - 'scripts/test-windows-service.ps1'
+      - '.github/workflows/windows-terminal.yml'
+permissions:
+  contents: read
+jobs:
+  powershell-51:
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Check PowerShell syntax and service warning handling
+        shell: powershell
+        run: ./scripts/test-windows-service.ps1

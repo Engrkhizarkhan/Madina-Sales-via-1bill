@@ -51,7 +51,7 @@ If setup reports "The remote name could not be resolved", download a fresh insta
 ## Backups, logs and recovery
 
 - Main PC daily SQL backups: `C:\ProgramData\MadinaExpress\data\backups` (30 days). Cloud SQL backups retain 30 days under `/var/backups/madina-express`.
-- Main server log: `C:\ProgramData\MadinaExpress\logs\server.log`; MySQL logs/data: `data\mysql`. The scheduled task is **Madina Express Terminal Server**; database service is **MadinaTerminalMySQL**.
+- Main server logs: `C:\ProgramData\MadinaExpress\logs\server.log` and `server-error.log`; MySQL logs/data: `data\mysql`. The scheduled task is **Madina Express Terminal Server**; database service is **MadinaTerminalMySQL**.
 - Cloud logs remain under PM2: `ssh root@62.171.173.11 'pm2 logs --nostream'`.
 - Main PC binary logs retain 30 days. If cloud replication is disconnected for longer than that, or Settings reports a replication error, do not clear logs or force writes on the cloud. An administrator must create a fresh consistent replica seed.
 - An internet outage is supported; a failed/switched-off main PC is not. Keep an encrypted backup copy on a separate disk. Replacing a failed main PC requires an administrator-led restore and replication check; do not run a fresh installer over existing live data or allow both machines to sell seats.
@@ -71,3 +71,9 @@ The database topology follows [MySQL GTID replication](https://dev.mysql.com/doc
 ## Testing Nginx configurations safely
 
 Alternate Nginx test instances must set their own PID, proxy/body/cache temporary paths and worker user. Do not let a test instance use the production `/var/lib/nginx` paths: Nginx can change their ownership while starting or checking configuration. Production API downloads stream without proxy disk buffering. If a browser reports a content-length mismatch, inspect the Nginx error log and temporary-directory ownership before retrying.
+
+## Repair a completed installation that cannot open the local website
+
+Download [the main PC repair ZIP](https://staff.madinaexpress.duckdns.org/Madina-Express-Main-PC-Repair.zip), extract all three files on the same Windows PC, and run `Repair-Main-PC.cmd`. Approve Windows elevation. It replaces the service launcher, corrects the tunnel key ACL, allows the task to run on battery power and restarts the existing local app. The database and installation credentials remain in place. The repair checks local HTTPS before reporting readiness.
+
+Windows PowerShell 5.1 can treat a native program's redirected stderr as a terminating PowerShell error. The launcher uses `Start-Process` with separate OS output/error log files so an SSH warning does not terminate Node. The server's SSH key ACL contains only LocalService, SYSTEM and Administrators; prior explicit user entries are removed.

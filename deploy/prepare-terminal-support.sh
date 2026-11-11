@@ -99,4 +99,7 @@ for setting in TERMINAL_ROLE=cloud TERMINAL_DIRECTORY="$STATE_DIR" ADMIN_TOTP_PA
 done
 chown root:madina-express "$PROJECT_DIR/backend/.env"
 chmod 0640 "$PROJECT_DIR/backend/.env"
+repair_archive=/var/www/madina-express/Madina-Express-Main-PC-Repair.zip
+zip -q -j "$repair_archive" "$PROJECT_DIR/deploy/windows/Repair-Main-PC.cmd" "$PROJECT_DIR/deploy/windows/Repair-Main-PC.ps1" "$PROJECT_DIR/deploy/windows/Run-Server.ps1"
+chmod 0644 "$repair_archive"
 echo 'Terminal installer support is prepared. The cloud stays the writer until the main PC begins setup.'

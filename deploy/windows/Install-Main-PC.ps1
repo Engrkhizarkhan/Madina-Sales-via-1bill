@@ -224,7 +224,14 @@ Import-Certificate -FilePath (Join-Path $data 'tls\ca.crt') -CertStoreLocation C
 # The SSH private key is readable only by LocalService, Administrators and SYSTEM.
 & icacls.exe $keyPath /setowner '*S-1-5-19' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'The tunnel key owner could not be set to the service account.' }
-& icacls.exe $keyPath /inheritance:r /grant:r '*S-1-5-19:R' '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+$keyAcl = New-Object Security.AccessControl.FileSecurity
+$keyAcl.SetAccessRuleProtection($true, $false)
+foreach ($entry in @(@('S-1-5-19', 'Read'), @('S-1-5-18', 'FullControl'), @('S-1-5-32-544', 'FullControl'))) {
+    $sid = New-Object Security.Principal.SecurityIdentifier($entry[0])
+    $rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, $entry[1], 'Allow')
+    $keyAcl.AddAccessRule($rule)
+}
+Set-Acl -LiteralPath $keyPath -AclObject $keyAcl
 if (-not (Get-NetFirewallRule -DisplayName 'Madina Express Local HTTPS' -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -DisplayName 'Madina Express Local HTTPS' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8443 -Profile Private -RemoteAddress LocalSubnet | Out-Null
 }
@@ -234,9 +241,19 @@ if ($network.NetworkCategory -notcontains 'Private') {
 }
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ("-NoProfile -ExecutionPolicy Bypass -File `"" + (Join-Path $application 'deploy\windows\Run-Server.ps1') + "`"")
 $taskPrincipal = New-ScheduledTaskPrincipal -UserId 'S-1-5-19' -LogonType ServiceAccount
-$taskSettings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable
+$taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable
 Register-ScheduledTask -TaskName 'Madina Express Terminal Server' -Action $action -Principal $taskPrincipal -Trigger (New-ScheduledTaskTrigger -AtStartup) -Settings $taskSettings -Force | Out-Null
 Start-ScheduledTask -TaskName 'Madina Express Terminal Server'
+$localReady = $false
+for ($attempt = 0; $attempt -lt 30; $attempt++) {
+    try {
+        $health = Invoke-RestMethod -Uri 'https://localhost:8443/api/health' -TimeoutSec 3
+        if ($health.status -eq 'ok' -and $health.installationId -eq $installation.installationId) { $localReady = $true; break }
+    } catch { Start-Sleep -Seconds 2 }
+}
+if (-not $localReady) {
+    throw "The local app did not start. Check $base\logs\server-error.log and run the main PC repair from the staff site. Your imported database is retained."
+}
 Remove-Item $init, $import, $bootstrapZip -Force
 Remove-Item $bootstrap -Recurse -Force
 Write-Host "Main PC service installed. Open $origin/login to sign in as admin."
