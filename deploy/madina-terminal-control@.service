@@ -1,0 +1,25 @@
+[Unit]
+Description=Madina Express restricted terminal control request
+
+[Service]
+Type=exec
+User=root
+Group=root
+ExecStart=/usr/local/libexec/madina-terminal-broker
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=190
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/madina-express/terminal /etc/nginx/sites-available
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077

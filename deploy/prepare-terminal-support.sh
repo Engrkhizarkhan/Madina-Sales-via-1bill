@@ -55,11 +55,12 @@ if ! sshd -t; then
 fi
 rm -f "$ssh_backup"
 systemctl reload ssh
-cat > /etc/sudoers.d/madina-terminal <<'SUDO'
-madina-express ALL=(root) NOPASSWD: /usr/local/libexec/madina-terminal-control prepare, /usr/local/libexec/madina-terminal-control register, /usr/local/libexec/madina-terminal-control freeze, /usr/local/libexec/madina-terminal-control activate, /usr/local/libexec/madina-terminal-control abort, /usr/local/libexec/madina-terminal-control status
-SUDO
-chmod 0440 /etc/sudoers.d/madina-terminal
-visudo -cf /etc/sudoers.d/madina-terminal
+install -m 0755 -o root -g root "$PROJECT_DIR/deploy/terminal-broker.py" /usr/local/libexec/madina-terminal-broker
+install -m 0644 -o root -g root "$PROJECT_DIR/deploy/madina-terminal-control.socket" /etc/systemd/system/madina-terminal-control.socket
+install -m 0644 -o root -g root "$PROJECT_DIR/deploy/madina-terminal-control@.service" /etc/systemd/system/madina-terminal-control@.service
+systemctl daemon-reload
+systemctl enable --now madina-terminal-control.socket
+rm -f /etc/sudoers.d/madina-terminal
 # The Windows service uses only portable JavaScript dependencies. No cloud secrets are included.
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT

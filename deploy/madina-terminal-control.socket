@@ -1,0 +1,14 @@
+[Unit]
+Description=Madina Express restricted terminal control socket
+
+[Socket]
+ListenStream=/run/madina-terminal-control.sock
+SocketUser=root
+SocketGroup=madina-express
+SocketMode=0660
+Accept=yes
+MaxConnections=8
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target

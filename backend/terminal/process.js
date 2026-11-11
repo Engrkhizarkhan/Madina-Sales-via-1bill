@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createConnection } from "node:net";
 
 export function runProcess(command, args, { input, cwd, timeout = 120000, maxOutput = 1024 * 1024, env } = {}) {
   return new Promise((resolve, reject) => {
@@ -26,9 +27,30 @@ export function runProcess(command, args, { input, cwd, timeout = 120000, maxOut
   });
 }
 
-export async function terminalControl(action, payload) {
-  const result = await runProcess("sudo", ["-n", "/usr/local/libexec/madina-terminal-control", action], {
-    input: JSON.stringify(payload || {}), timeout: 180000,
+export function terminalControl(action, payload = {}) {
+  const actions = ["prepare", "register", "freeze", "activate", "abort", "status"];
+  if (!actions.includes(action) || !payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return Promise.reject(new Error("Invalid terminal-control request."));
+  }
+  const request = JSON.stringify({ action, payload }) + "\n";
+  if (Buffer.byteLength(request) > 16384) return Promise.reject(new Error("The setup request is too large."));
+  return new Promise((resolve, reject) => {
+    const socket = createConnection("/run/madina-terminal-control.sock");
+    let response = "";
+    const timer = setTimeout(() => socket.destroy(new Error("The terminal setup request timed out.")), 185000);
+    socket.on("connect", () => socket.end(request));
+    socket.on("data", chunk => {
+      response += chunk.toString();
+      if (Buffer.byteLength(response) > 32768) socket.destroy(new Error("Invalid terminal-control response."));
+    });
+    socket.on("error", error => { clearTimeout(timer); reject(error); });
+    socket.on("end", () => {
+      clearTimeout(timer);
+      try {
+        const result = JSON.parse(response);
+        if (!result.ok) throw new Error(result.error || "Terminal setup could not finish.");
+        resolve(result.result);
+      } catch (error) { reject(error); }
+    });
   });
-  return JSON.parse(result);
 }
