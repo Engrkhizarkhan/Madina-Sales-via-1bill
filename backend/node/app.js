@@ -33,7 +33,12 @@ app.use(localTerminalGuard);
 
 app.use((req, res, next) => {
   const origin = req.get("origin");
-  if (origin && config.allowedOrigins.includes(origin)) {
+  let allowedOrigin = !origin || config.allowedOrigins.includes(origin);
+  if (origin && (config.terminal.cloud || config.terminal.local) && !req.path.startsWith('/public/')) {
+    try { allowedOrigin = allowedOrigin && new URL(origin).host === req.get('host'); }
+    catch { allowedOrigin = false; }
+  }
+  if (origin && allowedOrigin) {
     res.set("Access-Control-Allow-Origin", origin);
     res.set("Access-Control-Allow-Credentials", "true");
     res.vary("Origin");
@@ -47,7 +52,7 @@ app.use((req, res, next) => {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
     "Cache-Control": "no-store, max-age=0",
   });
-  if (origin && !config.allowedOrigins.includes(origin) && !["GET", "HEAD"].includes(req.method)) {
+  if (origin && !allowedOrigin) {
     return res.status(403).json({ error: { code: "origin_denied", message: "This request origin is not allowed." } });
   }
   if (req.method === "OPTIONS") return res.sendStatus(204);

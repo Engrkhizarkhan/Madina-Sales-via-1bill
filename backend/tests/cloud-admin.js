@@ -49,7 +49,7 @@ try {
   if (output) throw new Error(output);
   await mkdir(join(directory, 'state'));
   await writeFile(join(directory, 'state/state.json'), JSON.stringify({ phase: 'standalone' }));
-  server = spawn(process.execPath, ['backend/node/server.js'], { env: { ...process.env, DB_NAME: dbName, DB_USER: dbUser, DB_PASSWORD: password, DB_HOST: '127.0.0.1', DB_PORT: '3306', TERMINAL_ROLE: 'cloud', TERMINAL_DIRECTORY: join(directory, 'state'), CLOUD_SESSION_DIRECTORY: join(directory, 'sessions'), ADMIN_TOTP_HEX: otpKey.toString('hex'), ADMIN_TOTP_PAUSED: 'false', RESTRICT_STAFF_DEVICES: 'true', NODE_API_HOST: '127.0.0.1', NODE_API_PORT: '43191', SESSION_SECURE: 'true', PUBLIC_SITE_ENABLED:'true', ALLOWED_ORIGINS: 'https://qa.invalid' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  server = spawn(process.execPath, ['backend/node/server.js'], { env: { ...process.env, DB_NAME: dbName, DB_USER: dbUser, DB_PASSWORD: password, DB_HOST: '127.0.0.1', DB_PORT: '3306', TERMINAL_ROLE: 'cloud', TERMINAL_DIRECTORY: join(directory, 'state'), CLOUD_SESSION_DIRECTORY: join(directory, 'sessions'), ADMIN_TOTP_HEX: otpKey.toString('hex'), ADMIN_TOTP_PAUSED: 'false', RESTRICT_STAFF_DEVICES: 'true', NODE_API_HOST: '127.0.0.1', NODE_API_PORT: '43191', SESSION_SECURE: 'true', PUBLIC_SITE_ENABLED:'true', ALLOWED_ORIGINS: 'https://qa.invalid,https://public.example.invalid,http://127.0.0.1:43191' }, stdio: ['ignore', 'pipe', 'pipe'] });
   server.stdout.on('data', data => { output += data; }); server.stderr.on('data', data => { output += data; });
   let ready = false;
   for (let i = 0; i < 60; i++) { try { ready = (await request('GET', '/health')).status === 200; if (ready) break; } catch { /* startup */ } await new Promise(resolve => setTimeout(resolve, 100)); }
@@ -58,6 +58,9 @@ try {
   assert.equal(firstLogin.status,200,JSON.stringify(firstLogin.payload));
   cookie=firstLogin.cookie;csrf=firstLogin.payload.csrfToken;
   const ownerCookie=cookie,ownerCsrf=csrf;
+  assert.equal((await request('GET','/auth/me',undefined,undefined,{Origin:'https://public.example.invalid'})).status,403);
+  assert.equal((await request('GET','/auth/me',undefined,undefined,{Origin:'http://127.0.0.1:43191'})).status,200);
+
   const staffPassword='StaffAccess!2026Only';
   const staff=await request('POST','/users',{name:'Counter operator',username:'counter-two',role:'counter',password:staffPassword,terminals:[2],remoteAllowed:false});
   assert.equal(staff.status,201,JSON.stringify(staff.payload));
