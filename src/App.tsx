@@ -2042,6 +2042,7 @@ function ManagementApp({
           <div className="admin-topbar-right">
             <div className="admin-user">
               <span className="avatar">{initials}</span>
+              <TerminalConnectionSignal />
               <div>
                 <strong>{user.name}</strong>
                 <small>{user.role} · Counter 01</small>
@@ -2058,7 +2059,6 @@ function ManagementApp({
             </button>
           </div>
         </header>
-        <TerminalConnectionBanner />
         {availableBuild && availableBuild.releaseId!==runningBuild.releaseId && <div className="terminal-connection-notice" role="status">Version {availableBuild.version} is ready. Finish your current entry, then <button className="text-action" onClick={()=>window.location.reload()}>Refresh</button>.</div>}
         <main className="admin-main">
           {activeView === "dashboard" && (
@@ -5314,17 +5314,32 @@ function SettingsView({
   );
 }
 
-function TerminalConnectionBanner() {
+function TerminalConnectionSignal() {
   const [connection, setConnection] = useState<Awaited<ReturnType<typeof api.terminalConnection>>>();
   const [unreachable, setUnreachable] = useState(false);
+  const [latency, setLatency] = useState<number|null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!expanded) return;
+    const close = (event:PointerEvent) => { if (!button.current?.contains(event.target as Node)) setExpanded(false); };
+    window.addEventListener("pointerdown",close);
+    return () => window.removeEventListener("pointerdown",close);
+  },[expanded]);
   useEffect(() => {
     let active = true;
     let busy = false;
     const check = async () => {
       if (busy) return;
       busy = true;
-      try { const result = await api.terminalConnection(); if (active) { setConnection(result); setUnreachable(false); } }
-      catch { if (active) setUnreachable(true); }
+      const started = performance.now();
+      try {
+        const result = await api.terminalConnection();
+        const browserLatency = performance.now() - started;
+        const cloudLatency = typeof result.cloudLatencyMs === "number" && result.cloudLatencyMs >= 0 ? result.cloudLatencyMs : 0;
+        if (active) { setConnection(result); setUnreachable(false); setLatency(previous => previous === null ? Math.max(browserLatency,cloudLatency) : previous * .5 + Math.max(browserLatency,cloudLatency) * .5); }
+      }
+      catch { if (active) { setUnreachable(true); setLatency(null); } }
       finally { busy = false; }
     };
     void check();
@@ -5332,9 +5347,19 @@ function TerminalConnectionBanner() {
     window.addEventListener("online", check); window.addEventListener("focus", check);
     return () => { active = false; window.clearInterval(timer); window.removeEventListener("online", check); window.removeEventListener("focus", check); };
   }, []);
-  const tone = unreachable || connection?.readOnly || connection?.replicationError || (connection?.local && !connection.connected) ? "red" : !connection ? "checking" : connection.local && (!connection.replicated || (connection.secondsBehind ?? 0) > 0) ? "amber" : "green";
-  const label = unreachable ? "Server unreachable · reconnecting" : connection?.readOnly ? "Terminal offline · cloud view only" : connection?.replicationError ? "Cloud sync needs attention · local work continues" : !connection ? "Checking connection" : connection.local && !connection.connected ? "Working locally · cloud offline" : tone === "amber" ? "Connected · syncing changes" : connection.local ? "Connected · synced" : "Cloud connected";
-  return <div className={`connection-strip ${tone}`} role="status" aria-live="polite"><span className="connection-bars" aria-hidden="true"><i/><i/><i/></span><span>{label}</span></div>;
+  const offline = unreachable || connection?.readOnly || Boolean(connection?.local && !connection.connected);
+  // Grades use measured round-trip response time, smoothed across recent checks.
+  const level = offline || latency === null ? 0 : latency < 250 ? 4 : latency < 750 ? 3 : latency < 1500 ? 2 : 1;
+  const quality = offline ? "Offline" : latency === null ? "Checking connection" : ["", "Slow", "Fair", "Good", "Fast"][level];
+  const syncTone = offline || connection?.replicationError ? "red" : !connection ? "checking" : connection.local && (!connection.replicated || (connection.secondsBehind ?? 0) > 0) ? "amber" : "green";
+  const syncLabel = unreachable ? "Server unreachable · reconnecting" : connection?.readOnly ? "Terminal offline · cloud view only" : connection?.replicationError ? "Cloud sync needs attention · local work continues" : !connection ? "Checking connection" : connection.local && !connection.connected ? "Working locally · cloud offline" : syncTone === "amber" ? "Syncing changes" : "Cloud synced";
+  const response = offline || latency === null ? "" : `${Math.max(1,Math.round(latency))} ms response`;
+  const label = `${quality} · ${level}/4 bars${response ? ` · ${response}` : ""}. ${syncLabel}`;
+  return <button ref={button} type="button" className={`connection-signal level-${level} sync-${syncTone}`} aria-label={label} title={expanded?undefined:label} aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)} onKeyDown={event=>{if(event.key==="Escape")setExpanded(false);}}>
+    <span className="connection-bars" aria-hidden="true">{[1,2,3,4].map(bar=><i key={bar} className={bar<=level?"filled":""}/>)}</span>
+    <span className="connection-sync-dot" aria-hidden="true"/>
+    {expanded&&<span className="connection-signal-details"><strong>{quality} · {level}/4</strong>{response&&<span>{response}</span>}<span className={`sync-${syncTone}`}>{syncLabel}</span></span>}
+  </button>;
 }
 
 function TerminalServerSettings({ showToast }: { showToast: (message: string) => void }) {

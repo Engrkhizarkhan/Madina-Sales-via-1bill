@@ -44,7 +44,9 @@ async function callCloud(action) {
 async function refreshStatus() {
   try {
     const ready = await terminalReady();
+    const checkStarted = performance.now();
     const status = await callCloud(ready ? "status" : "activate");
+    const cloudLatencyMs = Math.round(performance.now() - checkStarted);
     if (Array.isArray(status.revokedSessions)) {
       const hashes = status.revokedSessions.filter(hash => typeof hash === "string" && /^[a-f0-9]{64}$/.test(hash));
       for (let index = 0; index < hashes.length; index += 100) {
@@ -64,6 +66,7 @@ async function refreshStatus() {
       replicated: status.ioRunning === true && status.sqlRunning === true,
       secondsBehind: status.secondsBehind ?? null,
       replicationError: status.error === true,
+      cloudLatencyMs,
     });
   } catch (error) {
     await publishConnection({ connected: false, replicated: false, message: error.message }).catch(() => undefined);

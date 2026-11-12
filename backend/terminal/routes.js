@@ -137,7 +137,7 @@ terminalAdminRouter.get("/connection", route(async (_req, res) => {
   try { status = JSON.parse(await readFile(join(config.terminal.directory, "connection.json"), "utf8")); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
   const fresh = Date.now() - Date.parse(status.checkedAt || "") < 90000;
-  res.json({ local: true, connected: fresh && status.connected === true, replicated: fresh && status.replicated === true, secondsBehind: status.secondsBehind ?? null, replicationError: fresh && status.replicationError === true });
+  res.json({ local: true, connected: fresh && status.connected === true, replicated: fresh && status.replicated === true, secondsBehind: status.secondsBehind ?? null, replicationError: fresh && status.replicationError === true, cloudLatencyMs: fresh && Number.isFinite(status.cloudLatencyMs) ? status.cloudLatencyMs : null });
 }));
 terminalAdminRouter.get("/status", route(async (req, res) => {
   requireAdmin(req);

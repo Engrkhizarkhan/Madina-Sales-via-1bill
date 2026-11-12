@@ -39,7 +39,7 @@ On already enrolled child PCs, run **Change-Terminal-PC-Address.cmd**, enter the
 
 ## Troubleshooting
 
-The dashboard connection strip stays visible: green means connected/synced, amber means changes are catching up, and red means offline or a sync problem. Local counters continue through their Counter shortcut during a WAN outage; the cloud URL requires internet. The main admin can view the cloud's last synced copy while the terminal is offline.
+The four signal bars beside the account avatar show measured response speed. Four bars mean under 250 ms, three under 750 ms, two under 1500 ms, and one slower; zero means unavailable or still checking. The reading smooths recent browser-to-server and main-PC-to-cloud response times. Click the icon for the current milliseconds and sync details. The small status dot is green when synced, amber while catching up, and red for offline/sync errors. Local counters continue through their Counter shortcut during a WAN outage; the cloud URL requires internet. The main admin can view the cloud's last synced copy while the terminal is offline.
 
 After internet returns, authenticated main-PC status checks probe the actual forwarded API. Two failed probes cause the dedicated tunnel connection to reopen, with a 30-second recovery cooldown. A healthy tunnel with a disconnected MySQL receiver restarts only that receiver. Replication positions and queued local transactions are preserved; an applier/data error is reported instead of skipped. Allow roughly a minute for a broken connection and queued changes to recover. Staff sign-in requests time out with a retry message instead of waiting indefinitely.
 
