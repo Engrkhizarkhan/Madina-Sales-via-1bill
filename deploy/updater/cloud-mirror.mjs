@@ -1,4 +1,4 @@
-import { readFile,writeFile,mkdir,rm,readdir,stat,symlink,rename } from 'node:fs/promises';
+import { readFile,writeFile,mkdir,rm,readdir,stat,symlink,rename,copyFile,chmod } from 'node:fs/promises';
 import { join,resolve } from 'node:path';
 import { execFile,spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -25,7 +25,6 @@ async function start(){
  const current=await jsonFile(join(host,'current.json'));
  if(!current?.application||(!current.application.startsWith(releaseRoot+'/')&&current.application!=='/opt/madina-express'))throw new Error('Invalid cloud application pointer');
  const temporary=join(base,'current.next');await rm(temporary,{force:true});await symlink(current.application,temporary);await rename(temporary,join(base,'current'));
- await exec('rsync',['-a',join(current.application,'dist/'),'/var/www/madina-express/']);
  await exec('systemctl',['reload','madina-express']);
 }
 const operations={
@@ -34,7 +33,12 @@ const operations={
  // Keep the PM2 supervisor running. Restart drains the old process after migrations.
  stop:async()=>undefined,start,
  migrate:async application=>{if((await phase()).phase==='active'){if(!await schemaReady(await jsonFile(join(application,'release-metadata.json'))))throw new Error('Waiting for schema replication');return;}await exec('/opt/node-current/bin/node',['backend/update/migrate-release.mjs','/etc/madina-express/mysql-admin.cnf'],{cwd:application,timeout:180000,maxBuffer:1024*1024});},
- healthy:async releaseId=>{for(let index=0;index<30;index++){try{const health=await local('/health');if(health.status==='ok'&&(!releaseId||health.release?.releaseId===releaseId))return true;}catch{/* restarting */}await sleep(1000);}return false;}
+ healthy:async releaseId=>{for(let index=0;index<30;index++){try{const health=await local('/health');if(health.status==='ok'&&(!releaseId||health.release?.releaseId===releaseId)){
+ const current=await jsonFile(join(host,'current.json'));
+ await exec('rsync',['-a','--exclude=index.html',join(current.application,'dist/'),'/var/www/madina-express/']);
+ const next='/var/www/madina-express/.index.next';await copyFile(join(current.application,'dist/index.html'),next);await chmod(next,0o644);await rename(next,'/var/www/madina-express/index.html');
+ return true;
+}}catch{/* restarting */}await sleep(1000);}return false;}
 };
 await recover({host,operations});
 try{if((await operations.activity()).draining)await operations.resume();}catch{/* the application may be starting */}
