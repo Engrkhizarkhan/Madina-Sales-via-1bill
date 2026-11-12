@@ -5338,6 +5338,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
   const [status, setStatus] = useState<Awaited<ReturnType<typeof api.terminalStatus>>>();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [allowSoftwareKey, setAllowSoftwareKey] = useState(false);
   const [devices, setDevices] = useState<Awaited<ReturnType<typeof api.terminalAccess>>>();
   const refresh = useCallback(async () => {
     try {
@@ -5355,9 +5356,10 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
     if (!password) { showToast("Enter your current administrator password to create a setup file."); return; }
     setBusy(true);
     try {
-      if (slot) await api.terminalPcSetup(slot, password);
+      if (slot) await api.terminalPcSetup(slot, password, allowSoftwareKey);
       else await api.mainPcSetup(password);
       setPassword("");
+      setAllowSoftwareKey(false);
       showToast(slot ? `PC ${slot} setup downloaded. Use it within 30 minutes.` : "Main PC setup downloaded. Extract the ZIP on the main Windows PC.");
       await refresh();
     } catch (error) { showToast(error instanceof Error ? error.message : "Setup file could not be created."); }
@@ -5374,6 +5376,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
     <div className="settings-fields"><label className="span-2"><span>Current administrator password</span>
       <input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} />
     </label></div>
+    {local && <label className="span-2"><span><input type="checkbox" checked={allowSoftwareKey} onChange={event => setAllowSoftwareKey(event.target.checked)} /> Allow this PC without TPM</span><small>Applies to the next setup download only. Setup tries TPM first, then uses a Windows-protected, non-exportable key if needed. Approve only trusted PCs; a Windows administrator has more control over software keys.</small></label>}
     <div className="view-actions">
       {local ? [1, 2, 3].map(slot => <button className="secondary-button" key={slot} disabled={busy} onClick={() => void download(slot)}>PC {slot} setup</button>) :
         <button className="primary-button" disabled={busy || !status || status.mode !== "cloud"} onClick={() => void download()}>{busy ? "Preparing setup…" : "Download main PC installer"}</button>}
@@ -5386,7 +5389,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
       }}>Cancel unfinished setup</button>}
     </div>
     {local && <ul className="terminal-slots">{devices?.terminals.map(device => <li key={device.slot}>
-      PC {device.slot} · <strong>{device.enrolled ? "Enrolled" : "Pending setup"}</strong>{device.enrolled && <button className="text-action" disabled={busy} onClick={async () => {
+      PC {device.slot} · <strong>{device.enrolled ? `Enrolled${device.keyStorage === "windows" ? " · Windows key" : ""}` : "Pending setup"}</strong>{device.enrolled && <button className="text-action" disabled={busy} onClick={async () => {
         setBusy(true);
         try { await api.revokeTerminal(device.slot); await refresh(); showToast(`PC ${device.slot} access revoked.`); }
         catch (error) { showToast(error instanceof Error ? error.message : "Could not revoke this PC."); }
@@ -5400,7 +5403,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
       <li>Create a separate PC 1, PC 2 and PC 3 setup file. Run each one in the Windows profile used at that counter, including PC 1 on the main PC. The saved main IP is included.</li>
       <li>Use the new Madina Express Counter desktop shortcut. Keep the main PC awake. Its server starts after reboot.</li>
       <li>When moving the same main PC to another LAN, run Change-Main-PC-Network.cmd from the retained main installer folder. On enrolled child PCs run Change-Terminal-PC-Address.cmd with the new main IP. Data and PC enrollment are preserved.</li>
-    </ol><p>Child setup files expire after 30 minutes and require a TPM. Staff need both their account password and an enrolled PC. The main admin can sign in remotely with the authenticator even when the main PC is offline; the cloud then shows the last synced data. Changes resume when the main PC reconnects.</p>
+    </ol><p>Child setup files expire after 30 minutes. TPM is required unless the main admin approves compatibility mode for that download. Staff need both their account password and an enrolled Windows profile. Use standard Windows accounts for staff. The main admin can sign in remotely with the authenticator even when the main PC is offline; the cloud then shows the last synced data. Changes resume when the main PC reconnects.</p>
     <p>During internet outages, the counters continue locally. Public reservations pause and the cloud catches up after reconnection. The main PC stores daily backups for 30 days.</p></details>
   </section>;
 }

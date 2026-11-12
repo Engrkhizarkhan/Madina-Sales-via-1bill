@@ -12,6 +12,7 @@ import { atomicJson,jsonFile,activate,recover } from './engine.mjs';
 const exec=promisify(execFile),sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const quote=value=>"'"+value.replaceAll("'","''")+"'";
 const ps=code=>exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop';"+code,'utf16le').toString('base64')],{windowsHide:true,timeout:180000,maxBuffer:1024*1024});
+export const releaseAclCommand=target=>`& icacls.exe ${quote(target)} /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' | Out-Null; if($LASTEXITCODE -ne 0){throw 'Release directory permissions failed'}; & icacls.exe ${quote(join(target,'*'))} /reset /T /C /Q | Out-Null; if($LASTEXITCODE -ne 0){throw 'Release file permissions failed'}`;
 export async function run(base){
  if(process.platform!=='win32')throw new Error('This updater runs on Windows only');
  const host=join(base,'host'),settings=await jsonFile(join(host,'updater.json'));
@@ -74,13 +75,21 @@ try{if((await operations.activity()).draining)await operations.resume();}catch{/
  const archive=join(releases,release.file);let bytes;
  try{bytes=await readFile(archive);verifyPackage(bytes,release);}catch{bytes=await fetchBounded(origin+'/updates/'+release.file,maxPackageBytes);verifyPackage(bytes,release);await writeFile(archive,bytes);}
  zipEntries(bytes);assertApplication(target);
- const staged=await jsonFile(join(target,'build-info.json'));
+ let staged;
+ try{staged=await jsonFile(join(target,'build-info.json'));}
+ catch(error){
+  if(!['EPERM','EACCES'].includes(error.code))throw error;
+  await ps(releaseAclCommand(target));
+  staged=await jsonFile(join(target,'build-info.json'));
+ }
  if(staged?.commit!==release.commit||staged.releaseId!==release.releaseId){
   await rm(target,{recursive:true,force:true});await mkdir(target);
   await ps(`Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(target)} -Force`);
  }
+ // Normalize inherited file permissions before reading or starting extracted code.
+ // Keep only the release root protected; descendants inherit its explicit rules.
+ await ps(releaseAclCommand(target));
  const info=await jsonFile(join(target,'build-info.json'));if(info?.commit!==release.commit||info.releaseId!==release.releaseId)throw new Error('Package identity does not match signed metadata');
- await ps(`icacls.exe ${quote(target)} /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' /T | Out-Null; if($LASTEXITCODE -ne 0){throw 'Release permissions failed'}`);
  await cp(join(target,'dist/assets'),join(base,'static-assets'),{recursive:true});
  await report({stage:'ready',current,available:release.releaseId});
  const latestChannel=JSON.parse((await fetchBounded(origin+'/api/terminal-sync/update-channel',65536)).toString());

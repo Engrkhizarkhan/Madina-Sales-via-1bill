@@ -41,9 +41,17 @@ KeyUsage = 0x80
 $infPath = Join-Path $PSScriptRoot 'terminal.inf'
 $requestPath = Join-Path $PSScriptRoot 'terminal.req'
 [IO.File]::WriteAllText($infPath, $inf, [Text.Encoding]::ASCII)
-& certreq.exe -new -user $infPath $requestPath
+$keyStorage = 'tpm'
+& certreq.exe -new -user -f $infPath $requestPath
+if ($LASTEXITCODE -ne 0 -and $setup.allowSoftwareKey -eq $true) {
+    Write-Host 'TPM key unavailable. Using the Windows key approved by the main administrator.'
+    $keyStorage = 'windows'
+    $inf = $inf.Replace('Microsoft Platform Crypto Provider', 'Microsoft Software Key Storage Provider')
+    [IO.File]::WriteAllText($infPath, $inf, [Text.Encoding]::ASCII)
+    & certreq.exe -new -user -f $infPath $requestPath
+}
 if ($LASTEXITCODE -ne 0) { throw ('Windows could not create the TPM device key (certreq exit code ' + $LASTEXITCODE + '). In Administrator PowerShell, run: Get-Tpm | Select-Object TpmPresent,TpmReady,TpmEnabled,TpmActivated. Keep this setup folder and share the result; do not clear the TPM.') }
-$payload = @{ slot = [int]$setup.slot; token = $setup.token; request = [IO.File]::ReadAllText($requestPath) } | ConvertTo-Json
+$payload = @{ slot = [int]$setup.slot; token = $setup.token; keyStorage = $keyStorage; request = [IO.File]::ReadAllText($requestPath) } | ConvertTo-Json
 $response = Invoke-RestMethod -Method Post -Uri ($setup.localOrigin + '/api/terminal/enroll') -ContentType 'application/json' -Body $payload
 $signed = Join-Path $PSScriptRoot ('terminal-' + $setup.slot + '.cer')
 [IO.File]::WriteAllText($signed, $response.certificate, [Text.Encoding]::ASCII)

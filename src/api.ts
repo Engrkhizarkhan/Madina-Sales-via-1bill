@@ -46,11 +46,11 @@ async function request<T>(
   return payload as T;
 }
 
-async function downloadSetup(path: string, currentPassword: string, filename: string) {
+async function downloadSetup(path: string, currentPassword: string, filename: string, options: {allowSoftwareKey?:boolean} = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST", credentials: "include",
     headers: { "Content-Type": "application/json", "X-CSRF-Token": sessionStorage.getItem(csrfKey) || "" },
-    body: JSON.stringify({ currentPassword }),
+    body: JSON.stringify({ currentPassword, ...options }),
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -78,7 +78,7 @@ export const api = {
   terminalStatus: () => request<TerminalStatus>("/terminal/status"),
   cancelTerminalSetup: (currentPassword: string) => request("/terminal/cancel-setup", { method: "POST", body: JSON.stringify({ currentPassword }) }),
   mainPcSetup: (password: string) => downloadSetup("/terminal/package", password, "Madina-Express-Main-PC.zip"),
-  terminalPcSetup: (slot: number, password: string) => downloadSetup(`/terminal/devices/${slot}/package`, password, `Madina-Express-PC-${slot}.zip`),
+  terminalPcSetup: (slot: number, password: string, allowSoftwareKey = false) => downloadSetup(`/terminal/devices/${slot}/package`, password, `Madina-Express-PC-${slot}.zip`, {allowSoftwareKey}),
   revokeTerminal: (slot: number) => request<{ ok: boolean }>(`/terminal/devices/${slot}`, { method: "DELETE" }),
   updateStatus: () => request<{current:ReleaseInfo;available:{version:string;releaseId:string;createdAt:string}|null;paused:boolean;cloudAvailable:boolean;terminal:{stage:string;checkedAt?:string;message?:string;current?:{releaseId:string;version:string}}|null}>("/updates/status"),
   pauseUpdates: (paused:boolean) => request("/updates/control",{method:"POST",body:JSON.stringify({paused})}),
@@ -217,5 +217,5 @@ export const api = {
   deleteUser: (id: number) =>
     request<{ ok: boolean }>(`/users/${id}`, { method: "DELETE" }),
   terminalAccess: () =>
-    request<{ enforced: boolean; terminals: { slot: number; enrolled: boolean }[] }>("/users/terminal-access"),
+    request<{ enforced: boolean; terminals: { slot: number; enrolled: boolean; keyStorage?:"tpm"|"windows"|null }[] }>("/users/terminal-access"),
 };

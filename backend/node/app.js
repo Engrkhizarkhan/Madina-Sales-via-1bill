@@ -529,9 +529,10 @@ app.post("/users/:id/authenticator", asyncRoute(async (req,res) => {
 app.get("/users/terminal-access", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
   if (config.terminal.local) {
-    const [devices] = await pool.execute("SELECT slot FROM terminal_devices WHERE expires_at > NOW()");
+    const [devices] = await pool.execute("SELECT slot, key_storage FROM terminal_devices WHERE expires_at > NOW()");
     return res.json({ enforced: true, terminals: [1, 2, 3].map(slot => ({
       slot, enrolled: devices.some(device => device.slot === slot),
+      keyStorage: devices.find(device => device.slot === slot)?.key_storage || null,
     })) });
   }
   const files = config.restrictStaffDevices

@@ -75,9 +75,12 @@ try {
   check(archive.status === 200, 'admin generates a protected child PC installer');
   const files = unzipSync(archive.bytes);
   const setup = JSON.parse(strFromU8(files['setup.json']));
+  check(setup.allowSoftwareKey === false, 'TPM enrollment remains the default');
   check(setup.localOrigin === config.terminal.localOrigin && !files['ca.key'], 'child setup embeds the main IP and contains no CA private key');
   const keys = await deviceKey();
   const enroll = () => request('/terminal/enroll', { method: 'POST', body: { token: setup.token, slot: 2, request: keys.request } });
+  check((await request('/terminal/enroll', { method: 'POST', body: { token: setup.token, slot: 2, request: keys.request, keyStorage: 'windows' } })).status === 403,
+    'editing a setup file cannot approve software enrollment on the server');
   const enrolled = await enroll();
   check(enrolled.status === 200 && enrolled.payload.certificate, 'one-use enrollment signs a device certificate');
   check((await enroll()).status === 409, 'used enrollment token cannot enroll another device');
@@ -94,6 +97,20 @@ try {
     'staff cannot generate device enrollment packages');
   check((await request('/terminal/devices/2', { ...admin, method: 'DELETE' })).status === 200, 'admin revokes a terminal PC');
   check((await request('/auth/me', { cookie: login.cookie, device })).status === 401, 'revoked terminal loses its existing session immediately');
+  const compatible = await request('/terminal/devices/2/package', { ...admin, method: 'POST', body: { currentPassword: password, allowSoftwareKey: true } });
+  const compatibleFiles = unzipSync(compatible.bytes);
+  const compatibleSetup = JSON.parse(strFromU8(compatibleFiles['setup.json']));
+  check(compatibleSetup.allowSoftwareKey === true, 'main admin explicitly approves a compatible Windows key');
+  const compatibleEnrollment = await request('/terminal/enroll', { method: 'POST', body: { token: compatibleSetup.token, slot: 2, request: keys.request, keyStorage: 'windows' } });
+  check(compatibleEnrollment.status === 200, 'approved compatible enrollment signs a device certificate');
+  const compatibleDevice = {key:keys.key,cert:compatibleEnrollment.payload.certificate};
+  const compatibleLogin = await request('/auth/login', {method:'POST',body:credentials,device:compatibleDevice});
+  check(compatibleLogin.status === 200, 'approved Windows-key device can sign in');
+  check((await request('/auth/me', {cookie:compatibleLogin.cookie})).status === 401, 'compatible device session still fails without its TLS key');
+  const access = await request('/users/terminal-access', admin);
+  check(access.payload.terminals.find(device=>device.slot===2)?.keyStorage === 'windows', 'admin sees compatible device enrollment');
+  await request('/terminal/devices/2', {...admin,method:'DELETE'});
+  check((await request('/auth/me', {cookie:compatibleLogin.cookie,device:compatibleDevice})).status === 401, 'revoking a compatible device immediately ends access');
   const second = unzipSync((await packageRequest()).bytes);
   const expiredSetup = JSON.parse(strFromU8(second['setup.json']));
   await pool.execute('UPDATE terminal_enrollments SET expires_at = DATE_SUB(NOW(), INTERVAL 1 MINUTE) WHERE slot = 2');

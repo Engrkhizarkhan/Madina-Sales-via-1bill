@@ -100,6 +100,29 @@ setTimeout(() => {
     $pointer = Get-Content (Join-Path $base 'host\current.json') -Raw | ConvertFrom-Json
     if ($pointer.application -ne $app -or $pointer.releaseId -ne 'r-123456789abc') { throw 'Initial release pointer is invalid.' }
     Write-Host 'PASS actual Windows updater tasks, protected release pointer and private database administrator permissions'
+    $releaseProbe = Join-Path $base 'releases\r-permissions-probe'
+    New-Item -ItemType Directory -Force $releaseProbe | Out-Null
+    $probeFile = Join-Path $releaseProbe 'build-info.json'
+    '{"version":"3.0.0"}' | Set-Content $probeFile -Encoding ASCII
+    $blocked = New-Object Security.AccessControl.FileSecurity
+    $blocked.SetAccessRuleProtection($true,$false)
+    Set-Acl -LiteralPath $probeFile -AclObject $blocked
+    $env:MADINA_QA_AGENT_URL = ([Uri](Join-Path $project 'deploy\updater\windows-agent.mjs')).AbsoluteUri
+    $aclProbe = Join-Path $base 'release-acl-probe.mjs'
+    @'
+const {releaseAclCommand}=await import(process.env.MADINA_QA_AGENT_URL);
+process.stdout.write(Buffer.from(releaseAclCommand(process.argv[2]),'utf16le').toString('base64'));
+'@ | Set-Content $aclProbe -Encoding ASCII
+    $encodedAcl = & node.exe $aclProbe $releaseProbe
+    if ($LASTEXITCODE -ne 0) { throw 'Could not load the production release permission helper.' }
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encodedAcl
+    if ($LASTEXITCODE -ne 0) { throw 'Production release permission repair failed.' }
+    if ((Get-Content $probeFile -Raw | ConvertFrom-Json).version -ne '3.0.0') { throw 'Repaired release file is unreadable.' }
+    $probeAcl = Get-Acl $probeFile
+    if ($probeAcl.AreAccessRulesProtected) { throw 'A release file does not inherit its protected directory permissions.' }
+    $readOnly = @($probeAcl.Access | Where-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-19' })
+    if (-not $readOnly.Count -or ($readOnly | Where-Object { ($_.FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write) -ne 0 })) { throw 'Application can modify a verified release.' }
+    Write-Host 'PASS inaccessible release metadata is repaired with inherited read-only application access'
 
 } finally {
     Set-Location $project

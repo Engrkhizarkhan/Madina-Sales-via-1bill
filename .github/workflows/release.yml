@@ -60,6 +60,7 @@ jobs:
           done
           npm run test:api
           npm run test:counter
+          npm run test:enrollment
       - name: Check installer-generated credentials and database replication
         run: sudo python3 backend/tests/terminal-replication.py
       - name: Check dependency advisories

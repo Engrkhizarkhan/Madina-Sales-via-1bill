@@ -99,24 +99,26 @@ export const terminalEnrollmentRouter = Router();
 terminalEnrollmentRouter.post("/enroll", route(async (req, res) => {
   if (!config.terminal.local) fail("Open the main PC’s local address to enroll a PC.", 404, "not_found");
   limitAttempts("device-enrollment", req, 20, 15 * 60000);
-  const { token, request, slot } = req.body || {};
+  const { token, request, slot, keyStorage = "tpm" } = req.body || {};
   if (![1, 2, 3].includes(slot) || typeof token !== "string" || !/^[0-9a-f]{64}$/.test(token)) {
     fail("Use the setup file provided by your administrator.", 422, "invalid_enrollment");
   }
+  if (!["tpm", "windows"].includes(keyStorage)) fail("Choose a supported device key provider.", 422, "invalid_enrollment");
   const certificate = await transaction(async connection => {
     const [[enrollment]] = await connection.execute(
-      "SELECT slot FROM terminal_enrollments WHERE slot = ? AND token_hash = ? AND expires_at > NOW() FOR UPDATE",
+      "SELECT slot, allow_software_key FROM terminal_enrollments WHERE slot = ? AND token_hash = ? AND expires_at > NOW() FOR UPDATE",
       [slot, tokenHash(token)],
     );
     if (!enrollment) fail("This setup file has expired or was already used. Generate another in Settings.", 409, "enrollment_expired");
+    if (keyStorage === "windows" && !enrollment.allow_software_key) fail("The main administrator must approve compatibility mode when generating this PC setup.", 403, "software_key_not_approved");
     const signed = await signTerminalRequest(request, slot);
     await connection.execute(
-      `INSERT INTO terminal_devices (slot, fingerprint, certificate, expires_at) VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE fingerprint = ?, certificate = ?, expires_at = ?, enrolled_at = NOW()`,
-      [slot, signed.fingerprint, signed.pem, sqlDateTime(signed.expiresAt), signed.fingerprint, signed.pem, sqlDateTime(signed.expiresAt)],
+      `INSERT INTO terminal_devices (slot, fingerprint, certificate, expires_at, key_storage) VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE fingerprint = ?, certificate = ?, expires_at = ?, key_storage = ?, enrolled_at = NOW()`,
+      [slot, signed.fingerprint, signed.pem, sqlDateTime(signed.expiresAt), keyStorage, signed.fingerprint, signed.pem, sqlDateTime(signed.expiresAt), keyStorage],
     );
     await connection.execute("DELETE FROM terminal_enrollments WHERE slot = ?", [slot]);
-    await audit("terminal.enrolled", "terminal_device", slot, null, { fingerprint: signed.fingerprint }, null, req, connection);
+    await audit("terminal.enrolled", "terminal_device", slot, null, { fingerprint: signed.fingerprint, keyStorage, softwareKeyApproved: Boolean(enrollment.allow_software_key) }, null, req, connection);
     return signed.pem;
   });
   res.json({ certificate });
@@ -180,12 +182,14 @@ terminalAdminRouter.post("/devices/:slot/package", route(async (req, res) => {
   if (!config.terminal.local) fail("Open Settings on the main PC’s local address to create child PC setup files.", 409, "local_required");
   const slot = Number(req.params.slot);
   if (![1, 2, 3].includes(slot)) fail("Choose PC 1, 2 or 3.", 422, "invalid_slot");
+  if (req.body.allowSoftwareKey !== undefined && typeof req.body.allowSoftwareKey !== "boolean") fail("Choose whether compatibility mode is allowed.", 422, "validation_error");
+  const allowSoftwareKey = req.body.allowSoftwareKey === true;
   const token = randomBytes(32).toString("hex");
   await pool.execute(
-    `INSERT INTO terminal_enrollments (slot, token_hash, expires_at, created_by)
-     VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 30 MINUTE), ?)
-     ON DUPLICATE KEY UPDATE token_hash = ?, expires_at = DATE_ADD(NOW(), INTERVAL 30 MINUTE), created_by = ?`,
-    [slot, tokenHash(token), req.user.id, tokenHash(token), req.user.id],
+    `INSERT INTO terminal_enrollments (slot, token_hash, expires_at, created_by, allow_software_key)
+     VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 30 MINUTE), ?, ?)
+     ON DUPLICATE KEY UPDATE token_hash = ?, expires_at = DATE_ADD(NOW(), INTERVAL 30 MINUTE), created_by = ?, allow_software_key = ?`,
+    [slot, tokenHash(token), req.user.id, allowSoftwareKey, tokenHash(token), req.user.id, allowSoftwareKey],
   );
   const ca = await readFile(join(config.terminal.directory, "tls", "ca.crt"));
   const archive = zipSync({
@@ -195,9 +199,10 @@ terminalAdminRouter.post("/devices/:slot/package", route(async (req, res) => {
     "Change-Terminal-PC-Address.cmd": bytes(await readFile(resolve("deploy/windows/Change-Terminal-PC-Address.cmd"))),
     "Change-Terminal-PC-Address.ps1": bytes(await readFile(resolve("deploy/windows/Change-Terminal-PC-Address.ps1"))),
     "setup.json": bytes(JSON.stringify({
-      slot, token, localOrigin: config.terminal.localOrigin, caFingerprint: createHash("sha256").update(ca).digest("hex"),
+      slot, token, allowSoftwareKey, localOrigin: config.terminal.localOrigin, caFingerprint: createHash("sha256").update(ca).digest("hex"),
     })),
   });
+  await audit("terminal.setup_created", "terminal_device", slot, null, { allowSoftwareKey }, req.user.id, req);
   res.set("X-Accel-Buffering", "no");
   res.type("application/zip").attachment(`Madina-Express-PC-${slot}.zip`).send(Buffer.from(archive));
 }));

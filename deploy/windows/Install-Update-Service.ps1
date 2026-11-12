@@ -4,6 +4,9 @@ $base = Join-Path $env:ProgramData 'MadinaExpress'
 $application = Join-Path $base 'application'
 $hostDirectory = Join-Path $base 'host'
 $configDirectory = Join-Path $base 'config'
+$pointer = Join-Path $hostDirectory 'current.json'
+if (Test-Path $pointer) { $application = (Get-Content $pointer -Raw | ConvertFrom-Json).application }
+if (-not $application.StartsWith($base + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path (Join-Path $application 'build-info.json'))) { throw 'Invalid selected application path.' }
 New-Item -ItemType Directory -Force $hostDirectory, $configDirectory | Out-Null
 foreach ($name in @('release.mjs','engine.mjs','windows-agent.mjs','release-public-key.pem')) {
     Copy-Item (Join-Path $application ('deploy\updater\' + $name)) (Join-Path $hostDirectory $name) -Force
