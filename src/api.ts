@@ -28,13 +28,22 @@ async function request<T>(
     const csrf = sessionStorage.getItem(csrfKey);
     if (csrf) headers.set("X-CSRF-Token", csrf);
   }
+  const controller = new AbortController();
+  let timedOut = false;
+  const abort = () => controller.abort();
+  if (options.signal?.aborted) abort();
+  else options.signal?.addEventListener("abort", abort, {once:true});
+  const timer = window.setTimeout(() => { timedOut = true; controller.abort(); }, method === "GET" || path.startsWith("/auth/") ? 12000 : 45000);
+  try {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
     method,
     headers,
     credentials: "include",
+    signal: controller.signal,
   });
   const payload = await response.json().catch(() => ({}));
+  if (controller.signal.aborted) throw new DOMException("Request aborted", "AbortError");
   if (!response.ok) {
     const error = payload?.error;
     throw new ApiError(
@@ -44,6 +53,13 @@ async function request<T>(
     );
   }
   return payload as T;
+  } catch (error) {
+    if (timedOut) throw new ApiError(method === "GET" || path.startsWith("/auth/") ? "Server connection timed out. Check the connection and retry. At the terminal, use the local Counter shortcut." : "The server did not confirm the result. Refresh and check the record before trying this action again.", 0, "connection_timeout");
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abort);
+  }
 }
 
 async function downloadSetup(path: string, currentPassword: string, filename: string, options: {allowSoftwareKey?:boolean} = {}) {
@@ -74,7 +90,7 @@ function rememberCsrf<T extends { csrfToken?: string }>(payload: T): T {
 }
 
 export const api = {
-  terminalConnection: () => request<{ local: boolean; connected: boolean; replicated: boolean; readOnly?: boolean }>("/terminal/connection"),
+  terminalConnection: () => request<{ local: boolean; connected: boolean; replicated: boolean; readOnly?: boolean; secondsBehind?:number|null; replicationError?:boolean }>("/terminal/connection"),
   terminalStatus: () => request<TerminalStatus>("/terminal/status"),
   cancelTerminalSetup: (currentPassword: string) => request("/terminal/cancel-setup", { method: "POST", body: JSON.stringify({ currentPassword }) }),
   mainPcSetup: (password: string) => downloadSetup("/terminal/package", password, "Madina-Express-Main-PC.zip"),

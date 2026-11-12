@@ -39,6 +39,10 @@ On already enrolled child PCs, run **Change-Terminal-PC-Address.cmd**, enter the
 
 ## Troubleshooting
 
+The dashboard connection strip stays visible: green means connected/synced, amber means changes are catching up, and red means offline or a sync problem. Local counters continue through their Counter shortcut during a WAN outage; the cloud URL requires internet. The main admin can view the cloud's last synced copy while the terminal is offline.
+
+After internet returns, authenticated main-PC status checks probe the actual forwarded API. Two failed probes cause the dedicated tunnel connection to reopen, with a 30-second recovery cooldown. A healthy tunnel with a disconnected MySQL receiver restarts only that receiver. Replication positions and queued local transactions are preserved; an applier/data error is reported instead of skipped. Allow roughly a minute for a broken connection and queued changes to recover. Staff sign-in requests time out with a retry message instead of waiting indefinitely.
+
 If setup stops before activation, remote admin login remains available. In cloud Settings enter the admin password and click **Cancel unfinished setup**, then download a new installer and retry. This revokes the previous installer/key. An already active source cannot be reset this way because it may hold unsynced tickets.
 
 If Windows says the local address cannot connect, use Administrator PowerShell:

@@ -18,8 +18,8 @@ CONFIG = ROOT / "private.json"
 STATE = ROOT / "state.json"
 SERVICE_GID = pwd.getpwnam("madina-express").pw_gid
 
-def run(args, *, stdin=None):
-    result = subprocess.run(args, input=stdin, text=True, capture_output=True, timeout=120)
+def run(args, *, stdin=None, timeout=120):
+    result = subprocess.run(args, input=stdin, text=True, capture_output=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError("A terminal service command failed. Check the server service logs.")
     return result.stdout.strip()
@@ -113,6 +113,47 @@ def replica_status():
             "sqlRunning": record.get("Replica_SQL_Running") == "Yes",
             "secondsBehind": int(record["Seconds_Behind_Source"]) if record.get("Seconds_Behind_Source", "NULL").isdigit() else None,
             "error": bool(record.get("Last_IO_Error") or record.get("Last_SQL_Error"))}
+
+def source_healthy(config):
+    request = urllib.request.Request("http://127.0.0.1:3201/health", headers={"X-Madina-Relay-Key": config["relayKey"]})
+    try:
+        with urllib.request.urlopen(request, timeout=3) as response:
+            source = json.load(response)
+        return source.get("status") == "ok" and source.get("installationId") == config.get("installationId")
+    except (OSError, ValueError):
+        return False
+
+def connection_status(payload, config):
+    # The broker is reachable only by the local app. The HTTP sync route verifies
+    # the installer token; older cloud releases did not forward its claim body.
+    if payload:
+        require_claim(payload, config)
+    state = read_json(STATE, {"phase": "standalone"})
+    status = replica_status()
+    if state.get("phase") != "active":
+        return {**state, **status}
+    healthy = source_healthy(config)
+    now = int(time.time())
+    previous = dict(config)
+    failures = 0 if healthy else int(config.get("tunnelHealthFailures", 0)) + 1
+    config["tunnelHealthFailures"] = min(failures, 2)
+    if not healthy and failures >= 2 and now - int(config.get("lastTunnelRecovery", 0)) >= 30:
+        # Close only the dedicated tunnel account, never the app, its database,
+        # an administrative SSH session or another hosted backend.
+        subprocess.run(["pkill", "-TERM", "-u", "madina-terminal"], check=False, capture_output=True, timeout=5)
+        config["lastTunnelRecovery"] = now
+    if healthy and status.get("configured") and not status.get("ioRunning") and status.get("sqlRunning") and now - int(config.get("lastReceiverRecovery", 0)) >= 30:
+        config["lastReceiverRecovery"] = now
+        try:
+            run(["mysql", "--batch", "-e", "STOP REPLICA IO_THREAD FOR CHANNEL 'madina_terminal'; START REPLICA IO_THREAD FOR CHANNEL 'madina_terminal'"], timeout=6)
+            status = replica_status()
+        except (RuntimeError, subprocess.TimeoutExpired):
+            # Preserve the replication position and report the outage. Never
+            # skip a transaction or reset/import the replica to hide an error.
+            status["error"] = True
+    if config != previous:
+        write_json(CONFIG, config)
+    return {**state, **status, "tunnelHealthy": healthy}
 
 def configure_replication(config):
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", config.get("replicationPassword", "")):
@@ -221,7 +262,7 @@ def main():
             elif action == "freeze": result = freeze(payload, config)
             elif action == "activate": result = activate(payload, config)
             elif action == "abort": result = abort(payload, config)
-            elif action == "status": result = {**read_json(STATE, {"phase": "standalone"}), **replica_status()}
+            elif action == "status": result = connection_status(payload, config)
             else: raise ValueError("Unknown terminal operation.")
         print(json.dumps(result))
 

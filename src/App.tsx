@@ -2021,11 +2021,7 @@ function ManagementApp({
             <Settings size={18} />
             <span>Settings</span>
           </button>
-          <small>
-            Madina Terminal
-            <br />
-            Peshawar<br/><span title={runningBuild.releaseId}>v{runningBuild.version} · {runningBuild.commit?.slice(0,7)||"development"}</span>
-          </small>
+          <div className="sidebar-version" title={runningBuild.releaseId}><strong>v{runningBuild.version}</strong><span>{runningBuild.commit?.slice(0,7)||"local"}</span></div>
         </div>
       </aside>
       <div className="admin-content">
@@ -5320,18 +5316,25 @@ function SettingsView({
 
 function TerminalConnectionBanner() {
   const [connection, setConnection] = useState<Awaited<ReturnType<typeof api.terminalConnection>>>();
+  const [unreachable, setUnreachable] = useState(false);
   useEffect(() => {
     let active = true;
-    const check = () => api.terminalConnection().then(result => { if (active) setConnection(result); }).catch(() => undefined);
+    let busy = false;
+    const check = async () => {
+      if (busy) return;
+      busy = true;
+      try { const result = await api.terminalConnection(); if (active) { setConnection(result); setUnreachable(false); } }
+      catch { if (active) setUnreachable(true); }
+      finally { busy = false; }
+    };
     void check();
-    const timer = window.setInterval(check, 15000);
-    return () => { active = false; window.clearInterval(timer); };
+    const timer = window.setInterval(check, 5000);
+    window.addEventListener("online", check); window.addEventListener("focus", check);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener("online", check); window.removeEventListener("focus", check); };
   }, []);
-  if (connection?.readOnly) return <div className="terminal-connection-notice" role="status"><ShieldCheck size={16} />Main PC offline or being set up · viewing the last synced cloud data. Changes remain available on the local terminal network.</div>;
-  if (!connection?.local || (connection.connected && connection.replicated)) return null;
-  return <div className="terminal-connection-notice" role="status"><ShieldCheck size={16} />
-    {connection.connected ? "Working locally · cloud backup is catching up." : "Working locally · internet connection unavailable. Seats and payments continue on this terminal network."}
-  </div>;
+  const tone = unreachable || connection?.readOnly || connection?.replicationError || (connection?.local && !connection.connected) ? "red" : !connection ? "checking" : connection.local && (!connection.replicated || (connection.secondsBehind ?? 0) > 0) ? "amber" : "green";
+  const label = unreachable ? "Server unreachable · reconnecting" : connection?.readOnly ? "Terminal offline · cloud view only" : connection?.replicationError ? "Cloud sync needs attention · local work continues" : !connection ? "Checking connection" : connection.local && !connection.connected ? "Working locally · cloud offline" : tone === "amber" ? "Connected · syncing changes" : connection.local ? "Connected · synced" : "Cloud connected";
+  return <div className={`connection-strip ${tone}`} role="status" aria-live="polite"><span className="connection-bars" aria-hidden="true"><i/><i/><i/></span><span>{label}</span></div>;
 }
 
 function TerminalServerSettings({ showToast }: { showToast: (message: string) => void }) {
@@ -5369,10 +5372,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
   return <section className="surface settings-card">
     <SettingsTitle icon={<ShieldCheck size={19} />} title="Main PC & offline access"
       text={local ? "All counters use this local server, including during internet outages." : "Install one local server on the main Windows PC, then enroll the three counter profiles."} />
-    {status && <div className="policy-box"><RefreshCw size={17} /><span>
-      <strong>{local ? status.connected ? "Cloud connected" : "Working locally · cloud disconnected" : status.phase === "preparing" ? "Main PC setup in progress" : "Cloud server active"}</strong>
-      <small>{local ? `${status.localOrigin} · ${status.replicated ? "Cloud copy syncing" : "Cloud copy awaiting connection"}${status.secondsBehind != null ? ` · ${status.secondsBehind}s behind` : ""}` : "Downloading setup keeps the cloud running. Starting the installer transfers booking authority to the main PC."}</small>
-    </span></div>}
+    {status && <p className="terminal-address">{local ? `Local server: ${status.localOrigin}` : "Cloud server · starting the main PC installer transfers booking authority to that PC."}</p>}
     <div className="settings-fields"><label className="span-2"><span>Current administrator password</span>
       <input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} />
     </label></div>

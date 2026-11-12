@@ -60,7 +60,7 @@ async function refreshStatus() {
         JSON.stringify({ installationId: process.env.TERMINAL_INSTALLATION_ID }), { mode: 0o600 });
     }
     await publishConnection({
-      connected: status.phase === "active" || status.active === true,
+      connected: (status.phase === "active" || status.active === true) && status.tunnelHealthy !== false,
       replicated: status.ioRunning === true && status.sqlRunning === true,
       secondsBehind: status.secondsBehind ?? null,
       replicationError: status.error === true,

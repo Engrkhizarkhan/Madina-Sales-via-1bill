@@ -6348,3 +6348,19 @@ td small {
 .settings-card > p { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0 0 14px; }
 .settings-card .staff-account-actions { flex-wrap: wrap; justify-content: flex-end; }
 @media (max-width: 700px) { .staff-accounts li { align-items: flex-start; flex-direction: column; } .settings-card .staff-account-actions { justify-content: flex-start; } }
+
+.connection-strip { display:flex; align-items:center; gap:9px; min-height:32px; padding:6px 18px; font-size:12px; line-height:1.4; border-bottom:1px solid #e3e8e7; background:#f5f7f7; color:#52615f; }
+.connection-strip.green { color:#176344; background:#eff9f3; }
+.connection-strip.red { color:#a32f35; background:#fff3f3; }
+.connection-strip.amber { color:#86610a; background:#fff9e9; }
+.connection-bars { display:inline-flex; align-items:flex-end; flex:none; gap:2px; height:15px; }
+.connection-bars i { display:block; width:4px; border-radius:1px; background:currentColor; }
+.connection-bars i:nth-child(1) { height:5px; }
+.connection-bars i:nth-child(2) { height:10px; }
+.connection-bars i:nth-child(3) { height:15px; }
+.connection-strip.red .connection-bars i:not(:first-child), .connection-strip.amber .connection-bars i:last-child { opacity:.22; }
+.sidebar-version { display:flex; align-items:center; justify-content:space-between; gap:6px; padding:9px 12px 3px; color:#d8ebe4; font-size:12px; }
+.sidebar-version span { color:#a7c2b8; font-family:ui-monospace,monospace; font-size:11px; }
+.admin-sidebar.collapsed .sidebar-version { flex-direction:column; padding:8px 0; font-size:11px; }
+.admin-sidebar.collapsed .sidebar-version span { font-size:9px; }
+.terminal-address { overflow-wrap:anywhere; font-size:13px; color:#52615f; }

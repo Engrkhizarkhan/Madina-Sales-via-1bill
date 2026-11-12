@@ -72,7 +72,7 @@ for (const action of ["register", "activate", "abort"]) {
 }
 terminalSyncRouter.post("/status", route(async (req, res) => {
   await authenticateInstaller(req);
-  const state = await terminalControl("status");
+  const state = await terminalControl("status", req.body);
   const sessions = new CloudSessions(process.env.CLOUD_SESSION_DIRECTORY || resolve("backend", ".cloud-sessions"));
   res.json({ ...state, revokedSessions: await sessions.revokedHashes(), mfaSteps:await sessions.consumedOtpSteps() });
 }));
@@ -137,7 +137,7 @@ terminalAdminRouter.get("/connection", route(async (_req, res) => {
   try { status = JSON.parse(await readFile(join(config.terminal.directory, "connection.json"), "utf8")); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
   const fresh = Date.now() - Date.parse(status.checkedAt || "") < 90000;
-  res.json({ local: true, connected: fresh && status.connected === true, replicated: fresh && status.replicated === true });
+  res.json({ local: true, connected: fresh && status.connected === true, replicated: fresh && status.replicated === true, secondsBehind: status.secondsBehind ?? null, replicationError: fresh && status.replicationError === true });
 }));
 terminalAdminRouter.get("/status", route(async (req, res) => {
   requireAdmin(req);
