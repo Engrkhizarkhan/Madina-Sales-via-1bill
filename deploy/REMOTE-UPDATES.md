@@ -35,7 +35,7 @@ Windows protected updater: `C:\ProgramData\MadinaExpress\host`.
 Current application pointer: `host\current.json`.
 Updater output: `host\updater-out.log`, `host\updater-error.log`.
 App output: `logs\server.log`, `logs\server-error.log`.
-Pre-update backups: `backups\pre-update-*.sql.gz`; daily backups remain under `data\backups`.
+Pre-update backups: `backups\pre-update-*.sql.gz` (30 days); daily backups remain under `data\backups`.
 
 Cloud: `journalctl -u madina-release-update.service`, `madina-pm2 logs --nostream`, `/var/lib/madina-express/host/current.json`.
 

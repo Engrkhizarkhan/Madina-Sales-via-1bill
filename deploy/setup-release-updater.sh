@@ -57,5 +57,9 @@ chmod 0751 /var/lib/madina-express
 systemctl daemon-reload
 nginx -t
 systemctl reload nginx
-systemctl enable --now madina-release-update.timer
+if [[ ${MADINA_ENABLE_RELEASE_UPDATES:-true} == true ]]; then
+ systemctl enable --now madina-release-update.timer
+else
+ systemctl enable madina-release-update.timer
+fi
 echo 'Release mirror and isolated application paths configured.'

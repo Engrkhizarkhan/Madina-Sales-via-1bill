@@ -22,6 +22,11 @@ foreach ($directory in @((Join-Path $base 'data'),(Join-Path $base 'logs'))) {
     & icacls.exe $directory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)M' | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'The application data directory could not be protected.' }
 }
+$tlsDirectory = Join-Path $base 'data\tls'
+if (Test-Path $tlsDirectory) {
+    & icacls.exe $tlsDirectory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'The terminal certificate directory could not be protected.' }
+}
 foreach ($private in @('mysql-admin.cnf','local-secrets.json')) {
     $file = Join-Path $configDirectory $private
     if (Test-Path $file) {

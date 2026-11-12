@@ -19,6 +19,11 @@ export async function run(base){
  const publicKey=await readFile(join(host,'release-public-key.pem'),'utf8');
  const env=Object.fromEntries((await readFile(join(base,'config/backend.env'),'utf8')).split(/\r?\n/).map(line=>line.match(/^([A-Z_]+)=(.*)$/)).filter(Boolean).map(([,key,value])=>[key,value]));
  const origin=settings.cloudOrigin.replace(/\/$/,''),data=join(base,'data'),node=join(base,'runtime/node.exe');
+ // Expired update backups are separate from the daily app backup rotation.
+ try{for(const name of await readdir(join(base,'backups'))){
+  if(!/^pre-update-[0-9TZ-]+\.sql\.gz$/.test(name))continue;
+  const file=join(base,'backups',name);if((await stat(file)).mtimeMs<Date.now()-30*86400000)await rm(file,{force:true});
+ }}catch{/* Cleanup must never prevent an application update. */}
  const report=async status=>{
   const value={...status,checkedAt:new Date().toISOString()};
   await atomicJson(join(data,'update-status.json'),value);
