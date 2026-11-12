@@ -2738,7 +2738,7 @@ function RefundModal({
 }) {
   const policy=useStaffPolicy();
   const available = refundableBalance(booking);
-  const maximum=Math.max(0,Math.min(available,policy?booking.paid*policy.staffMaxRefundPercent/100-refundedTotal(booking):available,policy?.staffMaxRefundAmount||available));
+  const maximum=policy?.staffCanRefund===false?0:Math.max(0,Math.min(available,policy?booking.paid*policy.staffMaxRefundPercent/100-refundedTotal(booking):available,policy?.staffMaxRefundAmount||available));
   const [amount, setAmount] = useState(maximum);
   const [method, setMethod] = useState<PaymentMethod>(booking.paymentMethod === "Card" ? "Bank transfer" : booking.paymentMethod);
   const [reason, setReason] = useState<RefundReason>("Passenger request");
@@ -2896,12 +2896,13 @@ function RefundModal({
             </small>
           </span>
         </div>
+        {policy && maximum<available && <p className="form-error">Staff refund limit for this ticket: {money(maximum)}. Ask an administrator for a higher refund.</p>}
         {error && <p className="form-error">{error}</p>}
         <footer>
           <button className="secondary-button" type="button" onClick={onClose}>
             Keep booking
           </button>
-          <button className="danger-button" type="submit" disabled={busy}>
+          <button className="danger-button" type="submit" disabled={busy || maximum<=0}>
             <RefreshCw size={16} /> Refund {money(amount)}
           </button>
         </footer>

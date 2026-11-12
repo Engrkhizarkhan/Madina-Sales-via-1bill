@@ -1,12 +1,13 @@
-import { readFile,writeFile,rename,mkdir } from 'node:fs/promises';
+import { randomBytes } from "node:crypto";
+import { readFile,writeFile,rename,mkdir,appendFile } from 'node:fs/promises';
 import { join,resolve } from 'node:path';
 export const updateDirectory=process.env.CLOUD_UPDATE_DIRECTORY||resolve('backend','.updates');
 async function read(file,fallback){try{return JSON.parse(await readFile(file,'utf8'));}catch(error){if(error.code==='ENOENT')return fallback;throw error;}}
 export const updateControl=()=>read(join(updateDirectory,'control/state.json'),{paused:false});
-export async function saveUpdateControl(paused){
+export async function saveUpdateControl(paused,actor=null){
  if(typeof paused!=='boolean')throw new Error('Choose whether updates are paused');
  const directory=join(updateDirectory,'control');await mkdir(directory,{recursive:true,mode:0o700});
- const temp=join(directory,'state.next');await writeFile(temp,JSON.stringify({paused,changedAt:new Date().toISOString()}),{mode:0o600});await rename(temp,join(directory,'state.json'));return {paused};
+ const temp=join(directory,'state.'+randomBytes(8).toString('hex')+'.next');await writeFile(temp,JSON.stringify({paused,changedAt:new Date().toISOString(),changedBy:actor}),{mode:0o600});await rename(temp,join(directory,'state.json'));await appendFile(join(directory,'audit.jsonl'),JSON.stringify({paused,actor,at:new Date().toISOString()})+'\n',{mode:0o600});return {paused};
 }
 export async function updateChannel(){const control=await updateControl();const manifest=await read(join(updateDirectory,'channel.json'),null);return {paused:control.paused===true,manifest};}
 export async function recordTerminalUpdate(value){

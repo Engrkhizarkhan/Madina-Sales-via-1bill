@@ -22,9 +22,9 @@ updateAdminRouter.post('/control',route(async(req,res)=>{
  requireOwner(req.user);
  if(typeof req.body?.paused!=='boolean')fail('Choose whether updates are paused.',422,'validation_error');
  if(config.terminal.local){
-  const response=await fetch(config.terminal.cloudOrigin+'/api/terminal-sync/update-control',{method:'POST',headers:{'Content-Type':'application/json','X-Terminal-Token':process.env.TERMINAL_INSTALL_TOKEN},body:JSON.stringify({paused:req.body.paused,installationId:process.env.TERMINAL_INSTALLATION_ID}),signal:AbortSignal.timeout(15000)});
+  const response=await fetch(config.terminal.cloudOrigin+'/api/terminal-sync/update-control',{method:'POST',headers:{'Content-Type':'application/json','X-Terminal-Token':process.env.TERMINAL_INSTALL_TOKEN},body:JSON.stringify({paused:req.body.paused,actor:req.user.id,installationId:process.env.TERMINAL_INSTALLATION_ID}),signal:AbortSignal.timeout(15000)});
   if(!response.ok)fail('The cloud update control is unavailable. Try again when connected.',503,'cloud_unavailable');
   return res.json(await response.json());
  }
- res.json(await saveUpdateControl(req.body.paused));
+ res.json(await saveUpdateControl(req.body.paused,req.user.id));
 }));

@@ -51,7 +51,7 @@ terminalSyncRouter.post('/update-control',route(async(req,res)=>{
   const privateData=JSON.parse(await readFile(join(config.terminal.directory,'private.json'),'utf8'));
   if(req.body?.installationId!==privateData.installationId)fail('The main PC is not registered.',403,'forbidden');
   if(typeof req.body?.paused!=='boolean')fail('Choose whether updates are paused.',422,'validation_error');
-  res.json(await saveUpdateControl(req.body.paused));
+  res.json(await saveUpdateControl(req.body.paused,Number.isSafeInteger(req.body.actor)?req.body.actor:null));
 }));
 terminalSyncRouter.post('/update-status',route(async(req,res)=>{
   await authenticateInstaller(req);
