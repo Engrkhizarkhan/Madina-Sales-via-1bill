@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync,sign,createHash } from 'node:crypto';
-import { mkdtemp,mkdir,rm } from 'node:fs/promises';
+import { mkdtemp,mkdir,rm,writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyRelease,verifyPackage,zipEntries } from '../../deploy/updater/release.mjs';
@@ -70,3 +70,16 @@ test('power interruption after a healthy switch finishes the successful update',
  context.operations.healthy=async()=>true;assert.equal(await recover(context),true);
  assert.equal((await jsonFile(join(context.host,'update-state.json'))).releaseId,release.releaseId);assert.deepEqual(context.events,['resume']);
 }));
+
+test('a stable process launcher selects the new release even when the old working directory remains',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'madina-launcher-qa-'));
+ const {selectedApplication}=await import('../../deploy/updater/application-path.mjs');
+ try{
+  for(const name of ['old','new']){await mkdir(join(root,name,'backend/node'),{recursive:true});await writeFile(join(root,name,'backend/node/server.js'),'');}
+  const pointer=join(root,'current.json');await atomicJson(pointer,{application:join(root,'old')});
+  assert.equal(await selectedApplication(pointer,[root]),await (await import('node:fs/promises')).realpath(join(root,'old')));
+  await atomicJson(pointer,{application:join(root,'new')});
+  assert.equal(await selectedApplication(pointer,[root]),await (await import('node:fs/promises')).realpath(join(root,'new')));
+  await atomicJson(pointer,{application:join(root,'..')});await assert.rejects(selectedApplication(pointer,[root]),/outside/);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

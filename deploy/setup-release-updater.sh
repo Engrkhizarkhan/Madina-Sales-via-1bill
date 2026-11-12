@@ -28,7 +28,7 @@ if not current.exists():current.symlink_to(json.loads(pointer.read_text())['appl
 PY
 chown root:madina-express /etc/madina-express/backend.env
 install -m 0644 "$PROJECT_DIR/deploy/updater/release-public-key.pem" /etc/madina-express/release-public-key.pem
-install -m 0644 "$PROJECT_DIR/deploy/updater/release.mjs" "$PROJECT_DIR/deploy/updater/engine.mjs" "$PROJECT_DIR/deploy/updater/cloud-mirror.mjs" /usr/local/libexec/madina-updater/
+install -m 0644 "$PROJECT_DIR/deploy/updater/release.mjs" "$PROJECT_DIR/deploy/updater/engine.mjs" "$PROJECT_DIR/deploy/updater/cloud-mirror.mjs" "$PROJECT_DIR/deploy/updater/application-path.mjs" "$PROJECT_DIR/deploy/updater/run-api.mjs" /usr/local/libexec/madina-updater/
 cat > /etc/madina-express/mysql-admin.cnf <<'CNF'
 [client]
 socket=/var/run/mysqld/mysqld.sock

@@ -6,8 +6,8 @@ try { application = JSON.parse(fs.readFileSync('/var/lib/madina-express/host/cur
 module.exports = {
   apps: [{
     name: 'madina-express',
-    cwd: application,
-    script: 'backend/node/server.js',
+    cwd: fs.existsSync('/usr/local/libexec/madina-updater/run-api.mjs') ? '/var/lib/madina-express' : application,
+    script: fs.existsSync('/usr/local/libexec/madina-updater/run-api.mjs') ? '/usr/local/libexec/madina-updater/run-api.mjs' : 'backend/node/server.js',
     interpreter: '/opt/node-current/bin/node',
     instances: 1,
     exec_mode: 'fork',
@@ -22,6 +22,6 @@ module.exports = {
     merge_logs: true,
     out_file: '/var/log/madina-express/app-out.log',
     error_file: '/var/log/madina-express/app-error.log',
-    env: { NODE_ENV: 'production', TZ: 'Asia/Karachi', MADINA_ENV_FILE: '/etc/madina-express/backend.env' },
+    env: { NODE_ENV: 'production', TZ: 'Asia/Karachi', MADINA_ENV_FILE: fs.existsSync('/etc/madina-express/backend.env') ? '/etc/madina-express/backend.env' : path.join(application,'backend/.env') },
   }],
 };

@@ -1,3 +1,4 @@
+import { zipEntries } from '../deploy/updater/release.mjs';
 import { cp,mkdir,mkdtemp,readFile,writeFile,readdir,rm } from 'node:fs/promises';
 import { createPrivateKey,sign,createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -23,7 +24,7 @@ try{
  execFileSync(process.execPath,['--input-type=module','-e','await import("./backend/node/app.js"); const {pool}=await import("./backend/node/db.js"); await pool.end();'],{cwd:stage,env:{...childEnvironment,MADINA_ENV_FILE:join(stage,'absent.env'),DB_NAME:'package_import_qa',DB_USER:'qa',DB_PASSWORD:'unused',TERMINAL_ROLE:'standalone',ADMIN_TOTP_HEX:'',RESTRICT_STAFF_DEVICES:'false',ADMIN_TOTP_PAUSED:'false'},stdio:'inherit'});
  const file=build.releaseId+'.zip' ,destination=join(out,file);
  execFileSync('zip',['-q','-r',destination,'.'],{cwd:stage});
- const bytes=await readFile(destination),now=Date.now();
+ const bytes=await readFile(destination),now=Date.now();zipEntries(bytes);
  const release={project:'madina-express',...build,createdAt:new Date(now).toISOString(),expiresAt:new Date(now+90*86400000).toISOString(),file,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),schemaBackwardsCompatible:true,migrations};
  const key=process.env.RELEASE_SIGNING_KEY_BASE64;if(!key)throw new Error('The protected release signing key is missing');
  const payload=JSON.stringify(release),signature=sign(null,Buffer.from(payload),createPrivateKey(Buffer.from(key,'base64'))).toString('base64');
