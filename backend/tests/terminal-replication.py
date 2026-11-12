@@ -9,11 +9,19 @@ import socket
 import subprocess
 import tempfile
 import time
+import types
+from unittest.mock import patch
 
 service = pwd.getpwnam('mysql')
 base = pathlib.Path(tempfile.mkdtemp(prefix='madina-replication-qa-', dir='/var/lib/mysql'))
 os.chown(base, service.pw_uid, service.pw_gid)
 servers = []
+reserved_ports = []
+for _ in range(2):
+    reservation = socket.socket()
+    reservation.bind(('127.0.0.1', 0))
+    reserved_ports.append(reservation)
+source_port, replica_port = [reservation.getsockname()[1] for reservation in reserved_ports]
 
 def mysql(index, statement):
     result = subprocess.run(['mysql', '--no-defaults', '--socket=' + str(base / str(index) / 'mysql.sock'),
@@ -28,10 +36,8 @@ def wait_equal(statement, expected):
     raise AssertionError('Replica did not reach expected state.')
 
 try:
-    # Production relay port must not be occupied; never interrupt an existing terminal.
-    with socket.socket() as check:
-        check.bind(('127.0.0.1', 13306))
-    for index, port in [(1, 13306), (2, 13406)]:
+    # Disposable instances use reserved test ports, never the production tunnel.
+    for index, port in [(1, source_port), (2, replica_port)]:
         directory = base / str(index)
         directory.mkdir()
         os.chown(directory, service.pw_uid, service.pw_gid)
@@ -43,22 +49,32 @@ try:
         initialized = subprocess.run(args + ['--initialize-insecure'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if initialized.returncode:
             raise RuntimeError('QA initialization failed: ' + (directory / 'error.log').read_text()[-1200:])
+        reserved_ports[index - 1].close()
         servers.append(subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         for _ in range(100):
             try: mysql(index, 'SELECT 1'); break
             except RuntimeError: time.sleep(0.2)
         else: raise RuntimeError('QA MySQL startup failed.')
         mysql(index, "SET SESSION sql_log_bin=0; CREATE DATABASE madina_express; CREATE TABLE madina_express.bookings (id INT PRIMARY KEY, seat INT UNIQUE, paid INT); INSERT INTO madina_express.bookings VALUES (1, 8, 2200)")
-    mysql(1, "SET SESSION sql_log_bin=0; CREATE USER 'madina_repl'@'127.0.0.1' IDENTIFIED BY 'IsolatedReplicationTestPassword'; GRANT REPLICATION SLAVE ON *.* TO 'madina_repl'@'127.0.0.1'")
     spec = importlib.util.spec_from_file_location('terminal_control', pathlib.Path(__file__).parents[2] / 'deploy/terminal-control.py')
     control = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(control)
+    with patch('pwd.getpwnam', return_value=types.SimpleNamespace(pw_gid=service.pw_gid)):
+        spec.loader.exec_module(control)
+    # Exercise the credential produced by the real installer preparation code.
+    with patch.object(control, 'read_json', side_effect=[{'phase':'standalone'}, {}]), \
+         patch.object(control, 'write_json'), \
+         patch.object(control.pathlib.Path, 'read_text', return_value='ssh-ed25519 qa-key'):
+        prepared = control.prepare()
+    replication_password = prepared['replicationPassword']
+    assert len(replication_password) == 32
+    mysql(1, "SET SESSION sql_log_bin=0; CREATE USER 'madina_repl'@'127.0.0.1' IDENTIFIED BY '" + replication_password + "'; GRANT REPLICATION SLAVE ON *.* TO 'madina_repl'@'127.0.0.1'")
     original_run = control.run
     def qa_run(args, **kwargs):
         if args[0] != 'mysql': raise RuntimeError('Unexpected non-QA command.')
+        args = [argument.replace('SOURCE_PORT=13306', 'SOURCE_PORT=' + str(source_port)) for argument in args]
         return original_run(['mysql', '--no-defaults', '--socket=' + str(base / '2/mysql.sock'), '-uroot', *args[1:]], **kwargs)
     control.run = qa_run
-    control.configure_replication({'replicationPassword': 'IsolatedReplicationTestPassword'})
+    control.configure_replication(prepared)
     print('PASS production replication configuration starts on isolated MySQL instances')
     mysql(1, 'INSERT INTO madina_express.bookings VALUES (2, 9, 2250)')
     wait_equal('SELECT COUNT(*) FROM madina_express.bookings', '2')
@@ -75,10 +91,11 @@ try:
     blocked = subprocess.run(['mysql', '--no-defaults', '--socket=' + str(base / '2/mysql.sock'), '-uqa_writer', '-e', 'INSERT INTO madina_express.bookings VALUES (5,12,2500)'], capture_output=True)
     assert blocked.returncode != 0 and b'read-only' in blocked.stderr
     print('PASS the cloud replica rejects a second writer')
-    control.configure_replication({'replicationPassword': 'IsolatedReplicationTestPassword'})
+    control.configure_replication(prepared)
     wait_equal('SELECT COUNT(*) FROM madina_express.bookings', '4')
     print('PASS activation retry preserves the replication position')
 finally:
+    for reservation in reserved_ports: reservation.close()
     for process in servers: process.terminate()
     for process in servers:
         try: process.wait(timeout=30)

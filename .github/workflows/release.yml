@@ -60,6 +60,8 @@ jobs:
           done
           npm run test:api
           npm run test:counter
+      - name: Check installer-generated credentials and database replication
+        run: sudo python3 backend/tests/terminal-replication.py
       - name: Check dependency advisories
         run: npm audit --omit=dev --audit-level=high
   windows:

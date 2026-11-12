@@ -50,7 +50,8 @@ def prepare():
         config = {
             "installToken": secrets.token_hex(32),
             "relayKey": secrets.token_hex(32),
-            "replicationPassword": secrets.token_hex(32),
+            # MySQL SOURCE_PASSWORD accepts at most 32 characters (128 random bits).
+            "replicationPassword": secrets.token_hex(16),
             "createdAt": int(time.time()),
         }
         write_json(CONFIG, config)
@@ -114,6 +115,8 @@ def replica_status():
             "error": bool(record.get("Last_IO_Error") or record.get("Last_SQL_Error"))}
 
 def configure_replication(config):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,32}", config.get("replicationPassword", "")):
+        raise ValueError("The database sync credential needs repair before activation. Contact the administrator; the imported database is retained.")
     sql("SET PERSIST server_id=200")
     sql("SET PERSIST enforce_gtid_consistency=ON")
     current_mode = sql("SELECT @@global.gtid_mode")

@@ -46,4 +46,24 @@ class ResetTests(unittest.TestCase):
             self.assertTrue((root/'private.json').exists());self.assertTrue((root/'snapshot.sql').exists())
             self.assertEqual(json.loads((root/'state.json').read_text())['phase'],'active')
 
+class PreparationTests(unittest.TestCase):
+    def test_generated_credentials_fit_mysql_replication_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=pathlib.Path(directory)
+            with patch.object(control,'STATE',root/'state.json'), patch.object(control,'CONFIG',root/'private.json'), \
+                 patch.object(control.os,'chown'), patch.object(control.pathlib.Path,'read_text',return_value='ssh-ed25519 fixture-key'):
+                prepared=control.prepare()
+            saved=json.loads((root/'private.json').read_text())
+            self.assertRegex(prepared['replicationPassword'],r'^[0-9a-f]{32}$')
+            self.assertEqual(saved['replicationPassword'],prepared['replicationPassword'])
+            self.assertEqual(len(saved['installToken']),64)
+            self.assertEqual(len(saved['relayKey']),64)
+
+    def test_invalid_sync_credentials_fail_before_changing_mysql(self):
+        for value in ['f'*64, '', "unsafe'credential"]:
+            with self.subTest(value_length=len(value)), patch.object(control,'sql') as sql:
+                with self.assertRaisesRegex(ValueError,'sync credential needs repair'):
+                    control.configure_replication({'replicationPassword':value})
+                sql.assert_not_called()
+
 if __name__=='__main__':unittest.main()
