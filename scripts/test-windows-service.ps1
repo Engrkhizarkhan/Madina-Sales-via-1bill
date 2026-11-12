@@ -10,6 +10,33 @@ foreach ($file in Get-ChildItem (Join-Path $project 'deploy\windows\*.ps1')) {
 }
 $base = Join-Path $env:ProgramData 'MadinaExpress'
 if (Test-Path $base) { throw 'This test requires an isolated runner with no existing Madina Express installation.' }
+# Exercise the installer's actual CNG request using the software KSP only on CI,
+# where a physical TPM is unavailable. Production retains the platform provider.
+$enrollmentScript = Get-Content (Join-Path $project 'deploy\windows\Install-Terminal-PC.ps1') -Raw
+$requestMatch = [regex]::Match($enrollmentScript, "(?s)\`$inf = @'\r?\n(?<inf>.*?)\r?\n'@")
+if (-not $requestMatch.Success) { throw 'The terminal certificate request template is missing.' }
+$requestTemplate = $requestMatch.Groups['inf'].Value
+if ($requestTemplate -notmatch 'ProviderName = "Microsoft Platform Crypto Provider"') { throw 'Production enrollment no longer requires a TPM provider.' }
+$requestDirectory = Join-Path $env:TEMP ('madina-cng-request-' + [Guid]::NewGuid().ToString('N'))
+$keyContainer = 'madina-ci-' + [Guid]::NewGuid().ToString('N')
+New-Item -ItemType Directory $requestDirectory | Out-Null
+try {
+    $testRequest = $requestTemplate.Replace('Microsoft Platform Crypto Provider', 'Microsoft Software Key Storage Provider') + "`r`nKeyContainer = " + $keyContainer
+    $requestInf = Join-Path $requestDirectory 'terminal.inf'
+    $requestFile = Join-Path $requestDirectory 'terminal.req'
+    [IO.File]::WriteAllText($requestInf, $testRequest, [Text.Encoding]::ASCII)
+    & certreq.exe -new -user -f $requestInf $requestFile
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $requestFile)) { throw 'Windows CNG certificate request failed.' }
+    $key = [Security.Cryptography.CngKey]::Open($keyContainer, [Security.Cryptography.CngProvider]::MicrosoftSoftwareKeyStorageProvider)
+    try {
+        if ($key.ExportPolicy -ne [Security.Cryptography.CngExportPolicies]::None) { throw 'The device key can be exported.' }
+        if ($key.KeySize -ne 2048 -or $key.Algorithm.Algorithm -ne 'RSA') { throw 'Unexpected device key algorithm.' }
+    } finally { $key.Dispose() }
+    Write-Host 'PASS real Windows CNG enrollment request creates a non-exportable RSA key'
+} finally {
+    & certutil.exe -user -csp 'Microsoft Software Key Storage Provider' -delkey $keyContainer | Out-Null
+    Remove-Item $requestDirectory -Recurse -Force
+}
 try {
     New-Item -ItemType Directory -Force (Join-Path $base 'runtime'), (Join-Path $base 'application\backend\node'), (Join-Path $base 'logs') | Out-Null
     Copy-Item (Get-Command node.exe).Source (Join-Path $base 'runtime\node.exe')

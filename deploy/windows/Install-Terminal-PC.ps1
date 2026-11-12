@@ -30,7 +30,10 @@ KeyAlgorithm = RSA
 KeyLength = 2048
 HashAlgorithm = SHA256
 ProviderName = "Microsoft Platform Crypto Provider"
+ProviderType = 0
+KeySpec = 0
 Exportable = FALSE
+ExportableEncrypted = FALSE
 MachineKeySet = FALSE
 RequestType = PKCS10
 KeyUsage = 0x80
@@ -39,7 +42,7 @@ $infPath = Join-Path $PSScriptRoot 'terminal.inf'
 $requestPath = Join-Path $PSScriptRoot 'terminal.req'
 [IO.File]::WriteAllText($infPath, $inf, [Text.Encoding]::ASCII)
 & certreq.exe -new -user $infPath $requestPath
-if ($LASTEXITCODE -ne 0) { throw 'Windows could not create the device key. Check that TPM is enabled, then try again.' }
+if ($LASTEXITCODE -ne 0) { throw ('Windows could not create the TPM device key (certreq exit code ' + $LASTEXITCODE + '). In Administrator PowerShell, run: Get-Tpm | Select-Object TpmPresent,TpmReady,TpmEnabled,TpmActivated. Keep this setup folder and share the result; do not clear the TPM.') }
 $payload = @{ slot = [int]$setup.slot; token = $setup.token; request = [IO.File]::ReadAllText($requestPath) } | ConvertTo-Json
 $response = Invoke-RestMethod -Method Post -Uri ($setup.localOrigin + '/api/terminal/enroll') -ContentType 'application/json' -Body $payload
 $signed = Join-Path $PSScriptRoot ('terminal-' + $setup.slot + '.cer')
