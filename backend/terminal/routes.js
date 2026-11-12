@@ -1,3 +1,4 @@
+import { updateChannel, saveUpdateControl, recordTerminalUpdate } from "../update/control.js";
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
@@ -5,6 +6,7 @@ import { mkdtemp, readFile, writeFile, copyFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { zipSync } from "fflate";
+import { requireOwner } from "../node/account-access.js";
 import { config } from "../node/config.js";
 import { pool, transaction } from "../node/db.js";
 import { fail, tokenHash, sqlDateTime } from "../node/helpers.js";
@@ -18,7 +20,7 @@ import { CloudSessions } from "../node/cloud-sessions.js";
 const route = handler => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
 const bytes = value => new Uint8Array(Buffer.from(value));
 const requireAdmin = req => {
-  if (req.user?.role !== "admin") fail("Administrator access is required.", 403, "forbidden");
+  requireOwner(req.user);
 };
 async function confirmPassword(req) {
   requireAdmin(req);
@@ -40,6 +42,23 @@ async function authenticateInstaller(req) {
 }
 
 export const terminalSyncRouter = Router();
+terminalSyncRouter.get('/update-channel',route(async(_req,res)=>{
+  if(!config.terminal.cloud)fail('Updates are provided by the cloud host.',404,'not_found');
+  res.json(await updateChannel());
+}));
+terminalSyncRouter.post('/update-control',route(async(req,res)=>{
+  await authenticateInstaller(req);
+  const privateData=JSON.parse(await readFile(join(config.terminal.directory,'private.json'),'utf8'));
+  if(req.body?.installationId!==privateData.installationId)fail('The main PC is not registered.',403,'forbidden');
+  if(typeof req.body?.paused!=='boolean')fail('Choose whether updates are paused.',422,'validation_error');
+  res.json(await saveUpdateControl(req.body.paused));
+}));
+terminalSyncRouter.post('/update-status',route(async(req,res)=>{
+  await authenticateInstaller(req);
+  const privateData=JSON.parse(await readFile(join(config.terminal.directory,'private.json'),'utf8'));
+  if(req.body?.installationId!==privateData.installationId)fail('The main PC is not registered.',403,'forbidden');
+  await recordTerminalUpdate(req.body);res.json({ok:true});
+}));
 terminalSyncRouter.get("/public-status", route(async (_req, res) => {
   const state = await terminalState();
   res.json({ phase: state.phase });
@@ -55,7 +74,7 @@ terminalSyncRouter.post("/status", route(async (req, res) => {
   await authenticateInstaller(req);
   const state = await terminalControl("status");
   const sessions = new CloudSessions(process.env.CLOUD_SESSION_DIRECTORY || resolve("backend", ".cloud-sessions"));
-  res.json({ ...state, revokedSessions: await sessions.revokedHashes() });
+  res.json({ ...state, revokedSessions: await sessions.revokedHashes(), mfaSteps:await sessions.consumedOtpSteps() });
 }));
 terminalSyncRouter.post("/bootstrap", route(async (req, res) => {
   await authenticateInstaller(req);

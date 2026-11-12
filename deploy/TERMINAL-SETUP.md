@@ -60,7 +60,9 @@ If setup reports "The remote name could not be resolved", download a fresh insta
 
 ## Updates
 
-Once active, `deploy/update.sh` refuses the old cloud-only database install path. Use a coordinated maintenance window: back up the main PC, pause sales, update its application with the same build as the cloud, apply required schema migrations on the **main source** only, let them replicate, update cloud static/API code, then resume. Do not run cloud seed/reset scripts on the replica. This release supplies first-install and enrollment tools; automated rolling updates and automatic failover are not included.
+Current main-PC installers include signed automatic application updates. Reviewed pushes to `main` are tested on Linux and Windows before a release is published. The PC waits for a quiet counter, backs up data, applies only pending tracked migrations, and checks health before resuming writes. Settings provides release status and an update pause switch; the sidebar displays the running version. See [remote updates](REMOTE-UPDATES.md).
+
+The main PC remains the only business-data writer. Cloud code switches after the source update and schema replication. Updates preserve accounts, devices, data, TLS and printer settings. Destructive schema changes and runtime/OS upgrades require separate supervised maintenance. Older installations without the updater need a one-time administrator-assisted upgrade; future ordinary releases need no terminal visit.
 
 ## Verification performed by development
 

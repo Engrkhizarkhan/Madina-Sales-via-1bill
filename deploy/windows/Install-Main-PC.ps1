@@ -20,6 +20,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $base = Join-Path $env:ProgramData 'MadinaExpress'
 $application = Join-Path $base 'application'
 $data = Join-Path $base 'data'
+$configDirectory = Join-Path $base 'config'
 $setup = Get-Content (Join-Path $PSScriptRoot 'setup.json') -Raw | ConvertFrom-Json
 $manifest = Get-Content (Join-Path $PSScriptRoot 'runtime.json') -Raw | ConvertFrom-Json
 $mainIp = Read-Host 'Enter this main PC local IPv4 address (for example 192.168.1.20)'
@@ -58,9 +59,13 @@ if (Test-Path (Join-Path $application 'backend\.env')) {
     Move-Item $base $archive
     Write-Host "Previous local installation retained in $archive. It cannot connect using the revoked pairing."
 }
-New-Item -ItemType Directory -Force $base, $data, (Join-Path $base 'downloads') | Out-Null
-& icacls.exe $base /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)M' | Out-Null
+New-Item -ItemType Directory -Force $base, $data, $configDirectory, (Join-Path $base 'logs'), (Join-Path $base 'downloads') | Out-Null
+& icacls.exe $base /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Windows could not protect the installation directory.' }
+& icacls.exe $data /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)M' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'The local data directory could not be protected.' }
+& icacls.exe (Join-Path $base 'logs') /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)M' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'The service log directory could not be protected.' }
 $downloads = Join-Path $base 'downloads'
 function Download-Checked($entry, $destination) {
     if (-not (Test-Path $destination) -or (Get-FileHash $destination -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.sha256) {
@@ -123,15 +128,17 @@ Invoke-WebRequest -UseBasicParsing -Method Post -Uri ($setup.cloudOrigin + '/api
 $bootstrap = Join-Path $data 'bootstrap'
 Expand-Archive -Path $bootstrapZip -DestinationPath $bootstrap -Force
 $settings = Get-Content (Join-Path $bootstrap 'settings.json') -Raw | ConvertFrom-Json
-$secretsFile = Join-Path $data 'local-secrets.json'
+$secretsFile = Join-Path $configDirectory 'local-secrets.json'
 function New-HexSecret {
     $bytes = New-Object byte[] 32
     [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
     return -join ($bytes | ForEach-Object { $_.ToString('x2') })
 }
 if (-not (Test-Path $secretsFile)) {
-    @{ rootPassword = (New-HexSecret); appPassword = (New-HexSecret) } | ConvertTo-Json | Set-Content $secretsFile -Encoding ASCII
+    @{ rootPassword = (New-HexSecret); appPassword = (New-HexSecret); updateKey = (New-HexSecret) } | ConvertTo-Json | Set-Content $secretsFile -Encoding ASCII
 }
+& icacls.exe $secretsFile /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'The database administrator secrets could not be protected.' }
 $secrets = Get-Content $secretsFile -Raw | ConvertFrom-Json
 $mysql = Join-Path $base 'mysql\bin\mysql.exe'
 $mysqld = Join-Path $base 'mysql\bin\mysqld.exe'
@@ -178,6 +185,8 @@ port=3310
 user=root
 password=$rootPassword
 "@ | Set-Content $adminConfig -Encoding ASCII
+& icacls.exe $adminConfig /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+if ($LASTEXITCODE -ne 0) { throw 'Database administrator access could not be protected.' }
 function Run-SqlFile($path) {
     $result = Start-Process -FilePath $mysql -ArgumentList ("`"--defaults-extra-file=$adminConfig`" --default-character-set=utf8mb4 --binary-mode") -RedirectStandardInput $path -NoNewWindow -Wait -PassThru
     if ($result.ExitCode -ne 0) { throw 'The local database operation failed. Keep the setup files and check the error above.' }
@@ -225,6 +234,9 @@ ADMIN_TOTP_PAUSED=false
 NODE_API_HOST=127.0.0.1
 NODE_API_PORT=43101
 TRUST_PROXY=1
+UPDATE_CONTROL_KEY=$($secrets.updateKey)
+UPDATE_JOURNAL_PATH=$base\host\transaction.json
+TERMINAL_ASSET_DIRECTORY=$base\static-assets
 TERMINAL_ROLE=terminal
 TERMINAL_DIRECTORY=$data
 TERMINAL_LOCAL_ORIGIN=$origin
@@ -235,7 +247,9 @@ TERMINAL_INSTALLATION_ID=$($installation.installationId)
 TERMINAL_SSH_PATH=$ssh
 TERMINAL_MYSQLDUMP=$base\mysql\bin\mysqldump.exe
 "@
-[IO.File]::WriteAllText((Join-Path $application 'backend\.env'), $environment, [Text.Encoding]::UTF8)
+[IO.File]::WriteAllText((Join-Path $configDirectory 'backend.env'), $environment, [Text.Encoding]::UTF8)
+$env:MADINA_ENV_FILE = Join-Path $configDirectory 'backend.env'
+Copy-Item (Join-Path $application 'dist\assets') (Join-Path $base 'static-assets') -Recurse -Force
 @"
 [client]
 host=127.0.0.1
@@ -298,6 +312,8 @@ if (-not $paired) {
 }
 Remove-Item $init, $import, $bootstrapZip -Force
 Remove-Item $bootstrap -Recurse -Force
+Move-Item $adminConfig (Join-Path $configDirectory 'mysql-admin.cnf') -Force
+& (Join-Path $application 'deploy\windows\Install-Update-Service.ps1')
 Write-Host "Main PC service installed. Open $origin/login to sign in as admin."
 Write-Host 'Allow its first cloud connection to complete. Then open Settings, generate PC 1 setup for this Windows profile, and PC 2 / PC 3 setup for the child PCs.'
 Write-Host 'Keep the main PC awake and reserve its IP in the router. The local server starts automatically after reboot.'

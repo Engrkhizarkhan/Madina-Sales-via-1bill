@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Madina Express releases every two minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+RandomizedDelaySec=15s
+Persistent=true
+Unit=madina-release-update.service
+
+[Install]
+WantedBy=timers.target

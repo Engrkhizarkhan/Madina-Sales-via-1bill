@@ -1,0 +1,112 @@
+name: Test and publish application release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: madina-release-main
+  cancel-in-progress: true
+jobs:
+  application:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      DB_NAME: madina_release_qa
+      DB_USER: madina_release_qa
+      DB_PASSWORD: LocalDatabase!2026Only
+      DB_HOST: 127.0.0.1
+      MYSQL_ADMIN_PASSWORD: root
+      ADMIN_NAME: Release test administrator
+      ADMIN_USERNAME: admin
+      ADMIN_EMAIL: admin@example.invalid
+      ADMIN_PASSWORD: ReleaseAdmin!2026Only
+      SESSION_SECURE: 'false'
+      RESTRICT_STAFF_DEVICES: 'false'
+      NODE_API_HOST: 127.0.0.1
+      NODE_API_PORT: '43190'
+      TEST_API_URL: http://127.0.0.1:43190
+      PUBLIC_SITE_ENABLED: 'true'
+      ALLOWED_ORIGINS: http://localhost
+      RELEASE_COMMIT: ${{ github.sha }}
+      RELEASE_SEQUENCE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.4'
+      - run: npm ci
+      - run: npm run build
+      - run: npm run lint
+      - name: Runtime and signed update tests
+        run: |
+          npm run server:check
+          npm run test:terminal
+          npm run test:layout
+          node --test backend/tests/policies-access.js backend/tests/updater.js
+          python3 backend/tests/terminal-broker.py
+          python3 backend/tests/terminal-reset.py
+      - name: Start isolated MySQL and test booking API
+        run: |
+          sudo systemctl start mysql
+          npm run db:install
+          node backend/node/server.js > /tmp/madina-api.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:43190/health; then break; fi
+            sleep 1
+          done
+          npm run test:api
+          npm run test:counter
+      - name: Check dependency advisories
+        run: npm audit --omit=dev --audit-level=high
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Windows PowerShell 5.1, service and updater checks
+        shell: powershell
+        run: ./scripts/test-windows-service.ps1
+      - name: Signed updater transactions on Windows
+        shell: powershell
+        run: node --test backend/tests/updater.js
+  publish:
+    needs: [application, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.4'
+      - run: npm ci
+      - run: npm run build
+        env:
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_SEQUENCE: ${{ github.run_number }}
+      - name: Build and sign immutable release
+        run: node scripts/package-release.mjs
+        env:
+          RELEASE_SIGNING_KEY_BASE64: ${{ secrets.MADINA_RELEASE_SIGNING_KEY }}
+      - name: Publish only after all checks passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          release_id="r-${RELEASE_COMMIT:0:12}"
+          gh release create "$release_id" \
+            --draft \
+            --target "$RELEASE_COMMIT" \
+            --title "Madina Express $release_id" \
+            --notes "Verified application release. Existing tickets, settings and enrolled PCs are preserved." \
+            ".release/$release_id.zip" .release/channel.json
+          gh release edit "$release_id" --draft=false --latest

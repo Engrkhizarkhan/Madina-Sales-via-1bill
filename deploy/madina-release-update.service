@@ -1,0 +1,20 @@
+[Unit]
+Description=Verify and stage Madina Express signed application releases
+After=network-online.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=PATH=/opt/node-current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/bin
+Environment=npm_config_cache=/var/cache/madina-express/npm
+Environment=npm_config_userconfig=/etc/madina-express/npmrc
+WorkingDirectory=/var/lib/madina-express
+ExecStart=/usr/bin/flock -n /run/lock/madina-release-update.lock /opt/node-current/bin/node /usr/local/libexec/madina-updater/cloud-mirror.mjs
+TimeoutStartSec=15min
+UMask=0022
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true

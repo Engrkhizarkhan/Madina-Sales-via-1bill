@@ -35,3 +35,7 @@ backend/.terminal/
 backend/.cloud-sessions/
 
 __pycache__/
+
+build-info.json
+.release/
+backend/.updates/

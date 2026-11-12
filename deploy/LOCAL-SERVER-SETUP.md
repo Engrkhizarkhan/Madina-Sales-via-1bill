@@ -16,6 +16,8 @@ The main admin is exempt from counter-PC restrictions. Staff need an account cre
 6. On each other Windows 10/11 PC, connect to the same LAN, generate its own PC 2/3 setup ZIP, extract and run it in that counter's Windows profile. Setup files expire after 30 minutes. Use the **Madina Express Counter** desktop shortcut; Chrome may request the enrolled terminal certificate.
 7. Create staff usernames/passwords in Settings. Test staff login on an enrolled PC and rejection on a personal device.
 
+Setup also installs the signed application update service. Tested releases from GitHub install automatically during quiet periods; the main admin can pause them in Settings. The sidebar shows the running version. See [remote updates](REMOTE-UPDATES.md).
+
 The app starts automatically after reboot. Keep the main PC awake and powered on. No inbound router port forwarding is required. MySQL listens only on loopback; only HTTPS port 8443 is exposed to the private local subnet.
 
 ## Move the same PC to the terminal

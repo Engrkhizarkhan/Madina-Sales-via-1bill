@@ -59,8 +59,8 @@ try {
   ca = await readFile(join(directory, 'tls/ca.crt'));
   server = await startTerminalWeb(app);
   for (const role of ['admin', 'counter']) {
-    const [user] = await pool.execute('INSERT INTO users (name, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, 0)',
-      ['Enrollment QA', 'enroll-' + role + '-' + suffix, await bcrypt.hash(password, 10), role]);
+    const [user] = await pool.execute('INSERT INTO users (name, username, password_hash, role, force_password_change,is_owner,remote_allowed) VALUES (?, ?, ?, ?, 0,?,?)',
+      ['Enrollment QA', 'enroll-' + role + '-' + suffix, await bcrypt.hash(password, 10), role, role === 'admin' ? 1 : 0, role === 'admin' ? 1 : 0]);
     userIds.push(user.insertId);
   }
   const otpCounter = Buffer.alloc(8); otpCounter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));

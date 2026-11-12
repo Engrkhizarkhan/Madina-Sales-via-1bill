@@ -1,3 +1,4 @@
+import type { ReleaseInfo } from "./release";
 const API_BASE = (
   import.meta.env.VITE_API_BASE ?? "http://localhost:3101"
 ).replace(/\/$/, "");
@@ -79,6 +80,12 @@ export const api = {
   mainPcSetup: (password: string) => downloadSetup("/terminal/package", password, "Madina-Express-Main-PC.zip"),
   terminalPcSetup: (slot: number, password: string) => downloadSetup(`/terminal/devices/${slot}/package`, password, `Madina-Express-PC-${slot}.zip`),
   revokeTerminal: (slot: number) => request<{ ok: boolean }>(`/terminal/devices/${slot}`, { method: "DELETE" }),
+  updateStatus: () => request<{current:ReleaseInfo;available:{version:string;releaseId:string;createdAt:string}|null;paused:boolean;cloudAvailable:boolean;terminal:{stage:string;checkedAt?:string;message?:string;current?:{releaseId:string;version:string}}|null}>("/updates/status"),
+  pauseUpdates: (paused:boolean) => request("/updates/control",{method:"POST",body:JSON.stringify({paused})}),
+  policies: <T>() => request<{policies:T}>("/settings/policies"),
+  savePolicies: <T>(policies:T) => request<{policies:T}>("/settings/policies",{method:"PUT",body:JSON.stringify(policies)}),
+  accountAuthenticator: <T>(id:number,enabled:boolean) => request<{user:T;setup:{secret:string;uri:string}|null}>(`/users/${id}/authenticator`,{method:"POST",body:JSON.stringify({enabled})}),
+  revokeAccount: (id:number) => request(`/users/${id}/revoke`,{method:"POST",body:"{}"}),
   health: () => request<{ status: string; database: string }>("/health"),
   publicBootstrap: <T>() => request<T>("/public/bootstrap"),
   publicTripRuns: <T>(date: string) =>

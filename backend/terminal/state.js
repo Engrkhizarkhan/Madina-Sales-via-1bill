@@ -17,7 +17,7 @@ export async function cloudAuthorityGuard(req, _res, next) {
     const state = await terminalState();
     req.cloudReadOnly = ["preparing", "active"].includes(state.phase);
     if (req.cloudReadOnly && !["GET", "HEAD"].includes(req.method) &&
-        !["/auth/login", "/auth/logout", "/auth/finance-unlock", "/public/ticket-lookup", "/terminal/cancel-setup"].includes(req.path)) {
+        !["/auth/login", "/auth/logout", "/auth/finance-unlock", "/public/ticket-lookup", "/terminal/cancel-setup", "/updates/control"].includes(req.path)) {
       const { ApiError } = await import("../node/helpers.js");
       return next(new ApiError("The main PC is offline or being set up. You can view synced data here; make changes at the terminal's local address until it reconnects.", 503, "terminal_unavailable"));
     }

@@ -19,6 +19,10 @@ if [[ -f /var/lib/madina-express/terminal/state.json ]] && python3 -c 'import js
   echo "The main terminal PC owns this database. Update that PC first; follow deploy/TERMINAL-SETUP.md." >&2
   exit 1
 fi
+if [[ -f /var/lib/madina-express/host/current.json ]]; then
+  echo "This installation uses signed releases. Push reviewed changes to main and monitor the release workflow and Settings → Application updates." >&2
+  exit 1
+fi
 git pull --ff-only origin main
 timedatectl set-timezone Asia/Karachi
 if ! cmp -s "$PROJECT_DIR/deploy/mysql.cnf" /etc/mysql/mysql.conf.d/madina-express.cnf; then

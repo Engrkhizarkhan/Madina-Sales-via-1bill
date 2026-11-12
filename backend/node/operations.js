@@ -1,5 +1,7 @@
 import {seatFare,routeDestinations,commissionPolicy} from '../../shared/service-pricing.mjs';
 import {validateClasses,validateRouteConfig} from './service-config.js';
+import { accessDetails, requireOwner } from "./account-access.js";
+import { getPolicies, staffCollectionPolicy, staffRefundPolicy, reservationExpiry } from "./policies.js";
 import bcrypt from "bcryptjs";
 import { config } from "./config.js";
 import { ensureRun, assertSaleOpen } from './departures.js';
@@ -67,11 +69,13 @@ export async function createBooking(data, user, isPublic, req) {
     if (!/^03\d{9}$/.test(phone)) fail("Enter a valid Pakistani mobile number.", 422, "validation_error");
     data = { ...data, phone, cnic: "", gender: "Unspecified", boardingPoint: undefined };
   }
+  const policy = await getPolicies();
+  if (isPublic && !policy.publicReservationsEnabled) fail("Online reservations are currently closed. Please contact the counter.",409,"reservations_closed");
   const details=passengerDetails(data,reserved);
   requireFields(data, ["tripId", "date", "seats"]);
   const seats = [...new Set(Array.isArray(data.seats) ? data.seats.map(Number).filter(Number.isInteger) : [])];
   if (!seats.length) fail("Select at least one seat.", 422, "validation_error");
-  if (isPublic && seats.length > 4) fail("Online bookings are limited to four seats.", 422, "validation_error");
+  if (isPublic && seats.length > policy.publicMaxSeats) fail(`Online reservations are limited to ${policy.publicMaxSeats} seats.`, 422, "validation_error");
   for (const [field, maximum] of [["passenger", 160], ["phone", 30], ["cnic", 50]]) {
     if (String(data[field]).trim().length > maximum) fail(`${field} is too long.`, 422, "validation_error");
   }
@@ -87,8 +91,8 @@ export async function createBooking(data, user, isPublic, req) {
     }
     const travelDate = String(data.date);
     if (!validDate(travelDate) || travelDate < pakistanDate()) fail("Choose today or a future travel date.", 422, "validation_error");
-    if (isPublic && travelDate > pakistanDate(new Date(Date.now() + 90 * 86400000))) {
-      fail("Online reservations open 90 days before departure.", 422, "validation_error");
+    if (isPublic && travelDate > pakistanDate(new Date(Date.now() + policy.publicAdvanceDays * 86400000))) {
+      fail(`Online reservations open ${policy.publicAdvanceDays} days before departure.`, 422, "validation_error");
     }
     if (!parseJson(trip.service_days).includes(weekday(travelDate))) fail("This trip does not run on the selected date.", 409, "departure_unavailable");
     const run = await ensureRun(connection, trip, travelDate);
@@ -102,7 +106,7 @@ export async function createBooking(data, user, isPublic, req) {
 
     const paymentMethod = reserved ? "Cash" : String(data.paymentMethod || "Cash");
     allowed(paymentMethod, ["Cash", "Bank transfer", "1Bill"], "paymentMethod");
-    if (paymentMethod === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or card.", 409, "payment_unavailable");
+    if (paymentMethod === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or bank transfer.", 409, "payment_unavailable");
     let paymentReference = String(data.paymentReference || "").trim();
     if (!reserved && paymentMethod !== "Cash" && !paymentReference) fail("A verified payment reference is required.", 422, "validation_error");
     paymentReference = reserved ? '' : paymentReference || `CASH-${timeCode()}`;
@@ -115,6 +119,7 @@ export async function createBooking(data, user, isPublic, req) {
     if(data.quotedFares && (!Array.isArray(data.quotedFares)||data.quotedFares.length!==baseFares.length||baseFares.some((fare,index)=>Number(data.quotedFares[index])!==fare))) fail('Fares changed while you were booking. Refresh and review the current fares.',409,'fare_changed');
     const fares = isPublic || reserved ? baseFares : counterFares(baseFares, data.fareOverrides);
     const batchDiscount = reserved || isPublic ? 0 : Math.min(decimal(data.discount ?? 0, "discount"), fares.reduce((sum,fare)=>sum+fare,0));
+    if (!reserved) staffCollectionPolicy(policy,user,baseFares,fares,batchDiscount);
     let discountCents = Math.round(batchDiscount * 100);
     let fareCents=fares.reduce((sum,fare)=>sum+Math.round(fare*100),0);
     const createdBookings = [];
@@ -129,7 +134,8 @@ export async function createBooking(data, user, isPublic, req) {
       const id = uuid("booking-");
       const ticketNo = await nextTicketNumber(connection,reserved);
       const departure = Date.parse(`${travelDate}T${run.snapshot.departure.slice(0, 5)}:00+05:00`);
-      const expiresAt = isPublic ? sqlDateTime(new Date(Math.min(departure, Date.now() + 2 * 60 * 60 * 1000))) : null;
+      const expiry = reserved ? reservationExpiry(policy,isPublic,departure) : null;
+      const expiresAt = expiry ? sqlDateTime(expiry) : null;
       await query(connection,
         `INSERT INTO bookings
          (id, ticket_no, source, passenger, phone, cnic, gender, route_label, destination, boarding_point,
@@ -204,7 +210,7 @@ export async function confirmReservation(id, data, user, req) {
     const row = records[0];
     if (!row || row.booking_status !== "Reserved" || (row.expires_at && Date.parse(isoDateTime(row.expires_at)) <= Date.now())) fail("Active reservation not found.", 404, "not_found");
     const method = allowed(String(data.paymentMethod || "Cash"), ["Cash", "Bank transfer", "1Bill"], "paymentMethod");
-    if (method === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or card.", 409, "payment_unavailable");
+    if (method === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or bank transfer.", 409, "payment_unavailable");
     let reference = String(data.paymentReference || "").trim();
     if (method !== "Cash" && !reference) fail("A verified payment reference is required.", 422, "validation_error");
     reference ||= `CASH-${timeCode()}`;
@@ -223,6 +229,7 @@ export async function confirmReservation(id, data, user, req) {
     const fare = decimal(fareTotal / seats.length, 'Fare');
     const discount = Math.min(decimal(data.discount ?? 0, 'discount'), fareTotal);
     const total = decimal(fareTotal - discount, 'Total');
+    staffCollectionPolicy(await getPolicies(connection),user,baseFares,fares,discount);
     const ticketNo = await nextTicketNumber(connection);
     const before = await fetchBooking(id, connection);
     await query(connection,
@@ -250,6 +257,7 @@ export async function refundBooking(id, data, user, req) {
     const remaining = Math.round((Number(row.paid) - Number(sums[0].total)) * 100) / 100;
     const amount = decimal(data.amount, "amount", 0.01);
     if (amount > remaining) fail("Refund amount exceeds the remaining paid balance.", 422, "refund_too_large");
+    staffRefundPolicy(await getPolicies(connection),user,amount,Number(row.paid),Number(sums[0].total));
     const method = allowed(String(data.method), ["Cash", "Bank transfer", "1Bill"], "method");
     const reason = allowed(String(data.reason), ["Passenger request", "Trip cancelled", "Duplicate payment", "Service disruption", "Other"], "reason");
     let reference = String(data.reference || "").trim();
@@ -545,7 +553,7 @@ function staffAccountDetails(data) {
   if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
     fail("Username must be 3–40 characters using letters, numbers, dots, dashes or underscores.", 422, "validation_error");
   }
-  const role = allowed(data.role, ["manager", "counter", "dispatcher", "finance"], "role");
+  const role = allowed(data.role, ["admin", "manager", "counter", "dispatcher", "finance"], "role");
   return { name, username, role };
 }
 
@@ -559,11 +567,13 @@ async function staffPasswordHash(password) {
 
 export async function createStaffUser(data, user, req) {
   const { name, username, role } = staffAccountDetails(data);
+  requireOwner(user);
+  const access = accessDetails(data);
   const hash = await staffPasswordHash(data.password);
   return transaction(async (connection) => {
     const result = await query(connection,
-      "INSERT INTO users (name, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, 0)",
-      [name, username, hash, role]);
+      "INSERT INTO users (name, username, password_hash, role, force_password_change, email, remote_allowed, terminal_slots) VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
+      [name, username, hash, role, access.email, access.remote, JSON.stringify(access.terminals)]);
     const [created] = await fetchUsers(connection, result.insertId);
     await audit("user.created", "user", result.insertId, null, created, user.id, req, connection);
     return created;
@@ -572,24 +582,24 @@ export async function createStaffUser(data, user, req) {
 
 async function lockStaffAccount(connection, id) {
   if (!/^[1-9][0-9]{0,19}$/.test(id)) fail("Staff account not found.", 404, "not_found");
-  const [account] = await query(connection, "SELECT role FROM users WHERE id = ? AND active = 1 FOR UPDATE", [id]);
+  const [account] = await query(connection, "SELECT role, is_owner FROM users WHERE id = ? AND active = 1 FOR UPDATE", [id]);
   if (!account) fail("Staff account not found.", 404, "not_found");
-  if (account.role === "admin") fail("Manage the administrator password in Account security.", 403, "admin_protected");
+  if (account.is_owner) fail("Manage the administrator password in Account security.", 403, "admin_protected");
   const [staff] = await fetchUsers(connection, id);
   return staff;
 }
 
 export async function updateStaffUser(id, data, user, req) {
+  requireOwner(user);
+  const access = accessDetails(data);
   const { name, username, role } = staffAccountDetails(data);
   const hash = data.password == null || data.password === "" ? null : await staffPasswordHash(data.password);
   return transaction(async (connection) => {
     const before = await lockStaffAccount(connection, id);
     await query(connection,
-      "UPDATE users SET name = ?, username = ?, role = ?, password_hash = COALESCE(?, password_hash), force_password_change = 0 WHERE id = ?",
-      [name, username, role, hash, id]);
-    if (hash || username !== before.username || role !== before.role) {
-      await query(connection, "DELETE FROM api_sessions WHERE user_id = ?", [id]);
-    }
+      "UPDATE users SET name = ?, username = ?, role = ?, password_hash = COALESCE(?, password_hash), force_password_change = 0, session_version=session_version+1, email=?, remote_allowed=?, terminal_slots=? WHERE id = ?",
+      [name, username, role, hash, access.email, access.remote, JSON.stringify(access.terminals), id]);
+    await query(connection, "DELETE FROM api_sessions WHERE user_id = ?", [id]);
     const [after] = await fetchUsers(connection, id);
     await audit("user.updated", "user", id, before, { ...after, passwordChanged: Boolean(hash) }, user.id, req, connection);
     return after;
@@ -597,6 +607,7 @@ export async function updateStaffUser(id, data, user, req) {
 }
 
 export async function removeStaffUser(id, user, req) {
+  requireOwner(user);
   return transaction(async (connection) => {
     const before = await lockStaffAccount(connection, id);
     await query(connection, "UPDATE users SET active = 0 WHERE id = ?", [id]);

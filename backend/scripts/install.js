@@ -1,7 +1,8 @@
+import { applyMigrations } from "../update/migrations.js";
 import bcrypt from "bcryptjs";
 import dotenv from "dotenv";
 import mysql from "mysql2/promise";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 dotenv.config({ path: resolve("backend", ".env") });
@@ -33,18 +34,14 @@ try {
   }
   await admin.changeUser({ database });
   await admin.query(await readFile(resolve("backend", "database", "schema.sql"), "utf8"));
-  const migrationDirectory = resolve("backend", "database", "migrations");
-  const migrations = (await readdir(migrationDirectory)).filter((name) => name.endsWith(".sql")).sort();
-  for (const migration of migrations) {
-    await admin.query(await readFile(resolve(migrationDirectory, migration), "utf8"));
-  }
+  await applyMigrations(admin);
 
   const adminEmail = env("ADMIN_EMAIL").toLowerCase();
   const adminUsername = env("ADMIN_USERNAME").toLowerCase();
   const [existing] = await admin.execute("SELECT id FROM users WHERE email = ? OR username = ? LIMIT 1", [adminEmail, adminUsername]);
   if (!existing.length) {
     await admin.execute(
-      "INSERT INTO users (name, email, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, 'admin', 1)",
+      "INSERT INTO users (name, email, username, password_hash, role, force_password_change, is_owner, remote_allowed) VALUES (?, ?, ?, ?, 'admin', 1, 1, 1)",
       [env("ADMIN_NAME"), adminEmail, adminUsername, await bcrypt.hash(env("ADMIN_PASSWORD"), 12)],
     );
   }

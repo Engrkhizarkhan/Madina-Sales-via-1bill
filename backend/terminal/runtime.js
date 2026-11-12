@@ -52,6 +52,9 @@ async function refreshStatus() {
         await pool.execute(`DELETE FROM api_sessions WHERE token_hash IN (${batch.map(() => "?").join(",")})`, batch);
       }
     }
+    if(Array.isArray(status.mfaSteps))for(const value of status.mfaSteps){
+      if(Number.isSafeInteger(value.userId)&&Number.isSafeInteger(value.step))await pool.execute('UPDATE users SET mfa_last_step=GREATEST(mfa_last_step,?) WHERE id=?',[value.step,value.userId]);
+    }
     if (!ready && status.active) {
       await writeFile(join(config.terminal.directory, "ready.json"),
         JSON.stringify({ installationId: process.env.TERMINAL_INSTALLATION_ID }), { mode: 0o600 });

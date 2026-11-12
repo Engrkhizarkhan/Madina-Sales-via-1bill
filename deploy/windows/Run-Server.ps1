@@ -1,6 +1,11 @@
 $ErrorActionPreference = 'Stop'
 $base = Join-Path $env:ProgramData 'MadinaExpress'
 $application = Join-Path $base 'application'
+$pointer = Join-Path $base 'host\current.json'
+if (Test-Path $pointer) { $application = (Get-Content $pointer -Raw | ConvertFrom-Json).application }
+if (-not $application.StartsWith($base + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid installed application path.' }
+$configuration = Join-Path $base 'config\backend.env'
+if (Test-Path $configuration) { $env:MADINA_ENV_FILE = $configuration }
 $node = Join-Path $base 'runtime\node.exe'
 $logs = Join-Path $base 'logs'
 New-Item -ItemType Directory -Force $logs | Out-Null

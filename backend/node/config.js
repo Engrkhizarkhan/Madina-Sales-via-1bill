@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import { resolve } from "node:path";
 
-dotenv.config({ path: resolve("backend", ".env") });
+dotenv.config({ path: process.env.MADINA_ENV_FILE || resolve("backend", ".env") });
 
 const required = (key, fallback) => {
   const value = process.env[key] || fallback;

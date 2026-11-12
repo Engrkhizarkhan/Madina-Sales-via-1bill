@@ -70,8 +70,10 @@ cp "$PROJECT_DIR/package.json" "$PROJECT_DIR/package-lock.json" "$staging/"
 rsync -a --exclude '.env*' --exclude .terminal --exclude .cloud-sessions --exclude backups --exclude __pycache__ --exclude tests "$PROJECT_DIR/backend/" "$staging/backend/"
 cp -a "$PROJECT_DIR/dist" "$staging/dist"
 cp -a "$PROJECT_DIR/shared" "$staging/shared"
+cp "$PROJECT_DIR/build-info.json" "$staging/build-info.json"
 mkdir -p "$staging/deploy"
 cp -a "$PROJECT_DIR/deploy/windows" "$staging/deploy/windows"
+cp -a "$PROJECT_DIR/deploy/updater" "$staging/deploy/updater"
 (cd "$staging" && DB_NAME=terminal_package_qa DB_USER=qa DB_PASSWORD=qa TERMINAL_ROLE=standalone ADMIN_TOTP_HEX= ADMIN_TOTP_PAUSED=false RESTRICT_STAFF_DEVICES=false node --input-type=module -e 'await import("./backend/node/app.js"); console.log("Installer application import verified.")')
 (cd "$staging" && zip -q -r "$STATE_DIR/base.next.zip" .)
 chown root:madina-express "$STATE_DIR/base.next.zip"
@@ -82,24 +84,26 @@ install -d -m 0755 /var/www/madina-express/terminal-runtime
 runtime_sha=cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b
 runtime_file=/var/www/madina-express/terminal-runtime/vc-redist-$runtime_sha.exe
 if [[ ! -f $runtime_file ]]; then
-  if [[ -f /root/madina-runtime-downloads/vc_redist.x64.exe ]]; then
-    cp /root/madina-runtime-downloads/vc_redist.x64.exe "$runtime_file"
+  if [[ -f /var/cache/madina-express/runtime/vc_redist.x64.exe ]]; then
+    cp /var/cache/madina-express/runtime/vc_redist.x64.exe "$runtime_file"
   else
     curl -fL https://aka.ms/vs/17/release/vc_redist.x64.exe -o "$runtime_file"
   fi
 fi
 printf '%s  %s\n' "$runtime_sha" "$runtime_file" | sha256sum -c -
 chmod 0644 "$runtime_file"
-for setting in TERMINAL_ROLE=cloud TERMINAL_DIRECTORY="$STATE_DIR" ADMIN_TOTP_PAUSED=false CLOUD_SESSION_DIRECTORY=/var/lib/madina-express/admin-sessions; do
+ENV_FILE="$PROJECT_DIR/backend/.env"
+if [[ -f /etc/madina-express/backend.env ]]; then ENV_FILE=/etc/madina-express/backend.env; fi
+for setting in CLOUD_UPDATE_DIRECTORY=/var/lib/madina-express/updates TERMINAL_ROLE=cloud TERMINAL_DIRECTORY="$STATE_DIR" ADMIN_TOTP_PAUSED=false CLOUD_SESSION_DIRECTORY=/var/lib/madina-express/admin-sessions; do
   key=${setting%%=*}
-  if grep -q "^$key=" "$PROJECT_DIR/backend/.env"; then
-    sed -i "s|^$key=.*|$setting|" "$PROJECT_DIR/backend/.env"
+  if grep -q "^$key=" "$ENV_FILE"; then
+    sed -i "s|^$key=.*|$setting|" "$ENV_FILE"
   else
-    printf '\n%s\n' "$setting" >> "$PROJECT_DIR/backend/.env"
+    printf '\n%s\n' "$setting" >> "$ENV_FILE"
   fi
 done
-chown root:madina-express "$PROJECT_DIR/backend/.env"
-chmod 0640 "$PROJECT_DIR/backend/.env"
+chown root:madina-express "$ENV_FILE"
+chmod 0640 "$ENV_FILE"
 repair_archive=/var/www/madina-express/Madina-Express-Main-PC-Repair.zip
 zip -q -j "$repair_archive" "$PROJECT_DIR/deploy/windows/Repair-Main-PC.cmd" "$PROJECT_DIR/deploy/windows/Repair-Main-PC.ps1" "$PROJECT_DIR/deploy/windows/Run-Server.ps1"
 chmod 0644 "$repair_archive"

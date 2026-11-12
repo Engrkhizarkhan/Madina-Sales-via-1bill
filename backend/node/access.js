@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { canRemote } from "./account-access.js";
 import { config } from "./config.js";
 import { fail, tokenHash } from "./helpers.js";
 
@@ -30,23 +30,4 @@ export function sessionHash(token, role, device) {
   return tokenHash(config.restrictStaffDevices && role !== "admin" ? `${token}:${device}` : token);
 }
 
-let lastAdminStep = -1;
-
-export function verifyAdminCode(input) {
-  if (config.adminTotpPaused || !config.adminOtpKey) return true;
-  if (typeof input !== "string" || !/^\d{6}$/.test(input)) return false;
-  const currentStep = Math.floor(Date.now() / 30_000);
-  const counter = Buffer.alloc(8);
-  for (const step of [currentStep, currentStep - 1, currentStep + 1]) {
-    if (step <= lastAdminStep) continue;
-    counter.writeBigUInt64BE(BigInt(step));
-    const digest = createHmac("sha1", config.adminOtpKey).update(counter).digest();
-    const offset = digest.at(-1) & 15;
-    const code = String((digest.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, "0");
-    if (timingSafeEqual(Buffer.from(code), Buffer.from(input))) {
-      lastAdminStep = step;
-      return true;
-    }
-  }
-  return false;
-}
+export const accountSessionHash = (token,user,device) => sessionHash(token,canRemote(user)?"admin":"counter",device);

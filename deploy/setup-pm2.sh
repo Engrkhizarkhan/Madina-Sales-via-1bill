@@ -11,7 +11,8 @@ INSTALLED_VERSION=$(/opt/node-current/bin/node -p "try { require('/opt/node-curr
 if [[ $INSTALLED_VERSION != "$PM2_VERSION" ]]; then
   /opt/node-current/bin/npm install --global "pm2@$PM2_VERSION"
 fi
-install -d -m 0750 -o madina-express -g madina-express /var/lib/madina-express /var/lib/madina-express/.pm2 /var/log/madina-express
+install -d -m 0751 -o root -g madina-express /var/lib/madina-express
+install -d -m 0750 -o madina-express -g madina-express /var/lib/madina-express/.pm2 /var/log/madina-express
 install -m 0755 "$PROJECT_DIR/deploy/madina-pm2" /usr/local/bin/madina-pm2
 install -m 0755 "$PROJECT_DIR/deploy/pm2" /usr/local/bin/pm2
 install -m 0644 "$PROJECT_DIR/deploy/pm2-logrotate.conf" /etc/logrotate.d/madina-express

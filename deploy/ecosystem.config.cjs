@@ -1,9 +1,12 @@
 const path = require('node:path');
+const fs = require('node:fs');
+let application = path.resolve(__dirname, '..');
+try { application = JSON.parse(fs.readFileSync('/var/lib/madina-express/host/current.json','utf8')).application; } catch { /* initial deployment */ }
 
 module.exports = {
   apps: [{
     name: 'madina-express',
-    cwd: path.resolve(__dirname, '..'),
+    cwd: application,
     script: 'backend/node/server.js',
     interpreter: '/opt/node-current/bin/node',
     instances: 1,
@@ -19,6 +22,6 @@ module.exports = {
     merge_logs: true,
     out_file: '/var/log/madina-express/app-out.log',
     error_file: '/var/log/madina-express/app-error.log',
-    env: { NODE_ENV: 'production', TZ: 'Asia/Karachi' },
+    env: { NODE_ENV: 'production', TZ: 'Asia/Karachi', MADINA_ENV_FILE: '/etc/madina-express/backend.env' },
   }],
 };

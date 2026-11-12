@@ -22,7 +22,7 @@ server {
     listen [::]:443 ssl http2 default_server;
     server_name __PUBLIC_HOST__;
     include /etc/nginx/snippets/madina-common.conf;
-    location ~ ^/api/(health|terminal-sync/(register|bootstrap|activate|status|abort|public-status)|public/(bootstrap|trip-runs|bookings|ticket-lookup))$ {
+    location ~ ^/api/(health|terminal-sync/(register|bootstrap|activate|status|abort|public-status|update-channel|update-status|update-control)|public/(bootstrap|trip-runs|bookings|ticket-lookup))$ {
         include /etc/nginx/snippets/madina-api.conf;
         proxy_set_header X-Madina-Device "";
     }
@@ -42,8 +42,17 @@ server {
     ssl_verify_depth 1;
 
     location = / { return 302 /login; }
+    location ^~ /api/updates/ {
+        rewrite ^/api(/.*)$ $1 break;
+        proxy_buffering off;
+        proxy_pass http://127.0.0.1:3101;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Madina-Device "";
+    }
     # Installer and sync control stay on the cloud even while the main-PC tunnel is offline.
-    location ~ ^/api/terminal-sync/(register|bootstrap|activate|status|abort|public-status)$ {
+    location ~ ^/api/terminal-sync/(register|bootstrap|activate|status|abort|public-status|update-channel|update-status|update-control)$ {
         rewrite ^/api(/.*)$ $1 break;
         proxy_buffering off;
         proxy_pass http://127.0.0.1:3101;

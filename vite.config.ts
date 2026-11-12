@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react'
 import { sites } from '@openai/sites-vite-plugin'
 import { defineConfig, loadEnv } from 'vite'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 const workerEntry = () => ({
@@ -29,6 +29,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   return {
     base: env.VITE_PUBLIC_BASE || '/',
+    define: { __MADINA_BUILD__: existsSync('build-info.json') ? readFileSync('build-info.json','utf8') : JSON.stringify({version:'3.0.0',releaseId:'development',commit:null,sequence:0}) },
     plugins: [react(), sites(), workerEntry()],
   }
 })

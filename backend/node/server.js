@@ -1,3 +1,4 @@
+import { maintenance } from "../update/maintenance.js";
 import { terminalState } from "../terminal/state.js";
 import { startTerminalRuntime, stopTerminalRuntime, terminalReady } from "../terminal/runtime.js";
 import { startTerminalWeb } from "../terminal/web.js";
@@ -11,7 +12,7 @@ const server = app.listen(config.port, config.host, () => {
 });
 
 const expireReservations = async () => {
-  if (!(await terminalReady()) || ["preparing", "active"].includes((await terminalState()).phase)) return;
+  if (maintenance.draining() || !(await terminalReady()) || ["preparing", "active"].includes((await terminalState()).phase)) return;
   await releaseExpiredReservations();
 };
 const releaseHolds = () => expireReservations().catch(error => {

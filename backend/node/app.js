@@ -6,9 +6,14 @@ import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { CloudSessions } from "./cloud-sessions.js";
 import express from "express";
+import { updateAdminRouter } from "../update/routes.js";
+import { maintenance } from "../update/maintenance.js";
+import { releaseInfo } from "../update/version.js";
 import bcrypt from "bcryptjs";
-import { limitAttempts, sessionHash, terminalDevice, verifyAdminCode } from "./access.js";
+import { limitAttempts, sessionHash, accountSessionHash, terminalDevice } from "./access.js";
 import { config } from "./config.js";
+import { accountVersion, canRemote, isOwner, permittedDevice, requireOwner, newAuthenticator, verifyUserCode } from "./account-access.js";
+import { getPolicies, validatePolicies } from "./policies.js";
 import { pool, transaction } from "./db.js";
 import { ApiError, fail, isoDateTime, pakistanDate, randomToken, requireFields } from "./helpers.js";
 import {
@@ -55,6 +60,8 @@ app.use((req, _res, next) => {
   next();
 });
 
+app.use(maintenance.route);
+app.use(maintenance.middleware);
 app.use("/terminal-sync", terminalSyncRouter);
 app.use("/terminal", terminalEnrollmentRouter);
 app.use(cloudAuthorityGuard);
@@ -73,7 +80,8 @@ const readSessionToken = (req) => (req.get("cookie") || "").split(/;\s*/)
   ?.slice(sessionCookie.length + 1).match(/^[0-9a-f]{64}$/)?.[0];
 const publicUser = (user) => ({
   id: Number(user.id), name: user.name, username: user.username,
-  role: user.role, forcePasswordChange: Boolean(user.force_password_change),
+  role: user.role, email: user.email || "", isOwner: isOwner(user), remoteAllowed: canRemote(user), mfaRequired: isOwner(user) || Boolean(user.mfa_required),
+  forcePasswordChange: Boolean(user.force_password_change),
 });
 const cookieOptions = {
   httpOnly: true, secure: config.secureCookies, sameSite: "lax", path: "/",
@@ -87,7 +95,7 @@ async function loadSession(req) {
   const hash = sessionHash(token, "admin", device);
   const saved = config.terminal.cloud ? await cloudSessions.read(hash) : null;
   if (saved) {
-    const [[user]] = await pool.execute("SELECT id, name, username, role, active, password_hash, force_password_change FROM users WHERE id = ?", [saved.userId || 0]);
+    const [[user]] = await pool.execute("SELECT * FROM users WHERE id = ?", [saved.userId || 0]);
     if (!cloudSessions.valid(saved, user)) return null;
     const [[pin]] = await pool.execute("SELECT JSON_UNQUOTE(setting_value) pin_hash FROM settings WHERE setting_key = 'finance_pin_hash'");
     req.cloudSession = saved;
@@ -102,7 +110,7 @@ async function loadSession(req) {
             (s.finance_unlocked_until > NOW() AND EXISTS (
               SELECT 1 FROM settings WHERE setting_key = 'finance_pin_hash'
             )) finance_unlocked,
-            u.id, u.name, u.username, u.role, u.active, u.force_password_change
+            u.id, u.name, u.username, u.role, u.active, u.force_password_change, u.email, u.session_version, u.is_owner, u.remote_allowed, u.terminal_slots, u.mfa_required, u.mfa_secret
      FROM api_sessions s JOIN users u ON u.id = s.user_id
      WHERE s.token_hash IN (?, ?) AND s.expires_at > NOW()
        AND s.created_at > DATE_SUB(NOW(), INTERVAL 24 HOUR) LIMIT 1`,
@@ -110,9 +118,9 @@ async function loadSession(req) {
   );
   const session = records[0];
   if (!session || !session.active ||
-      (config.restrictStaffDevices && session.role !== "admin" && !device) ||
-      session.token_hash !== sessionHash(token, session.role, device)) return null;
-  if (req.cloudReadOnly && session.role !== "admin") return null;
+      !permittedDevice(session,device) ||
+      session.token_hash !== accountSessionHash(token,session,device)) return null;
+  if (req.cloudReadOnly && !canRemote(session)) return null;
   if (!req.cloudReadOnly) await pool.execute("UPDATE api_sessions SET last_activity = NOW(), expires_at = DATE_ADD(NOW(), INTERVAL 8 HOUR) WHERE token_hash = ? AND last_activity < DATE_SUB(NOW(), INTERVAL 5 MINUTE)", [session.token_hash]);
   req.sessionTokenHash = session.token_hash;
   req.session = session;
@@ -142,42 +150,47 @@ async function createSession(connection, req, user) {
   await connection.execute(
     `INSERT INTO api_sessions (token_hash, user_id, csrf_token, last_activity, expires_at, ip_address, user_agent)
      VALUES (?, ?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 8 HOUR), ?, ?)`,
-    [sessionHash(token, user.role, terminalDevice(req)), user.id, csrf, String(req.ip || "unknown").slice(0, 64), String(req.get("user-agent") || "").slice(0, 255)],
+    [accountSessionHash(token,user,terminalDevice(req)), user.id, csrf, String(req.ip || "unknown").slice(0, 64), String(req.get("user-agent") || "").slice(0, 255)],
   );
   return { token, csrfToken: csrf };
 }
 
 app.get("/health", asyncRoute(async (_req, res) => {
   await pool.query("SELECT 1");
-  res.json({ status: "ok", database: "connected", runtime: "node", time: new Date().toISOString(), paymentMode: config.paymentMode,
+  res.json({ status: "ok", database: "connected", runtime: "node", time: new Date().toISOString(), release:releaseInfo, paymentMode: config.paymentMode,
     ...(config.terminal.local ? { installationId: process.env.TERMINAL_INSTALLATION_ID } : {}) });
 }));
 
 app.post("/auth/login", asyncRoute(async (req, res) => {
   limitAttempts("login", req, 35, 15 * 60_000);
   const { identity: input, password, otp } = req.body || {};
-  if (typeof input !== "string" || !input.trim() || input.length > 80 ||
+  if (typeof input !== "string" || !input.trim() || input.length > 190 ||
       typeof password !== "string" || !password || Buffer.byteLength(password) > 72) {
     fail("The username or password is incorrect.", 401, "invalid_credentials");
   }
   const identity = input.trim().toLowerCase();
   const [records] = await pool.execute(
-    "SELECT id, name, username, role, active, password_hash, force_password_change FROM users WHERE username = ? LIMIT 1",
-    [identity],
+    "SELECT * FROM users WHERE username = ? OR email = ? LIMIT 1",
+    [identity, identity],
   );
   const user = records[0];
   if (!user || !user.active || !(await passwordMatches(password, user.password_hash))) {
     await new Promise((resolve) => setTimeout(resolve, 250));
     fail("The username or password is incorrect.", 401, "invalid_credentials");
   }
-  if (config.restrictStaffDevices && user.role !== "admin" && !terminalDevice(req)) {
+  if (!permittedDevice(user,terminalDevice(req))) {
     fail("Sign in from an approved terminal PC. Ask your administrator to enroll the PC in Settings → Staff access.", 403, "terminal_required");
   }
-  if (user.role === "admin" && !verifyAdminCode(otp)) {
+  if (isOwner(user) && verifyUserCode(user,otp) === false) {
     fail("Enter a current code from the administrator's authenticator app.", 401, "authenticator_required");
   }
   if (req.cloudReadOnly) {
-    if (user.role !== "admin") fail("Use the terminal's local address to sign in as staff.", 403, "terminal_required");
+    if (!canRemote(user)) fail("Use the terminal's local address to sign in as staff.", 403, "terminal_required");
+    {
+      const step = verifyUserCode(user,otp);
+      if (step === false) fail("Enter a current code from this account's authenticator app.",401,"authenticator_required");
+      if (step !== null) await cloudSessions.consumeOtp(user.id,step);
+    }
     const oldToken = readSessionToken(req);
     if (oldToken) await cloudSessions.revoke(sessionHash(oldToken, "admin", ""));
     const token = randomToken(), csrfToken = randomToken();
@@ -189,10 +202,15 @@ app.post("/auth/login", asyncRoute(async (req, res) => {
   if (req.cloudSession && oldSession) await cloudSessions.revoke(oldSession.token_hash);
   const session = await transaction(async (connection) => {
     const [[current]] = await connection.execute(
-      "SELECT id, name, username, role, active, password_hash, force_password_change FROM users WHERE id = ? FOR UPDATE", [user.id],
+      "SELECT * FROM users WHERE id = ? FOR UPDATE", [user.id],
     );
-    if (!current?.active || current.password_hash !== user.password_hash || current.username !== user.username || current.role !== user.role) {
+    if (!current?.active || accountVersion(current) !== accountVersion(user) || current.username !== user.username) {
       fail("The username or password is incorrect.", 401, "invalid_credentials");
+    }
+    {
+      const step = verifyUserCode(current,otp);
+      if (step === false) fail("Enter a current code from this account's authenticator app.",401,"authenticator_required");
+      if (step !== null) await connection.execute("UPDATE users SET mfa_last_step=? WHERE id=?",[step,current.id]);
     }
     if (oldSession) await connection.execute("DELETE FROM api_sessions WHERE token_hash = ?", [oldSession.token_hash]);
     await connection.execute("UPDATE users SET failed_login_count = 0, locked_until = NULL, last_login_at = NOW() WHERE id = ?", [current.id]);
@@ -205,17 +223,19 @@ app.post("/auth/login", asyncRoute(async (req, res) => {
 }));
 
 app.get("/public/bootstrap", asyncRoute(async (_req, res) => {
+  const policy=await getPolicies();
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  res.json({ fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), occupancy: await publicOccupancy(pakistanDate()), terminalAvailable: !["preparing", "active"].includes((await terminalState()).phase) });
+  res.json({ fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), occupancy: await publicOccupancy(pakistanDate()), reservationPolicy:{maxSeats:policy.publicMaxSeats,expiryEnabled:policy.publicExpiryEnabled,expiryHours:policy.publicExpiryHours}, terminalAvailable:policy.publicReservationsEnabled && !["preparing", "active"].includes((await terminalState()).phase) });
 }));
 
 app.get("/public/trip-runs", asyncRoute(async (req, res) => {
+  const policy=await getPolicies();
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
   const date = String(req.query.date || "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("Choose a valid travel date.", 422, "validation_error");
   const runs = await fetchTripRuns(date);
   res.json({ runs: runs.map((run) => ({ id: run.id, tripId: run.tripId, date: run.date, runNumber: run.runNumber,
-    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(date), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), terminalAvailable: !["preparing", "active"].includes((await terminalState()).phase) });
+    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(date), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), terminalAvailable: policy.publicReservationsEnabled && !["preparing", "active"].includes((await terminalState()).phase) });
 }));
 
 app.post("/public/bookings", asyncRoute(async (req, res) => {
@@ -251,6 +271,7 @@ app.use(asyncRoute(async (req, _res, next) => {
 }));
 
 app.use("/terminal", terminalAdminRouter);
+app.use("/updates",updateAdminRouter);
 
 app.get("/auth/me", asyncRoute(async (req, res) => res.json({ user: publicUser(req.user), csrfToken: req.session.csrf_token })));
 
@@ -295,8 +316,8 @@ app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
   });
   res.json({
     bookings: await fetchBookings(), fleet: await fetchBuses(), trips: todayTrips, runs, routes: await fetchRoutes(),
-    crew: await fetchCrew(), users: req.user.role === "admin" ? await fetchUsers() : [],
-    user: publicUser(req.user), paymentMode: config.paymentMode, readOnly: Boolean(req.cloudReadOnly),
+    crew: await fetchCrew(), users: isOwner(req.user) ? await fetchUsers() : [],
+    user: publicUser(req.user), release:releaseInfo, policies:await getPolicies(), paymentMode: config.paymentMode, readOnly: Boolean(req.cloudReadOnly),
   });
 }));
 
@@ -319,7 +340,7 @@ app.post("/auth/finance-unlock", asyncRoute(async (req, res) => {
     if (!hash) fail("Set a finance PIN in Settings first.", 409, "finance_pin_not_set");
     if (!(await passwordMatches(pin, hash))) fail("The finance PIN is incorrect.", 422, "invalid_pin");
     if (!req.cloudSession) {
-      const [[user]] = await pool.execute("SELECT id, role, password_hash FROM users WHERE id = ?", [req.user.id]);
+      const [[user]] = await pool.execute("SELECT * FROM users WHERE id = ?", [req.user.id]);
       await cloudSessions.create(req.sessionTokenHash, user, req.session.csrf_token);
     }
     await cloudSessions.change(req.sessionTokenHash, current => {
@@ -357,7 +378,7 @@ app.get("/finance/status", asyncRoute(async (req, res) => {
 }));
 
 app.put("/finance/pin", asyncRoute(async (req, res) => {
-  requireRole(req.user, ["admin"]);
+  requireOwner(req.user);
   limitAttempts("finance-pin-change", req, 15, 15 * 60_000);
   const { pin, currentPassword } = req.body || {};
   if (typeof pin !== "string" || !/^\d{6,10}$/.test(pin)) {
@@ -449,17 +470,57 @@ app.get("/audit", asyncRoute(async (req, res) => {
   const [events] = await pool.query("SELECT a.id, a.action, a.entity_type, a.entity_id, a.before_json, a.after_json, a.ip_address, a.created_at, u.name user_name FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 200");
   res.json({ events });
 }));
-app.post("/users", asyncRoute(async (req, res) => { requireRole(req.user, ["admin"]); res.status(201).json({ user: await createStaffUser(req.body, req.user, req) }); }));
+app.post("/users", asyncRoute(async (req, res) => { requireOwner(req.user); res.status(201).json({ user: await createStaffUser(req.body, req.user, req) }); }));
 
 app.put("/users/:id", asyncRoute(async (req, res) => {
-  requireRole(req.user, ["admin"]);
+  requireOwner(req.user);
   res.json({ user: await updateStaffUser(req.params.id, req.body, req.user, req) });
 }));
 app.delete("/users/:id", asyncRoute(async (req, res) => {
-  requireRole(req.user, ["admin"]);
+  requireOwner(req.user);
   await removeStaffUser(req.params.id, req.user, req);
   res.json({ ok: true });
 }));
+
+app.get("/settings/policies", asyncRoute(async (_req,res) => res.json({ policies: await getPolicies() })));
+app.put("/settings/policies", asyncRoute(async (req,res) => {
+  requireOwner(req.user);
+  const policies = validatePolicies(req.body);
+  await transaction(async connection => {
+    const before = await getPolicies(connection);
+    await connection.execute("INSERT INTO settings (setting_key,setting_value,updated_by) VALUES ('booking_policies',?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),updated_by=VALUES(updated_by)",[JSON.stringify(policies),req.user.id]);
+    await audit('policies.updated','settings','booking_policies',before,policies,req.user.id,req,connection);
+  });
+  res.json({ policies });
+}));
+app.post("/users/:id/revoke", asyncRoute(async (req,res) => {
+  requireOwner(req.user);
+  await transaction(async connection => {
+    const [[account]] = await connection.execute('SELECT is_owner FROM users WHERE id=? AND active=1 FOR UPDATE',[req.params.id]);
+    if (!account) fail('Account not found.',404,'not_found');
+    if (account.is_owner) fail('The main administrator is protected.',403,'admin_protected');
+    await connection.execute('UPDATE users SET session_version=session_version+1 WHERE id=?',[req.params.id]);
+    await connection.execute('DELETE FROM api_sessions WHERE user_id=?',[req.params.id]);
+    await audit('user.sessions_revoked','user',req.params.id,null,null,req.user.id,req,connection);
+  });
+  res.json({ok:true});
+}));
+app.post("/users/:id/authenticator", asyncRoute(async (req,res) => {
+  requireOwner(req.user);
+  if (typeof req.body?.enabled !== 'boolean') fail('Choose whether an authenticator is required.',422,'validation_error');
+  const setup = await transaction(async connection => {
+    const [[account]] = await connection.execute("SELECT * FROM users WHERE id=? AND active=1 FOR UPDATE",[req.params.id]);
+    if (!account) fail('Account not found.',404,'not_found');
+    if (isOwner(account)) fail('The main administrator authenticator is protected.',403,'admin_protected');
+    const enrollment = req.body.enabled ? newAuthenticator(account.username) : null;
+    await connection.execute("UPDATE users SET mfa_required=?,mfa_secret=?,mfa_last_step=-1,session_version=session_version+1 WHERE id=?",[req.body.enabled,enrollment?.encrypted||null,account.id]);
+    await connection.execute("DELETE FROM api_sessions WHERE user_id=?",[account.id]);
+    await audit('user.authenticator_changed','user',account.id,null,{enabled:req.body.enabled},req.user.id,req,connection);
+    return enrollment ? { secret:enrollment.secret,uri:enrollment.uri } : null;
+  });
+  res.json({ setup, user:(await fetchUsers(pool,Number(req.params.id)))[0] });
+}));
+
 app.get("/users/terminal-access", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
   if (config.terminal.local) {

@@ -6341,3 +6341,10 @@ td small {
 
 .thermal-ticket .ticket-booking-promo { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid #000; color: #000; font: 11px/1.35 Arial, sans-serif; text-align: center; }
 .thermal-ticket .ticket-booking-promo strong { font-weight: 700; }
+
+/* Account and policy checkboxes stay compact within the standard settings grid. */
+.settings-card input[type="checkbox"] { width: 16px; min-width: 16px; height: 16px; margin: 0 8px 0 0; vertical-align: middle; accent-color: var(--primary, #175b47); }
+.settings-card > h3 { margin: 0 0 8px; }
+.settings-card > p { color: var(--muted); font-size: 13px; line-height: 1.55; margin: 0 0 14px; }
+.settings-card .staff-account-actions { flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 700px) { .staff-accounts li { align-items: flex-start; flex-direction: column; } .settings-card .staff-account-actions { justify-content: flex-start; } }

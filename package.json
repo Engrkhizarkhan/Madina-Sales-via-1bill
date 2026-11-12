@@ -1,7 +1,7 @@
 {
   "name": "madina-sales-via-1bill",
   "private": true,
-  "version": "2.1.0",
+  "version": "3.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,10 +18,10 @@
     "db:migrate": "node backend/scripts/migrate.js",
     "test:services": "node backend/tests/route-services.js",
     "test:terminal": "node --test backend/tests/terminal-security.js",
-    "test:enrollment": "node backend/tests/terminal-enrollment.js"
+    "test:enrollment": "node backend/tests/terminal-enrollment.js",
+    "prebuild": "node scripts/write-build-info.mjs"
   },
   "dependencies": {
-    "@openai/sites-vite-plugin": "^0.2.0",
     "@peculiar/x509": "3.1.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
@@ -49,7 +49,8 @@
     "globals": "^17.11.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.67.0",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "@openai/sites-vite-plugin": "^0.2.0"
   },
   "overrides": {
     "minimatch": "11.0.6"

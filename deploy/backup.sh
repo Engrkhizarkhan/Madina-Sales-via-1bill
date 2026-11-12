@@ -19,4 +19,5 @@ mysqldump --protocol=socket --user=root --single-transaction --routines --trigge
 gzip -t "$TEMPORARY"
 mv -- "$TEMPORARY" "$DESTINATION"
 find "$BACKUP_DIR" -maxdepth 1 -type f -name 'madina-express-????????T??????Z.sql.gz' -mtime +29 -delete
+find "$BACKUP_DIR" -maxdepth 1 -type f -name 'pre-update-*.sql.gz' -mtime +29 -delete
 echo "$DESTINATION"

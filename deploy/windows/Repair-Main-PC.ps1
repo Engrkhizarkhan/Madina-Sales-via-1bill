@@ -6,10 +6,14 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $base = Join-Path $env:ProgramData 'MadinaExpress'
 $data = Join-Path $base 'data'
 $app = Join-Path $base 'application'
+$pointer = Join-Path $base 'host\current.json'
+if (Test-Path $pointer) { $app = (Get-Content $pointer -Raw | ConvertFrom-Json).application }
 $node = Join-Path $base 'runtime\node.exe'
 $keyPath = Join-Path $data 'tunnel-key'
-$runner = Join-Path $app 'deploy\windows\Run-Server.ps1'
-if (-not (Test-Path (Join-Path $app 'backend\.env')) -or -not (Test-Path $keyPath) -or -not (Test-Path $node)) {
+$runner = if (Test-Path $pointer) { Join-Path $base 'host\Run-Server.ps1' } else { Join-Path $app 'deploy\windows\Run-Server.ps1' }
+$configuration = Join-Path $base 'config\backend.env'
+if (-not (Test-Path $configuration)) { $configuration = Join-Path $app 'backend\.env' }
+if (-not (Test-Path $configuration) -or -not (Test-Path $keyPath) -or -not (Test-Path $node)) {
     throw 'The main PC installation is incomplete. Keep ProgramData and contact support before continuing.'
 }
 Write-Host 'Repairing the existing main PC service. The database is retained.'

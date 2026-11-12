@@ -4,9 +4,13 @@ $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run as Administrator.' }
 $base = Join-Path $env:ProgramData 'MadinaExpress'
 $app = Join-Path $base 'application'
+$pointer = Join-Path $base 'host\current.json'
+if (Test-Path $pointer) { $app = (Get-Content $pointer -Raw | ConvertFrom-Json).application }
 $data = Join-Path $base 'data'
 $node = Join-Path $base 'runtime\node.exe'
-$envFile = Join-Path $app 'backend\.env'
+$envFile = Join-Path $base 'config\backend.env'
+if (-not (Test-Path $envFile)) { $envFile = Join-Path $app 'backend\.env' }
+$env:MADINA_ENV_FILE = $envFile
 if (-not (Test-Path $envFile)) { throw 'Install the main PC first.' }
 Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -match '^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)' } | Format-Table InterfaceAlias, IPAddress
 $ip = Read-Host 'Enter the IPv4 address assigned to this PC on the new LAN'

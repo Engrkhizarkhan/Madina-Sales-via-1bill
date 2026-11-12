@@ -49,7 +49,35 @@ setTimeout(() => {
     if (-not $actual.AreAccessRulesProtected) { throw 'The SSH key still inherits permissions.' }
     if ($actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-19') { throw 'The SSH key owner is not LocalService.' }
     Write-Host 'PASS repair removes prior explicit key permissions and keeps only the service, SYSTEM and Administrators'
+    # Exercise the real updater installation on this disposable Windows runner.
+    $app = Join-Path $base 'application'
+    New-Item -ItemType Directory -Force (Join-Path $app 'deploy\updater'), (Join-Path $app 'deploy\windows'), (Join-Path $base 'config'), (Join-Path $base 'data') | Out-Null
+    Copy-Item (Join-Path $project 'deploy\updater\*') (Join-Path $app 'deploy\updater') -Force
+    Copy-Item (Join-Path $project 'deploy\windows\Run-Server.ps1') (Join-Path $app 'deploy\windows') -Force
+    Copy-Item (Join-Path $project 'deploy\windows\Run-Updater.ps1') (Join-Path $app 'deploy\windows') -Force
+    '{"version":"3.0.0","releaseId":"r-123456789abc","sequence":1}' | Set-Content (Join-Path $app 'build-info.json') -Encoding ASCII
+    'TERMINAL_CLOUD_ORIGIN=https://example.invalid' | Set-Content (Join-Path $base 'config\backend.env') -Encoding ASCII
+    'fixture only' | Set-Content (Join-Path $base 'config\mysql-admin.cnf') -Encoding ASCII
+    '{}' | Set-Content (Join-Path $base 'config\local-secrets.json') -Encoding ASCII
+    $action = New-ScheduledTaskAction -Execute 'cmd.exe' -Argument '/c exit 0'
+    $principal = New-ScheduledTaskPrincipal -UserId 'S-1-5-19' -LogonType ServiceAccount
+    Register-ScheduledTask -TaskName 'Madina Express Terminal Server' -Action $action -Principal $principal -Trigger (New-ScheduledTaskTrigger -AtStartup) -Force | Out-Null
+    & (Join-Path $project 'deploy\windows\Install-Update-Service.ps1')
+    $updateTask = Get-ScheduledTask -TaskName 'Madina Express Application Updates'
+    if ($updateTask.Principal.UserId -notin @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM')) { throw 'Updater is not running under SYSTEM.' }
+    if ($updateTask.Settings.MultipleInstances -ne 'IgnoreNew') { throw 'Update jobs could overlap.' }
+    if ((Get-ScheduledTask -TaskName 'Madina Express Terminal Server').Actions.Arguments -notmatch 'host\\Run-Server.ps1') { throw 'Server task does not use the protected stable launcher.' }
+    $privateAcl = Get-Acl (Join-Path $base 'config\mysql-admin.cnf')
+    $privatePrincipals = @($privateAcl.Access | ForEach-Object { $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value })
+    if ($privatePrincipals -contains 'S-1-5-19') { throw 'The app account can read database administrator credentials.' }
+    $pointer = Get-Content (Join-Path $base 'host\current.json') -Raw | ConvertFrom-Json
+    if ($pointer.application -ne $app -or $pointer.releaseId -ne 'r-123456789abc') { throw 'Initial release pointer is invalid.' }
+    Write-Host 'PASS actual Windows updater tasks, protected release pointer and private database administrator permissions'
+
 } finally {
     Set-Location $project
+    foreach ($name in @('Madina Express Application Updates','Madina Express Terminal Server')) {
+        if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName $name -Confirm:$false }
+    }
     if (Test-Path $base) { Remove-Item $base -Recurse -Force }
 }

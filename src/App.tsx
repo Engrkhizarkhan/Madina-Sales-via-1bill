@@ -1,3 +1,6 @@
+import { StaffPolicyContext, useStaffPolicy, type OperatingPolicies } from "./operating-policies";
+import { runningBuild, type ReleaseInfo } from "./release";
+import { AccountAccessSettings, BookingPolicySettings, ApplicationUpdateSettings } from "./system-settings";
 import {routeDestinations,seatFare,seatClass,departureTimes,commissionPolicy,type SeatClass,type RouteService} from "../shared/service-pricing.mjs";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
@@ -224,6 +227,7 @@ type StaffUser = {
   id: number;
   name: string;
   username: string;
+  isOwner?: boolean; remoteAllowed?: boolean; email?: string; terminals?: number[]; mfaRequired?: boolean; mfaConfigured?: boolean;
   role: "admin" | "manager" | "counter" | "dispatcher" | "finance";
   forcePasswordChange: boolean;
   active?: boolean;
@@ -250,7 +254,7 @@ type PublicOccupancy = {
   seats: number[];
 };
 type PublicReservation = Pick<Booking, "ticketNo" | "passenger" | "route" | "destination" |
-  "boardingPoint" | "service" | "seats" | "total" | "date" | "time"> & { expiresAt: string };
+  "boardingPoint" | "service" | "seats" | "total" | "date" | "time"> & { expiresAt: string | null };
 type PublicJourney = Pick<PublicReservation, "route" | "destination" | "boardingPoint" | "service" |
   "seats" | "date" | "time"> & {
     reference: string;
@@ -265,6 +269,8 @@ type PublicBootstrap = {
   occupancy: PublicOccupancy[];
 };
 type AdminBootstrap = {
+  policies?:OperatingPolicies;
+  release?: ReleaseInfo;
   readOnly?: boolean;
   runs: TripRun[];
   bookings: Booking[];
@@ -1038,7 +1044,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             <div>
               <strong>Choose your exact seat</strong>
               <p>
-                See live seat availability and select up to four seats in one
+                See live seat availability and choose your seats in one
                 reservation.
               </p>
             </div>
@@ -1190,6 +1196,8 @@ function PublicCheckout({
     }),
     [processing, setProcessing] = useState(false),
     [error, setError] = useState("");
+  const [reservationPolicy,setReservationPolicy]=useState({maxSeats:4,expiryEnabled:true,expiryHours:2});
+  useEffect(()=>{api.publicBootstrap<{reservationPolicy?:{maxSeats:number;expiryEnabled:boolean;expiryHours:number}}>().then(result=>{if(result.reservationPolicy)setReservationPolicy(result.reservationPolicy);}).catch(()=>undefined);},[]);
   const [destination,setDestination]=useState(trip.destination||routeDestinations(trip.route).at(-1)!.name);
   const total = selectedSeats.reduce((sum,seat)=>sum+seatFare(trip.route,trip.bus,destination,seat),0);
   const occupied = useMemo(
@@ -1201,7 +1209,7 @@ function PublicCheckout({
     setSelectedSeats((current) =>
       current.includes(seat)
         ? current.filter((item) => item !== seat)
-        : current.length < 4
+        : current.length < reservationPolicy.maxSeats
           ? [...current, seat].sort((a, b) => a - b)
           : current,
     );
@@ -1356,7 +1364,7 @@ function PublicCheckout({
                 )}
               </button>
               <small className="gateway-note">
-                <ShieldCheck size={13} /> Your seats are held for up to two hours or until departure, whichever comes first.
+                <ShieldCheck size={13} /> {reservationPolicy.expiryEnabled?`Unpaid reservations expire after ${reservationPolicy.expiryHours} hour(s) or at departure, whichever comes first.`:"No automatic reservation expiry is currently applied. Contact the counter to collect your ticket."}
               </small>
             </section>
           </div>
@@ -1380,7 +1388,7 @@ function ReservationConfirmation({ bookings, onClose }: { bookings: PublicReserv
   const [error, setError] = useState("");
   const first = bookings[0];
   const reference = first.ticketNo;
-  const until = reservationHoldLabel(first.expiresAt);
+  const until = first.expiresAt ? reservationHoldLabel(first.expiresAt) : "No automatic expiry";
 
   const download = useCallback(async () => {
     if (!card.current || downloadInProgress.current) return;
@@ -1497,11 +1505,11 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           <p className="login-business">Madina Express Operations</p>
           <h2>Welcome back</h2>
           <label>
-            <span>Username</span>
+            <span>Username or email</span>
             <input
               value={username}
               onChange={(event) => { setUsername(event.target.value); setRequiresOtp(false); setOtp(""); }}
-              placeholder="Enter your username"
+              placeholder="Enter your username or optional email"
               autoComplete="username"
             />
           </label>
@@ -1649,7 +1657,9 @@ function ManagementApp({
     [loading, setLoading] = useState(true),
     [loadError, setLoadError] = useState(""),
     [paymentMode, setPaymentMode] = useState("disabled"),
-    [cloudReadOnly, setCloudReadOnly] = useState(false);
+    [cloudReadOnly, setCloudReadOnly] = useState(false),
+    [availableBuild,setAvailableBuild]=useState<ReleaseInfo>(),
+    [staffPolicy,setStaffPolicy]=useState<OperatingPolicies|null>(null);
   useEffect(() => {
     api
       .adminBootstrap<AdminBootstrap>()
@@ -1662,7 +1672,7 @@ function ManagementApp({
         setCrew(result.crew);
         setStaffUsers(result.users);
         setPaymentMode(result.paymentMode);
-        setCloudReadOnly(Boolean(result.readOnly));
+        setCloudReadOnly(Boolean(result.readOnly));setAvailableBuild(result.release);setStaffPolicy(result.policies||null);
         onUserChange(result.user);
       })
       .catch((error: unknown) =>
@@ -1681,7 +1691,7 @@ function ManagementApp({
     const version=dataVersion.current;
     try{
       const result=await api.adminBootstrap<AdminBootstrap>();
-      setCloudReadOnly(Boolean(result.readOnly));
+      setCloudReadOnly(Boolean(result.readOnly));setAvailableBuild(result.release);setStaffPolicy(result.policies||null);
       if(version!==dataVersion.current)return;
       setBookings(result.bookings);setTrips(result.trips);setRuns(result.runs);setFleet(result.fleet);setRoutes(result.routes);setCrew(result.crew);setStaffUsers(result.users);
       setLastUpdated(new Date().toLocaleTimeString("en-GB",{timeZone:"Asia/Karachi"}));setRefreshError("");
@@ -1939,7 +1949,7 @@ function ManagementApp({
     }))
     .filter((group) => group.items.length > 0);
   return (
-    <div
+    <StaffPolicyContext.Provider value={user.role==="admin"?null:staffPolicy}><div
       className={`admin-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
     >
       <button
@@ -2014,7 +2024,7 @@ function ManagementApp({
           <small>
             Madina Terminal
             <br />
-            Peshawar
+            Peshawar<br/><span title={runningBuild.releaseId}>v{runningBuild.version} · {runningBuild.commit?.slice(0,7)||"development"}</span>
           </small>
         </div>
       </aside>
@@ -2053,6 +2063,7 @@ function ManagementApp({
           </div>
         </header>
         <TerminalConnectionBanner />
+        {availableBuild && availableBuild.releaseId!==runningBuild.releaseId && <div className="terminal-connection-notice" role="status">Version {availableBuild.version} is ready. Finish your current entry, then <button className="text-action" onClick={()=>window.location.reload()}>Refresh</button>.</div>}
         <main className="admin-main">
           {activeView === "dashboard" && (
             <DashboardView
@@ -2228,7 +2239,7 @@ function ManagementApp({
           <Check size={16} /> {toast}
         </div>
       )}
-    </div>
+    </div></StaffPolicyContext.Provider>
   );
 }
 
@@ -2577,6 +2588,8 @@ function MoneyField({
   onChange?: (value: number) => void;
   onClear?: () => void;
 }) {
+  const policy=useStaffPolicy();
+  const locked=!onChange || (label.startsWith("Fare") && policy?.staffCanEditFare===false) || (label.toLowerCase().includes("discount") && policy?.staffCanDiscount===false);
   return (
     <label>
       <span>{label}</span>
@@ -2584,6 +2597,7 @@ function MoneyField({
         <b>PKR</b>
         <input
           type="number"
+          readOnly={locked}
           min="0"
           step="0.01"
           value={value}
@@ -2722,8 +2736,10 @@ function RefundModal({
   onClose: () => void;
   onRefund: (id: string, refund: RefundTransaction) => Promise<void>;
 }) {
+  const policy=useStaffPolicy();
   const available = refundableBalance(booking);
-  const [amount, setAmount] = useState(available);
+  const maximum=Math.max(0,Math.min(available,policy?booking.paid*policy.staffMaxRefundPercent/100-refundedTotal(booking):available,policy?.staffMaxRefundAmount||available));
+  const [amount, setAmount] = useState(maximum);
   const [method, setMethod] = useState<PaymentMethod>(booking.paymentMethod === "Card" ? "Bank transfer" : booking.paymentMethod);
   const [reason, setReason] = useState<RefundReason>("Passenger request");
   const [reference, setReference] = useState("");
@@ -2743,7 +2759,7 @@ function RefundModal({
         className="form-modal compact-modal refund-modal"
         onSubmit={async (event) => {
           event.preventDefault();
-          if (!Number.isFinite(amount) || amount <= 0 || amount > available) {
+          if (!Number.isFinite(amount) || amount <= 0 || amount > maximum) {
             setError(`Enter an amount between PKR 1 and ${money(available)}.`);
             return;
           }
@@ -2754,15 +2770,15 @@ function RefundModal({
           if (busy) return;
           setBusy(true);
           try { await onRefund(booking.id, {
-            id: `RF-${Date.now()}`,
+            id: "",
             amount,
             releaseSeats,
             method,
             reason,
             reference:
-              reference.trim() || `CASH-${Date.now().toString().slice(-6)}`,
+              reference.trim(),
             notes: notes.trim(),
-            processedAt: new Date().toISOString(),
+            processedAt: "",
             processedBy: "",
           });
           onClose();
@@ -2802,7 +2818,7 @@ function RefundModal({
             <input
               type="number"
               min="1"
-              max={available}
+              max={maximum}
               step="1"
               required
               value={amount}
@@ -5115,40 +5131,15 @@ function SettingsView({
             </span>
           </div>
         </section>
-        {user.role === "admin" && !user.forcePasswordChange && (
+        {user.isOwner && !user.forcePasswordChange && (
           <>
-            <StaffAccessSettings staffUsers={staffUsers} onSaved={onStaffSaved} onRemoved={onStaffRemoved} showToast={showToast} />
+            <AccountAccessSettings staffUsers={staffUsers} onSaved={onStaffSaved} onRemoved={onStaffRemoved} showToast={showToast} />
             <TerminalServerSettings showToast={showToast} />
+            <ApplicationUpdateSettings showToast={showToast} />
             <FinancePinSettings showToast={showToast} />
           </>
         )}
-        <section className="surface settings-card">
-          <SettingsTitle
-            icon={<Ticket size={19} />}
-            title="Ticket & reservation policy"
-            text="Rules applied at the counter and public website."
-          />
-          <div className="policy-box">
-            <ShieldCheck size={17} />
-            <span>
-              <strong>Public payment rule</strong>
-              <small>
-                Public reservations are unpaid and expire after two hours or at departure. Counter staff issue tickets after collecting payment.
-              </small>
-            </span>
-          </div>
-          <div className="policy-box refund-policy-box">
-            <RefreshCw size={17} />
-            <span>
-              <strong>Refund control</strong>
-              <small>
-                Staff must record an amount, reason, method and reference. A
-                full refund releases the seats. For a partial refund, choose whether to cancel the
-                ticket or keep it confirmed. No automatic cancellation fee is applied.
-              </small>
-            </span>
-          </div>
-        </section>
+        <BookingPolicySettings editable={Boolean(user.isOwner)} showToast={showToast}/>
         <section className="surface settings-card">
           <SettingsTitle
             icon={<LockKeyhole size={19} />}
@@ -5326,15 +5317,6 @@ function SettingsView({
   );
 }
 
-const staffRoles = {
-  counter: "Counter agent",
-  manager: "Manager",
-  dispatcher: "Dispatcher",
-  finance: "Finance",
-};
-type StaffRole = keyof typeof staffRoles;
-const emptyStaffDraft = { name: "", username: "", role: "counter" as StaffRole, password: "" };
-
 function TerminalConnectionBanner() {
   const [connection, setConnection] = useState<Awaited<ReturnType<typeof api.terminalConnection>>>();
   useEffect(() => {
@@ -5420,122 +5402,6 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
     </ol><p>Child setup files expire after 30 minutes and require a TPM. Staff need both their account password and an enrolled PC. The main admin can sign in remotely with the authenticator even when the main PC is offline; the cloud then shows the last synced data. Changes resume when the main PC reconnects.</p>
     <p>During internet outages, the counters continue locally. Public reservations pause and the cloud catches up after reconnection. The main PC stores daily backups for 30 days.</p></details>
   </section>;
-}
-
-function StaffAccessSettings({ staffUsers, onSaved, onRemoved, showToast }: {
-  staffUsers: StaffUser[];
-  onSaved: (user: StaffUser) => void;
-  onRemoved: (id: number) => void;
-  showToast: (message: string) => void;
-}) {
-  const [draft, setDraft] = useState(emptyStaffDraft);
-  const [editing, setEditing] = useState<number | null>(null);
-  const [deleting, setDeleting] = useState<StaffUser | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [terminalAccess, setTerminalAccess] = useState<Awaited<ReturnType<typeof api.terminalAccess>>>();
-  const [terminalError, setTerminalError] = useState("");
-  const loadTerminals = useCallback(() => api.terminalAccess()
-    .then(result => {
-      setTerminalAccess(result);
-      setTerminalError("");
-    })
-    .catch(() => setTerminalError("Could not check enrollment. Try Refresh.")), []);
-  useEffect(() => { void loadTerminals(); }, [loadTerminals]);
-
-  const reset = () => {
-    setEditing(null);
-    setDraft(emptyStaffDraft);
-  };
-  const staff = staffUsers.filter(account => account.role !== "admin").sort((a, b) => a.name.localeCompare(b.name));
-
-  return (
-    <section className="surface settings-card staff-access-settings">
-      <SettingsTitle icon={<UsersRound size={19} />} title="Staff access"
-        text={`${staff.length} staff account${staff.length === 1 ? "" : "s"} · Administrator access is managed separately.`} />
-      <form className="settings-fields" aria-label={editing ? "Edit staff account" : "Create staff account"} onSubmit={async event => {
-        event.preventDefault();
-        if (saving) return;
-        setSaving(true);
-        try {
-          const result = editing === null ? await api.createUser<StaffUser>(draft) : await api.updateUser<StaffUser>(editing, draft);
-          onSaved(result.user);
-          showToast(editing === null ? `${result.user.name} was added.` : `Saved ${result.user.name}.`);
-          reset();
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : "Staff account could not be saved.");
-        } finally {
-          setSaving(false);
-        }
-      }}>
-        <label>
-          <span>Full name</span>
-          <input required maxLength={120} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} />
-        </label>
-        <label>
-          <span>Username</span>
-          <input required minLength={3} maxLength={40} autoComplete="off" value={draft.username}
-            onChange={event => setDraft({ ...draft, username: event.target.value })} />
-        </label>
-        <label>
-          <span>Role</span>
-          <select value={draft.role} onChange={event => setDraft({ ...draft, role: event.target.value as StaffRole })}>
-            {Object.entries(staffRoles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <label>
-          <span>{editing === null ? "Password" : "New password (optional)"}</span>
-          <input type="password" autoComplete="new-password" minLength={12} maxLength={72} required={editing === null}
-            value={draft.password} onChange={event => setDraft({ ...draft, password: event.target.value })} />
-        </label>
-        {editing !== null && <small className="span-2">Leave the new password blank to keep the current one.</small>}
-        <div className="span-2 view-actions">
-          <button className="primary-button" type="submit" disabled={saving}>
-            {editing === null ? <Plus size={15} /> : <Check size={15} />}
-            {saving ? "Saving…" : editing === null ? "Create staff account" : "Save staff changes"}
-          </button>
-          {editing !== null && <button className="secondary-button" type="button" disabled={saving} onClick={reset}>Cancel edit</button>}
-        </div>
-      </form>
-      <ul className="staff-accounts">
-        {staff.map(account => (
-          <li key={account.id}>
-            <div><strong>{account.name}</strong><small>{account.username} · {staffRoles[account.role as StaffRole]}</small></div>
-            <div className="staff-account-actions">
-              <button className="text-action" type="button" disabled={saving} aria-label={`Edit ${account.name}`} onClick={() => {
-                setEditing(account.id);
-                setDraft({ name: account.name, username: account.username, role: account.role as StaffRole, password: "" });
-              }}>Edit</button>
-              <button className="text-action" type="button" disabled={saving} aria-label={`Delete ${account.name}`}
-                onClick={() => setDeleting(account)}>Delete</button>
-            </div>
-          </li>
-        ))}
-      </ul>
-      <div className="terminal-setup">
-        <h3>Terminal PCs</h3>
-        <p>Staff can use any enrolled PC in its enrolled Windows profile. The main admin can sign in remotely.</p>
-        {terminalAccess && !terminalAccess.enforced && <p>Device checks are disabled in this environment.</p>}
-        {terminalAccess && <ul className="terminal-slots">
-          {terminalAccess.terminals.map(terminal => (
-            <li key={terminal.slot}>PC {terminal.slot} · <strong>{terminal.enrolled ? "Enrolled" : "Pending setup"}</strong></li>
-          ))}
-        </ul>}
-        {terminalError && <p className="form-error" role="alert">{terminalError}</p>}
-        <p>Use Main PC &amp; offline access in Settings to install the main server and generate a separate setup file for each counter.</p>
-      </div>
-      {deleting && (
-        <ConfirmDeleteModal title="Delete staff account" item={deleting.name}
-          text="This ends the staff member’s access and signs them out. Their ticket and audit history stays available."
-          onClose={() => setDeleting(null)} onConfirm={async () => {
-            await api.deleteUser(deleting.id);
-            if (editing === deleting.id) reset();
-            onRemoved(deleting.id);
-            showToast(`${deleting.name} was removed.`);
-            setDeleting(null);
-          }} />
-      )}
-    </section>
-  );
 }
 
 function FinancePinSettings({ showToast }: { showToast: (message: string) => void }) {

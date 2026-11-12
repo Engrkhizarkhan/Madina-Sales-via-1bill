@@ -24,7 +24,7 @@ let replacementBusId = null;
 const testAdminUsername = `node-admin-${Date.now()}`;
 const testAdminPassword = "NodeAdmin!2026Test";
 const [testAdminResult] = await pool.execute(
-  "INSERT INTO users (name, email, username, password_hash, role, force_password_change) VALUES (?, ?, ?, ?, 'admin', 0)",
+  "INSERT INTO users (name, email, username, password_hash, role, force_password_change,is_owner,remote_allowed) VALUES (?, ?, ?, ?, 'admin', 0,1,1)",
   ["Automated Node Administrator", `${testAdminUsername}@example.invalid`, testAdminUsername, await bcrypt.hash(testAdminPassword, 12)],
 );
 testAdminId = Number(testAdminResult.insertId);
@@ -297,7 +297,7 @@ try {
   const qaPassword = "NodeCounter!2026";
   const staff = await request("POST", "/users", { name: "Automated Node Counter", username: qaUsername, role: "counter", password: qaPassword }, csrf);
   check(staff.status === 201 && staff.body.user.role === "counter" && !staff.body.user.forcePasswordChange &&
-    !("email" in staff.body.user), "administrator creates a username-only staff account with a working password");
+    !staff.body.user.email, "administrator creates a staff account without requiring an email");
   createdUserId = Number(staff.body.user.id);
   const terminalAccess = await request("GET", "/users/terminal-access");
   check(terminalAccess.status === 200 && terminalAccess.body.terminals.length === 3, "admin can see the three terminal slots");

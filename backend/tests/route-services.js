@@ -6,7 +6,7 @@ import {pakistanDate} from '../node/helpers.js';
 if(!/test|qa/i.test(config.db.database)) throw new Error('Use an isolated test database.');
 const suffix=Date.now(), username=`services-${suffix}`,password='ServiceQA!2026';
 const base=process.env.TEST_API_URL||`http://${config.host}:${config.port}`;
-const [user]=await pool.execute("INSERT INTO users(name,email,username,password_hash,role,force_password_change) VALUES (?,?,?,?,'admin',0)",['Service QA',`${username}@example.invalid`,username,await bcrypt.hash(password,10)]);
+const [user]=await pool.execute("INSERT INTO users(name,email,username,password_hash,role,force_password_change,is_owner,remote_allowed) VALUES (?,?,?,?,'admin',0,1,1)",['Service QA',`${username}@example.invalid`,username,await bcrypt.hash(password,10)]);
 let cookie='',csrf='',count=0,busId,routeId;
 const tripId=`services-trip-${suffix}`;
 const tomorrow=pakistanDate(new Date(Date.now()+86400000)),today=pakistanDate();

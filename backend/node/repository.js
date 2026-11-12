@@ -37,12 +37,13 @@ export async function fetchCrew(executor = pool) {
 
 export async function fetchUsers(executor = pool, id = null) {
   const result = await rows(
-    `SELECT id, name, username, role, active, force_password_change, last_login_at, created_at
+    `SELECT id, name, username, email, role, active, force_password_change, last_login_at, created_at, is_owner, remote_allowed, terminal_slots, mfa_required, (mfa_secret IS NOT NULL) mfa_configured
      FROM users WHERE active = 1 ${id === null ? "" : "AND id = ?"} ORDER BY name`,
     id === null ? [] : [id], executor,
   );
   return result.map((row) => ({
     id: Number(row.id), name: row.name, username: row.username, role: row.role,
+    email: row.email || "", isOwner: Boolean(row.is_owner), remoteAllowed: Boolean(row.is_owner || row.remote_allowed), terminals: parseJson(row.terminal_slots,[1,2,3]), mfaRequired: Boolean(row.is_owner || row.mfa_required), mfaConfigured: Boolean(row.is_owner || row.mfa_configured),
     active: Boolean(row.active), forcePasswordChange: Boolean(row.force_password_change),
     lastLoginAt: isoDateTime(row.last_login_at), createdAt: isoDateTime(row.created_at),
   }));

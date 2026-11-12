@@ -24,6 +24,7 @@ export async function startTerminalWeb(app) {
         .send(template.replaceAll("https://staff.madinaexpress.duckdns.org", config.terminal.localOrigin));
     } catch (error) { next(error); }
   });
+  web.use("/assets",express.static(resolve(process.env.TERMINAL_ASSET_DIRECTORY || "dist/assets"),{dotfiles:"deny",index:false}));
   web.use(express.static(resolve("dist"), { dotfiles: "deny", index: false }));
   web.get(["/login", "/manage"], (_req, res) => res.sendFile(resolve("dist/index.html")));
   web.use((_req, res) => res.sendStatus(404));
