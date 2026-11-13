@@ -19,7 +19,7 @@ test('owner is remote, while sub-admin status alone never bypasses enrolled devi
 test('account access validates terminal slots and optional email',()=>{
  assert.deepEqual(accessDetails({terminals:[2,2],email:'Staff@Example.COM'}),{remote:false,terminals:[2],email:'staff@example.com'});
  assert.throws(()=>accessDetails({terminals:[]}),error=>error.status===422);
- assert.throws(()=>accessDetails({terminals:[4]}),error=>error.status===422);
+ assert.throws(()=>accessDetails({terminals:[100]}),error=>error.status===422);
  assert.throws(()=>accessDetails({remoteAllowed:'true'}),error=>error.status===422);
  assert.deepEqual(accessDetails({remoteAllowed:true,terminals:[]}).terminals,[]);
 });
@@ -55,4 +55,11 @@ test('staff fare, discount, collection and cumulative refund limits are enforced
  assert.doesNotThrow(()=>staffRefundPolicy(policy,counter,500,2200,600));
  assert.doesNotThrow(()=>staffRefundPolicy(policy,owner,2200,2200,0));
  assert.throws(()=>staffRefundPolicy({...policy,staffCanRefund:false},counter,1,2200,0),error=>error.status===403);
+});
+
+test('expanded PC access remains explicitly assigned and rejects malformed slots',()=>{
+ assert.equal(permittedDevice({...counter,terminal_slots:[4]},'terminal-4:certificate'),true);
+ assert.equal(permittedDevice(counter,'terminal-4:certificate'),false);
+ assert.deepEqual(accessDetails({terminals:[4,12,99],remoteAllowed:false}).terminals,[4,12,99]);
+ for(const slot of [0,100,1.5,'4'])assert.throws(()=>accessDetails({terminals:[slot],remoteAllowed:false}));
 });

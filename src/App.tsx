@@ -1,3 +1,6 @@
+import { receiptDefaults, receiptFonts, receiptNumberBounds, type ReceiptLayout } from "../shared/receipt-layout.mjs";
+import { ReceiptSettingsContext, useReceiptSettings } from "./receipt-settings";
+import { ConfirmationDialog } from "./confirmation";
 import { StaffPolicyContext, useStaffPolicy, type OperatingPolicies } from "./operating-policies";
 import { runningBuild, type ReleaseInfo } from "./release";
 import { AccountAccessSettings, BookingPolicySettings, ApplicationUpdateSettings } from "./system-settings";
@@ -5,17 +8,17 @@ import {routeDestinations,seatFare,seatClass,departureTimes,commissionPolicy,typ
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
-import { downloadReservationPdf } from "./reservation-pdf";
+import { downloadReservationPdf, downloadJourneyPdf } from "./reservation-pdf";
 import { presentationText, shortPaymentReference, shortRouteCode } from "./presentation-text";
 import { inDateRange, type DateRange } from "./booking-filters";
 import { ticketPresentation, ticketDate, ticketTime } from "./ticket-format";
-import { printDocument, printTicketBatch, type TicketPaper } from "./print-document";
+import { printDocument, printTicketBatch, silentCounterPrinting, type TicketPaper } from "./print-document";
 import { connectEpsonTicketPrinter } from "./epson-ticket-printer";
 import {
+  CloudOff,
   ArrowLeft,
   ArrowRight,
   Armchair,
-  BadgeCheck,
   Banknote,
   BookOpenCheck,
   Bus,
@@ -29,7 +32,6 @@ import {
   FileBarChart,
   FileText,
   Gauge,
-  Headphones,
   KeyRound,
   LockKeyhole,
   LogOut,
@@ -190,6 +192,7 @@ type Booking = {
   fareOverrides?: (number | null)[];
   id: string;
   ticketNo: string;
+  verificationUrl?: string;
   source: BookingSource;
   passenger: string;
   phone: string;
@@ -253,11 +256,12 @@ type PublicOccupancy = {
   time: string;
   seats: number[];
 };
-type PublicReservation = Pick<Booking, "ticketNo" | "passenger" | "route" | "destination" |
+type PublicReservation = Pick<Booking, "verificationUrl" | "ticketNo" | "passenger" | "route" | "destination" |
   "boardingPoint" | "service" | "seats" | "total" | "date" | "time"> & { expiresAt: string | null };
 type PublicJourney = Pick<PublicReservation, "route" | "destination" | "boardingPoint" | "service" |
   "seats" | "date" | "time"> & {
     reference: string;
+  passenger?:string;total?:number;paid?:number;
     status: BookingStatus | "Expired";
     expiresAt: string | null;
   };
@@ -639,19 +643,33 @@ const localPath = () => {
 };
 
 function App() {
+  const [receiptLayout,setReceiptLayout] = useState<ReceiptLayout>({...receiptDefaults});
   const [path, setPath] = useState(localPath);
+  useEffect(()=>{silentCounterPrinting();},[]);
+  useEffect(() => {
+    if (!path.startsWith("/manage")) return;
+    let active=true;
+    const refresh=()=>api.receiptLayout().then(result=>{if(active)setReceiptLayout(result.layout);}).catch(()=>{});
+    void refresh(); const timer=window.setInterval(refresh,30000);
+    return ()=>{active=false;window.clearInterval(timer);};
+  },[path]);
+  const receiptSettings = {layout:receiptLayout,save:async(layout:ReceiptLayout)=>{const result=await api.saveReceiptLayout(layout);setReceiptLayout(result.layout);}};
+
   useEffect(() => {
     const onPopState = () => setPath(localPath());
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
-  const navigate = (nextPath: string) => {
+  const navigate = useCallback((nextPath: string) => {
+    const params=new URLSearchParams(window.location.search);
+    if (nextPath==='/login'&&params.get('view')==='reports') sessionStorage.setItem('madina-open-reports','true');
+    if (nextPath==='/manage'&&sessionStorage.getItem('madina-open-reports')==='true') { nextPath='/manage?view=reports&counterPrint=dialog';sessionStorage.removeItem('madina-open-reports'); }
     window.history.pushState({}, "", `${appBase}${nextPath}` || "/");
     setPath(nextPath);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  };
+  }, []);
   if (path.startsWith("/manage")) {
-    return <ManagementGate onNavigate={navigate} />;
+    return <ReceiptSettingsContext.Provider value={receiptSettings}><ManagementGate onNavigate={navigate} /></ReceiptSettingsContext.Provider>;
   }
   if (publicSiteEnabled && path !== "/login") {
     return <PublicHome onNavigate={navigate} />;
@@ -701,7 +719,7 @@ function AppLoading({ message }: { message: string }) {
 
 function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
   const [from, setFrom] = useState("Peshawar"),
-    [to, setTo] = useState("Karachi"),
+    [preferredTo, setTo] = useState("Karachi"),
     [date, setDate] = useState(today),
     [searched, setSearched] = useState(false),
     [publicTrips, setPublicTrips] = useState<TripRecord[]>([]),
@@ -710,12 +728,14 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
     [occupancy, setOccupancy] = useState<PublicOccupancy[]>([]),
     [tripRuns, setTripRuns] = useState<TripRun[]>([]),
     [loadError, setLoadError] = useState(""),
-    [terminalAvailable, setTerminalAvailable] = useState(true);
+    [terminalAvailable, setTerminalAvailable] = useState(false);
+  const [checkingAvailability,setCheckingAvailability]=useState(true);
+  const [refreshAvailability,setRefreshAvailability]=useState(0);
   useEffect(() => {
     api
       .publicBootstrap<PublicBootstrap>()
       .then((result) => {
-        setTerminalAvailable(result.terminalAvailable !== false);
+        setTerminalAvailable(result.terminalAvailable !== false);setCheckingAvailability(false);
         setPublicTrips(result.trips);
         setPublicFleet(result.fleet);
         setPublicRoutes(result.routes);
@@ -735,19 +755,17 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
           return currentOrigin;
         });
       })
-      .catch((error: unknown) =>
-        setLoadError(error instanceof Error ? error.message : "Timetable could not be loaded."),
-      );
+      .catch((error: unknown) => {setTerminalAvailable(false);setCheckingAvailability(false);setLoadError(error instanceof Error ? error.message : "Timetable could not be loaded.");});
   }, []);
   useEffect(() => {
     let active = true;
     const refresh = () => api.publicTripRuns<TripRun>(date)
-      .then((result) => { if (active) { setTerminalAvailable(result.terminalAvailable !== false); setTripRuns(result.runs); setOccupancy(result.occupancy as PublicOccupancy[]); setPublicFleet(result.fleet as BusRecord[]); setPublicTrips(result.trips as TripRecord[]); setPublicRoutes(result.routes as RouteRecord[]); setLoadError(""); } })
-      .catch(() => { if (active) setLoadError("Availability could not be refreshed. Please try again."); });
+      .then((result) => { if (active) { setTerminalAvailable(result.terminalAvailable !== false);setCheckingAvailability(false); setTripRuns(result.runs); setOccupancy(result.occupancy as PublicOccupancy[]); setPublicFleet(result.fleet as BusRecord[]); setPublicTrips(result.trips as TripRecord[]); setPublicRoutes(result.routes as RouteRecord[]); setLoadError(""); } })
+      .catch(() => { if (active) {setTerminalAvailable(false);setCheckingAvailability(false);setLoadError("Connection to the booking server could not be refreshed.");} });
     void refresh();
     const timer = window.setInterval(refresh, 15000);
     return () => { active = false; window.clearInterval(timer); };
-  }, [date]);
+  }, [date,refreshAvailability]);
   const [checkoutTrip, setCheckoutTrip] = useState<{
     destination?:string;
     route: RouteRecord;
@@ -772,6 +790,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
         .flatMap((route) => routeDestinations(route).map(d=>d.name)),
     ),
   );
+  const to=destinationCities.includes(preferredTo)?preferredTo:(destinationCities[0]||preferredTo);
   const matchingRoutes = publicRoutes.filter(
     (route) => route.from === from && routeDestinations(route).some(d=>d.name===to),
   );
@@ -851,25 +870,15 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             <h1>
               Reserve your seat.
               <br />
-              <em>Travel with confidence.</em>
+              {" "}<em>Travel with confidence.</em>
             </h1>
             <p>
               Find a departure, reserve your seats online and pay at the terminal.
             </p>
-            <div className="hero-trust">
-              <span>
-                <BadgeCheck size={17} /> Live seat availability
-              </span>
-              <span>
-                <ShieldCheck size={17} /> Pay at the terminal
-              </span>
-              <span>
-                <Headphones size={17} /> Passenger support
-              </span>
-            </div>
+
           </div>
         </section>
-        <section className="route-finder" id="routes">
+        <section className={`route-finder${!terminalAvailable?" reservation-unavailable":""}`} id="routes">
           <div className="route-finder-heading">
             <span>
               <Route size={18} />
@@ -878,12 +887,10 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <h2>Find your bus</h2>
               <p>Choose your seats and reserve online.</p>
             </div>
-            <div className="payment-assurance">
-              <ShieldCheck size={15} /> Pay at the counter
-            </div>
+
           </div>
           {loadError && <p className="form-error">{loadError}</p>}
-          {!terminalAvailable && <p className="form-error" role="status">The terminal is temporarily offline. Timetables remain available; please contact the counter to reserve.</p>}
+          {!terminalAvailable && <div className="public-booking-unavailable" role="status"><CloudOff size={25}/><div><strong>{checkingAvailability?"Checking booking service…":"Online reservations are temporarily unavailable"}</strong><p>{checkingAvailability?"Please wait while we connect to the terminal.":"The booking server is unavailable. You can view the timetable, but reservations cannot be made right now. Please try again later."}</p></div><button type="button" className="secondary-button" onClick={()=>{setCheckingAvailability(true);setRefreshAvailability(value=>value+1);}}>Try again</button></div>}
           <form
             className="public-search"
             onSubmit={(event) => {
@@ -1032,8 +1039,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             <div>
               <strong>Major city routes</strong>
               <p>
-                Daily departures connecting Peshawar with Karachi, Lahore,
-                Islamabad and Multan.
+                Intercity departures from Peshawar. Choose a route above to see the current timetable.
               </p>
             </div>
           </article>
@@ -1075,6 +1081,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
       </footer>
       {checkoutTrip && (
         <PublicCheckout
+          terminalAvailable={terminalAvailable}
           trip={checkoutTrip}
           date={date}
           onClose={() => setCheckoutTrip(null)}
@@ -1100,12 +1107,23 @@ const journeyStatuses: Record<PublicJourney["status"], string> = {
 };
 
 function PublicTicketLookup() {
-  const [reference, setReference] = useState("");
+  const [reference, setReference] = useState(() => new URLSearchParams(window.location.search).get("reference") || "");
   const [phone, setPhone] = useState("");
   const [journey, setJourney] = useState<PublicJourney | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  const resultCard = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const key = new URLSearchParams(window.location.hash.slice(1)).get("key");
+    const reference = new URLSearchParams(window.location.search).get("reference");
+    if (!reference) return;
+    document.getElementById("ticket-lookup")?.scrollIntoView();
+    if (!key) return;
+    let active=true;
+    void api.lookupJourney<PublicJourney>(reference,"",key).then(result=>{if(active){setJourney(result.journey);setError("");}}).catch(()=>{if(active)setError("This QR link is no longer valid. Check using your reference and mobile number below.");});
+    return ()=>{active=false;};
+  },[]);
   const search = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy) return;
@@ -1147,7 +1165,7 @@ function PublicTicketLookup() {
         </button>
       </form>
       {error && <p className="form-error" role="alert">{error}</p>}
-      <div aria-live="polite">
+      <div aria-live="polite" ref={resultCard}>
         {journey && (
           <article className="lookup-result">
             <div className="lookup-result-heading">
@@ -1155,14 +1173,21 @@ function PublicTicketLookup() {
               <strong>{journeyStatuses[journey.status]}</strong>
             </div>
             <dl>
+              {journey.passenger&&<div><dt>Passenger</dt><dd>{journey.passenger}</dd></div>}
               <div><dt>Route</dt><dd>{journey.route}</dd></div>
               <div><dt>Destination</dt><dd>{journey.destination}</dd></div>
               <div><dt>Departure</dt><dd>{ticketDate(journey.date)} · {journey.time} PKT</dd></div>
               <div><dt>Boarding point</dt><dd>{journey.boardingPoint}</dd></div>
               <div><dt>Seats</dt><dd>{seatList(journey.seats, journey.service)}</dd></div>
               <div><dt>Bus type</dt><dd>{journey.service}</dd></div>
+              {journey.total!==undefined&&<div><dt>Fare</dt><dd>{money(journey.total)}</dd></div>}
+              {journey.paid!==undefined&&<div><dt>Paid</dt><dd>{money(journey.paid)}</dd></div>}
               {journey.expiresAt && <div><dt>Held until</dt><dd>{reservationHoldLabel(journey.expiresAt)} PKT</dd></div>}
             </dl>
+            <button className="secondary-button lookup-download" type="button" onClick={async()=>{
+              if (!resultCard.current) return;
+              try{await downloadJourneyPdf(resultCard.current,journey.reference);}catch{setError("PDF could not be downloaded. Try again.");}
+            }}><FileText size={15}/> Download details PDF</button>
           </article>
         )}
       </div>
@@ -1171,6 +1196,7 @@ function PublicTicketLookup() {
 }
 
 function PublicCheckout({
+  terminalAvailable,
   trip,
   date,
   onClose,
@@ -1187,6 +1213,7 @@ function PublicCheckout({
   };
   date: string;
   onClose: () => void;
+  terminalAvailable:boolean;
   onReserved: (bookings: PublicReservation[]) => void;
 }) {
   const [selectedSeats, setSelectedSeats] = useState<number[]>([]),
@@ -1205,7 +1232,7 @@ function PublicCheckout({
     [trip.occupiedSeats],
   );
   const toggleSeat = (seat: number) => {
-    if (occupied.has(seat)) return;
+    if (!terminalAvailable || occupied.has(seat)) return;
     setSelectedSeats((current) =>
       current.includes(seat)
         ? current.filter((item) => item !== seat)
@@ -1215,6 +1242,7 @@ function PublicCheckout({
     );
   };
   const reserveSeats = async () => {
+    if (!terminalAvailable) {setError("The booking server is unavailable. Please try again later.");return;}
     if (
       !selectedSeats.length ||
       !passenger.name.trim() ||
@@ -1275,12 +1303,13 @@ function PublicCheckout({
             <X size={19} />
           </button>
         </header>
-        <div className="checkout-body">
+        {!terminalAvailable&&<div className="public-booking-unavailable" role="alert"><CloudOff size={24}/><div><strong>Booking server unavailable</strong><p>Your reservation has not been submitted. Please try again once the terminal reconnects.</p></div></div>}
+        <fieldset disabled={!terminalAvailable||processing} className={`checkout-body checkout-fieldset${!terminalAvailable?' checkout-disabled':''}`}>
           <section className="checkout-seat-section">
             <SectionTitle
               number="1"
               title="Select seats"
-              text="Choose up to four available seats."
+              text={`Choose up to ${reservationPolicy.maxSeats} available seats.`}
               suffix={String(selectedSeats.length)}
             />
             <SeatMap
@@ -1368,7 +1397,7 @@ function PublicCheckout({
               </small>
             </section>
           </div>
-        </div>
+        </fieldset>
       </div>
     </div>
   );
@@ -1425,6 +1454,7 @@ function ReservationConfirmation({ bookings, onClose }: { bookings: PublicReserv
             <dt>Departure</dt><dd>{ticketDate(first.date)} · {first.time} PKT</dd>
             <dt>Terminal</dt><dd>{first.boardingPoint}</dd>
             <dt>Seats / references</dt><dd>{bookings.map(booking => <span key={booking.ticketNo}>{seatList(booking.seats, booking.service)} · {booking.ticketNo}</span>)}</dd>
+            {first.verificationUrl&&<><dt>Check reservation</dt><dd><QRCodeSVG value={first.verificationUrl} size={92} marginSize={4} title="Scan to check this reservation"/></dd></>}
             <dt>Amount due</dt><dd>{money(bookings.reduce((total, booking) => total + booking.total, 0))}</dd>
             <dt>Held until</dt><dd>{until} PKT</dd>
           </dl>
@@ -1631,7 +1661,7 @@ function ManagementApp({
   onLogout: () => void | Promise<void>;
 }) {
   const [activeView, setActiveView] = useState<AdminView>(
-      new URLSearchParams(location.search).has("trip") && roleViews[user.role].includes("sale") ? "sale" : defaultAdminView(user),
+      new URLSearchParams(location.search).get("view")==="reports" && roleViews[user.role].includes("reports") ? "reports" : new URLSearchParams(location.search).has("trip") && roleViews[user.role].includes("sale") ? "sale" : defaultAdminView(user),
     ),
     [sidebarOpen, setSidebarOpen] = useState(false),
     [sidebarCollapsed, setSidebarCollapsed] = useState(false),
@@ -2039,13 +2069,15 @@ function ManagementApp({
               <strong>Madina Express</strong>
             </div>
           </div>
+          {availableBuild && availableBuild.releaseId!==runningBuild.releaseId && <div className="header-update-notice" role="status">Version {availableBuild.version} is ready. Finish your current entry, then <button className="text-action" onClick={()=>window.location.reload()}>Refresh</button>.</div>}
+          {toast&&<div className="header-notification" role="status">{toast}</div>}
           <div className="admin-topbar-right">
             <div className="admin-user">
               <span className="avatar">{initials}</span>
               <TerminalConnectionSignal />
               <div>
                 <strong>{user.name}</strong>
-                <small>{user.role} · Counter 01</small>
+                <small>{user.role}</small>
               </div>
             </div>
             <button
@@ -2059,7 +2091,6 @@ function ManagementApp({
             </button>
           </div>
         </header>
-        {availableBuild && availableBuild.releaseId!==runningBuild.releaseId && <div className="terminal-connection-notice" role="status">Version {availableBuild.version} is ready. Finish your current entry, then <button className="text-action" onClick={()=>window.location.reload()}>Refresh</button>.</div>}
         <main className="admin-main">
           {activeView === "dashboard" && (
             <DashboardView
@@ -2230,11 +2261,7 @@ function ManagementApp({
           onClose={() => setReport(null)}
         />
       )}
-      {toast && (
-        <div className="toast">
-          <Check size={16} /> {toast}
-        </div>
-      )}
+
     </div></StaffPolicyContext.Provider>
   );
 }
@@ -2444,12 +2471,12 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const net = records.reduce((sum,b)=>sum+netCollected(b),0);
   return <div className="admin-view sale-view counter-workspace">
     <section className="surface counter-selector">
-      <div className="counter-heading"><div><h1>Seat booking</h1><p>Select a departure. Everything for this journey stays here.</p></div><a className="secondary-button" href={`?trip=${encodeURIComponent(tripId)}&date=${date}`} target="_blank" rel="noreferrer">Open in another tab ↗</a></div>
+      <div className="counter-heading"><div><h1>Seat booking</h1><p>Select a departure. Everything for this journey stays here.</p></div><a className="secondary-button" href={`?trip=${encodeURIComponent(tripId)}&date=${date}&counterPrint=${silentCounterPrinting()?"silent":"dialog"}`} target="_blank" rel="noreferrer">Open in another tab ↗</a></div>
       <div className="counter-filters">
         <label><span>Route</span><select value={routeId} onChange={e=>{const next=trips.find(t=>!t.deleted&&t.active&&t.routeId===e.target.value);setRouteId(e.target.value);if(next)choose(next.id);}}>{routes.filter(r=>trips.some(t=>!t.deleted&&t.active&&t.routeId===r.id)).map(r=><option value={r.id} key={r.id}>{routeLabel(r)}</option>)}</select></label>
         <label><span>Travel date</span><input type="date" value={date} onChange={e=>{if(e.target.value)choose(tripId,e.target.value);}}/></label>
       </div>
-      <div className="departure-times" aria-label="Departure times">{choices.map(t=><button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{t.departure}</strong><small>{tripBus(t,fleet).model} · {t.status}</small></button>)}{!choices.length&&<p>No departures for this route and date.</p>}</div>
+      <div className="departure-times" aria-label="Departure times">{choices.map(t=><button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{t.departure} <span className="departure-booked-count" aria-label={`${bookings.filter(b=>b.tripRunId===tripRunKey(t,t.runNumber,date)&&b.bookingStatus==="Confirmed").reduce((n,b)=>n+b.seats.length,0)} booked seats`}>({bookings.filter(b=>b.tripRunId===tripRunKey(t,t.runNumber,date)&&b.bookingStatus==="Confirmed").reduce((n,b)=>n+b.seats.length,0)})</span></strong><small>{tripBus(t,fleet).model} · {t.status}</small></button>)}{!choices.length&&<p>No departures for this route and date.</p>}</div>
       {(onAddDeparture || onDeleteDeparture) && <div className="departure-roster-actions">
         {onAddDeparture && <button type="button" className="secondary-button" disabled={busy} onClick={() => onAddDeparture(date, { routeId, busId: bus.layoutId || bus.id, arrival: trip.arrival, days: trip.days })}><Plus size={15}/> Add departure</button>}
         {onDeleteDeparture && selectedDeparture && <button type="button" className="danger-button" disabled={busy} onClick={() => setDepartureToRemove(selectedDeparture)}><Trash2 size={15}/> Remove {selectedDeparture.departure} departure</button>}
@@ -3813,7 +3840,7 @@ function ReportModal({
   const printedBookings = voucher ? ledgerRecords : report.kind === "cnic" ? runBookings : [...runBookings, ...records.filter((booking) => booking.bookingStatus === "Reserved")];
   const rows = printedBookings.flatMap((booking) =>
     booking.seats.map((seat) => ({ booking, seat })),
-  );
+  ).sort((a,b)=>a.seat-b.seat);
   const total = gross - refunds;
   const savedVoucher = trip.snapshot?.voucher;
   const policy=commissionPolicy(route,bus);
@@ -3840,6 +3867,7 @@ function ReportModal({
   const thermal = report.kind === "terminal-thermal";
   const printReport = async () => {
     if (!documentRef.current || printRun.current) return;
+    if (!thermal && silentCounterPrinting()) {setPrintError("For A4 printer selection, open Madina Express Reports from the desktop and choose this departure. The Counter session is configured for silent thermal printing.");return;}
     const run = new AbortController();
     printRun.current = run;
     setPrinting(true);
@@ -3855,6 +3883,7 @@ function ReportModal({
           ? body => `@page { size: 80mm ${Math.ceil(body.firstElementChild!.scrollHeight * 25.4 / 96) + 2}mm; margin: 0; }`
           : `@page { size: A4 ${voucher ? "portrait" : "landscape"}; margin: 8mm; }`,
         signal: run.signal,
+        silent: thermal && silentCounterPrinting(),
       });
     } catch {
       if (!run.signal.aborted) setPrintError("The browser could not open this report for printing. Try again.");
@@ -3900,7 +3929,7 @@ function ReportModal({
         {voucherStale && <p className="form-error">Save the current voucher summary on the ticketing page before printing. Collections may have changed.</p>}
         {printError && <p className="form-error" role="alert">{printError}</p>}
         <article ref={documentRef}
-          className={`print-document operations-document document-${report.kind} ${rows.length>50?"document-dense":""} ${thermal ? "report-thermal" : voucher ? "report-a4" : "report-a4 report-landscape"}`}
+          className={`print-document operations-document document-${report.kind} ${rows.length>50||(report.kind==="cnic"&&rows.length>35)?"document-dense":""} ${thermal ? "report-thermal" : voucher ? "report-a4" : "report-a4 report-landscape"}`}
         >
           <header className="document-header">
             <div>
@@ -5198,20 +5227,7 @@ function SettingsView({
             title="Receipt configuration"
             text="Thermal ticket and passenger contact details."
           />
-          <div className="settings-fields">
-            <label>
-              <span>Business name</span>
-              <input value="Madina Express" readOnly />
-            </label>
-            <label>
-              <span>Support number</span>
-              <input value="0311-777-2299" readOnly />
-            </label>
-            <label className="span-2">
-              <span>Terminal address</span>
-              <input value="Madina Terminal, Peshawar" readOnly />
-            </label>
-          </div>
+          <ReceiptEditor editable={Boolean(user.isOwner)}/>
           <label className="auto-print-setting">
             <input
               type="checkbox"
@@ -5264,12 +5280,12 @@ function SettingsView({
             <button className="secondary-button" type="button" onClick={() => setSampleReceipt(true)}>
               <Printer size={15} /> Print sample
             </button>
-            <a className="secondary-button" href={`${appBase}/Madina-Express-Counter.cmd`} download>
-              Download silent ticket launcher
+            <a className="secondary-button" href={api.counterLauncherUrl} download>
+              Download Counter & Reports shortcuts
             </a>
           </div>
           <p className="receipt-print-help">
-            On Windows, set the 80 mm printer as the default and open the downloaded launcher to print tickets silently in Chrome. Use Firefox for the A4 CNIC and voucher print dialog.
+            On Windows, set the 80 mm printer as the default. Extract this ZIP and run Setup-Counter-Shortcut.cmd. It uses your existing default Edge, Chrome or Firefox. Counter prints thermal slips silently; Reports opens your normal browser for A4 printer selection. Close the Counter window before updating its shortcut.
           </p>
         </section>
         <section className="surface settings-card">
@@ -5312,6 +5328,27 @@ function SettingsView({
       )}
     </div>
   );
+}
+
+function ReceiptEditor({editable}:{editable:boolean}) {
+  const {layout,save}=useReceiptSettings();
+  const [draft,setDraft]=useState(layout),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
+  const dirty=JSON.stringify(draft)!==JSON.stringify(layout);
+  return <details className="receipt-editor"><summary>Edit receipt design</summary><form onSubmit={async event=>{
+    event.preventDefault();setBusy(true);setMessage("");
+    try{await save(draft);setMessage("Receipt design saved for all counters.");}catch(error){setMessage(error instanceof Error?error.message:"Could not save receipt design.");}finally{setBusy(false);}
+  }}><fieldset className="counter-fields" disabled={!editable||busy}><div className="settings-fields">
+    {([['businessName','Business name',60],['brandMark','Top logo text',12],['contact','Contact numbers',100],['terminal','Terminal name',160],['website','Booking website',100],['tokenTitle','Boarding slip title',40]] as const).map(([key,label,max])=><label key={key}><span>{label}</span><input maxLength={max} required={key==='businessName'||key==='tokenTitle'} value={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.value})}/></label>)}
+    <label><span>English font</span><select value={draft.font} onChange={event=>setDraft({...draft,font:event.target.value})}>{receiptFonts.map(font=><option key={font}>{font}</option>)}</select></label>
+    {(Object.entries(receiptNumberBounds) as [keyof typeof receiptNumberBounds,[number,number]][]).map(([key,[min,max]])=><label key={key}><span>{{fontSize:'Body font (px)',headingSize:'Heading font (px)',seatSize:'Seat number (px)',urduSize:'Urdu font (px)',paddingX:'Side padding (mm)',paddingY:'Top / bottom padding (mm)',lineHeight:'Line spacing',qrSize:'QR size (mm)'}[key]}</span><input type="number" required min={min} max={max} step={key==='lineHeight'?.05:.5} value={draft[key]} onChange={event=>setDraft({...draft,[key]:Number(event.target.value)})}/></label>)}
+    <label className="span-2"><span>Urdu passenger instructions</span><textarea lang="ur" dir="rtl" maxLength={600} value={draft.urduTerms} onChange={event=>setDraft({...draft,urduTerms:event.target.value})}/></label>
+    <label className="span-2"><span>Urdu boarding slip note</span><textarea lang="ur" dir="rtl" maxLength={200} value={draft.tokenNote} onChange={event=>setDraft({...draft,tokenNote:event.target.value})}/></label>
+    <label><span><input type="checkbox" checked={draft.showQr} onChange={event=>setDraft({...draft,showQr:event.target.checked})}/> Show ticket QR</span></label>
+    <label><span><input type="checkbox" checked={draft.showWebsite} onChange={event=>setDraft({...draft,showWebsite:event.target.checked})}/> Show booking website</span></label>
+  </div><div className="form-actions"><button type="button" className="secondary-button" onClick={()=>setDraft({...receiptDefaults})}>Restore design defaults</button><button className="primary-button" disabled={!dirty||busy}>{busy?'Saving…':'Save receipt design'}</button></div></fieldset></form>
+    <p role="status">{message}</p><small>Live preview · 80 mm paper · each slip prints separately</small>
+    <div className="receipt thermal-ticket receipt-design-preview"><TicketSlips booking={initialBookings[0]} printedAt={new Date()} layout={draft}/></div>
+  </details>;
 }
 
 function TerminalConnectionSignal() {
@@ -5367,6 +5404,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [allowSoftwareKey, setAllowSoftwareKey] = useState(false);
+  const [revoking, setRevoking] = useState<number|null>(null);
   const [devices, setDevices] = useState<Awaited<ReturnType<typeof api.terminalAccess>>>();
   const refresh = useCallback(async () => {
     try {
@@ -5396,15 +5434,21 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
   const local = status?.mode === "terminal";
   return <section className="surface settings-card">
     <SettingsTitle icon={<ShieldCheck size={19} />} title="Main PC & offline access"
-      text={local ? "All counters use this local server, including during internet outages." : "Install one local server on the main Windows PC, then enroll the three counter profiles."} />
+      text={local ? "All counters use this local server, including during internet outages." : "Install one local server on the main Windows PC, then enroll each counter PC."} />
     {status && <p className="terminal-address">{local ? `Local server: ${status.localOrigin}` : "Cloud server · starting the main PC installer transfers booking authority to that PC."}</p>}
     <div className="settings-fields"><label className="span-2"><span>Current administrator password</span>
       <input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} />
     </label></div>
     {local && <label className="span-2"><span><input type="checkbox" checked={allowSoftwareKey} onChange={event => setAllowSoftwareKey(event.target.checked)} /> Allow this PC without TPM</span><small>Applies to the next setup download only. Setup tries TPM first, then uses a Windows-protected, non-exportable key if needed. Approve only trusted PCs; a Windows administrator has more control over software keys.</small></label>}
     <div className="view-actions">
-      {local ? [1, 2, 3].map(slot => <button className="secondary-button" key={slot} disabled={busy} onClick={() => void download(slot)}>PC {slot} setup</button>) :
+      {local ? devices?.terminals.map(({slot}) => <button className="secondary-button" key={slot} disabled={busy} onClick={() => void download(slot)}>PC {slot} setup</button>) :
         <button className="primary-button" disabled={busy || !status || status.mode !== "cloud"} onClick={() => void download()}>{busy ? "Preparing setup…" : "Download main PC installer"}</button>}
+      {local && <button className="primary-button" disabled={busy || !password} onClick={async () => {
+        setBusy(true);
+        try { const result = await api.addTerminal(password); await refresh(); window.dispatchEvent(new Event("madina-terminals-changed")); showToast(`PC ${result.slot} added. Download its setup to enroll it.`); }
+        catch (error) { showToast(error instanceof Error ? error.message : "Could not add PC."); }
+        finally { setBusy(false); }
+      }}><Plus size={15}/> Add PC</button>}
       <button className="secondary-button" disabled={busy} onClick={() => void refresh()}>Refresh status</button>
       {!local && status?.phase === "preparing" && <button className="secondary-button" disabled={busy || !password} onClick={async () => {
         setBusy(true);
@@ -5414,18 +5458,16 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
       }}>Cancel unfinished setup</button>}
     </div>
     {local && <ul className="terminal-slots">{devices?.terminals.map(device => <li key={device.slot}>
-      PC {device.slot} · <strong>{device.enrolled ? `Enrolled${device.keyStorage === "windows" ? " · Windows key" : ""}` : "Pending setup"}</strong>{device.enrolled && <button className="text-action" disabled={busy} onClick={async () => {
-        setBusy(true);
-        try { await api.revokeTerminal(device.slot); await refresh(); showToast(`PC ${device.slot} access revoked.`); }
-        catch (error) { showToast(error instanceof Error ? error.message : "Could not revoke this PC."); }
-        finally { setBusy(false); }
-      }}>Revoke access</button>}
+      PC {device.slot} · <strong>{device.enrolled ? `Enrolled${device.keyStorage === "windows" ? " · Windows key" : ""}` : "Pending setup"}</strong>{device.enrolled && <button className="text-action" disabled={busy} onClick={() => setRevoking(device.slot)}>Revoke access</button>}
     </li>)}</ul>}
+    {revoking !== null && <ConfirmationDialog title={`Revoke PC ${revoking} access?`} confirmLabel="Revoke access" passwordRequired onClose={() => setRevoking(null)} onConfirm={async currentPassword => {
+      await api.revokeTerminal(revoking, currentPassword); await refresh(); showToast(`PC ${revoking} access revoked.`);
+    }}><p>Staff using this PC will lose access immediately. It will need a new setup file and enrollment to sign in again. Cancel to keep access.</p></ConfirmationDialog>}
     <details><summary>Installation steps</summary><ol>
       <li>Use a 64-bit Windows 10/11 main PC with PowerShell 5.1 and a fixed private IPv4 address. Windows 7 cannot run the installer. Connect the PCs to the same trusted router.</li>
       <li>Download the main installer here, extract the ZIP, and run Install-Main-PC.cmd on the main PC. Enter its local IPv4 address when asked and approve Windows elevation.</li>
       <li>Open the local address shown by setup, sign in as admin with your authenticator, and return to Settings.</li>
-      <li>Create a separate PC 1, PC 2 and PC 3 setup file. Run each one in the Windows profile used at that counter, including PC 1 on the main PC. The saved main IP is included.</li>
+      <li>Create a separate setup file for each counter. Use Add PC when another counter is needed. Run each one in the Windows profile used at that counter, including PC 1 on the main PC. The saved main IP is included.</li>
       <li>Use the new Madina Express Counter desktop shortcut. Keep the main PC awake. Its server starts after reboot.</li>
       <li>When moving the same main PC to another LAN, run Change-Main-PC-Network.cmd from the retained main installer folder. On enrolled child PCs run Change-Terminal-PC-Address.cmd with the new main IP. Data and PC enrollment are preserved.</li>
     </ol><p>Child setup files expire after 30 minutes. TPM is required unless the main admin approves compatibility mode for that download. Staff need both their account password and an enrolled Windows profile. Use standard Windows accounts for staff. The main admin can sign in remotely with the authenticator even when the main PC is offline; the cloud then shows the last synced data. Changes resume when the main PC reconnects.</p>
@@ -5889,13 +5931,14 @@ function ReceiptModal({ booking, batch = [], paper = "thermal", onClose }: {
     try {
       flushSync(() => setPrintedAt(new Date()));
       if (printArea.current) await printTicketBatch(printArea.current, paper, run.signal);
+      if (!run.signal.aborted) onClose();
     } catch (error) {
       if (!run.signal.aborted) setPrintError(ticketPrintError(paper, error));
     } finally {
       printRun.current = null;
       if (!run.signal.aborted) setPrinting(false);
     }
-  }, [paper]);
+  }, [paper, onClose]);
   useEffect(() => () => printRun.current?.abort(), []);
   const entries=batch.length?batch:[booking];
   const hasBoardingPass = entries.some(entry => ticketPresentation(entry).canBoard);
@@ -5923,27 +5966,31 @@ function TicketPrintPairs({ entries, printedAt }: { entries: Booking[]; printedA
   }));
 }
 
-function TicketSlips({booking,printedAt}:{booking:Booking;printedAt:Date}) {
+function TicketSlips({booking,printedAt,layout:preview}:{booking:Booking;printedAt:Date;layout?:ReceiptLayout}) {
+  const settings=useReceiptSettings();
+  const layout=preview||settings.layout;
+  const style = {"--receipt-font":layout.font,"--receipt-font-size":`${layout.fontSize}px`,"--receipt-heading-size":`${layout.headingSize}px`,"--receipt-seat-size":`${layout.seatSize}px`,"--receipt-urdu-size":`${layout.urduSize}px`,"--receipt-padding-x":`${layout.paddingX}mm`,"--receipt-padding-y":`${layout.paddingY}mm`,"--receipt-line-height":layout.lineHeight,"--receipt-qr-size":`${layout.qrSize}mm`} as React.CSSProperties;
+
   const ticket=ticketPresentation(booking),seats=seatList(booking.seats,booking.service);
   return <>
-    <article className="passenger-receipt" aria-label={`Passenger receipt seat ${seats}`}>
-      <header className="thermal-heading"><div className="ticket-brand-mark">SDK</div><h2>MADINA EXPRESS</h2><p className="ticket-contact">0311-777-2299 / 0315-777-2299</p></header>
+    <article style={style} className="passenger-receipt" aria-label={`Passenger receipt seat ${seats}`}>
+      <header className="thermal-heading">{layout.brandMark&&<div className="ticket-brand-mark">{layout.brandMark}</div>}<h2>{layout.businessName}</h2>{layout.contact&&<p className="ticket-contact">{layout.contact}</p>}</header>
       <div className="ticket-bus-type"><span>BUS Type</span><strong>{booking.service}</strong></div>
-      <div className="ticket-departure"><dl><div className="ticket-seat-number"><dt>SEAT NO #</dt><dd>{seats}</dd></div><div><dt>Departure</dt><dd>{booking.time}</dd></div><div><dt>Travel date</dt><dd>{ticketDate(booking.date)}</dd></div></dl><QRCodeSVG value={`MADINA EXPRESS\nTicket: ${booking.ticketNo}\nSeat: ${seats}`} size={76} level="M" marginSize={2} title="Ticket reference"/></div>
+      <div className="ticket-departure" style={!layout.showQr?{gridTemplateColumns:"1fr"}:undefined}><dl><div className="ticket-seat-number"><dt>SEAT NO #</dt><dd>{seats}</dd></div><div><dt>Departure</dt><dd>{booking.time}</dd></div><div><dt>Travel date</dt><dd>{ticketDate(booking.date)}</dd></div></dl>{layout.showQr&&<QRCodeSVG value={booking.verificationUrl || `https://madinaexpress.duckdns.org/check?reference=${encodeURIComponent(booking.ticketNo)}#ticket-lookup`} size={76} level="M" marginSize={4} title="Scan to check this ticket"/>}</div>
       <table className="thermal-details"><tbody>
-        <tr><th>Passenger</th><td>{booking.passenger}</td></tr><tr><th>Route</th><td>{booking.route}</td></tr><tr><th>Destination</th><td>{booking.destination}</td></tr><tr><th>Terminal</th><td>{booking.boardingPoint}</td></tr>
+        <tr><th>Passenger</th><td>{booking.passenger}</td></tr><tr><th>Route</th><td>{booking.route}</td></tr><tr><th>Destination</th><td>{booking.destination}</td></tr><tr><th>Terminal</th><td>{layout.terminal||booking.boardingPoint}</td></tr>
         <tr className="ticket-fare"><th>{ticket.canBoard?"Fare paid":"Net paid"}</th><td>{money(netCollected(booking))}</td></tr>
         {refundedTotal(booking)>0&&<tr><th>Refunded</th><td>{money(refundedTotal(booking))}</td></tr>}
         <tr><th>Ticket No.</th><td className="ticket-identifier">{booking.ticketNo}</td></tr><tr><th>Bus No.</th><td>{booking.bus}</td></tr><tr><th>Printed</th><td>{ticketTime(printedAt)} · {ticketDate(dateInPakistan(printedAt))}</td></tr>
       </tbody></table>
       {!ticket.canBoard&&<div className="thermal-payment-status"><strong>{ticket.status}</strong></div>}
-      <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>روانگی سے دس منٹ پہلے پہنچیں۔ ٹکٹ کی تاریخ، وقت اور سیٹ نمبر چیک کریں۔ اصل شناختی کارڈ ہمراہ رکھیں۔</p></div>
-      <p className="ticket-booking-promo">Book online: <strong>MadinaExpress.pk</strong></p>
+      <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>{layout.urduTerms}</p></div>
+      {layout.showWebsite&&layout.website&&<p className="ticket-booking-promo">Book online: <strong>{layout.website}</strong></p>}
     </article>
-    {ticket.canBoard && <article className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
-      <header><strong>MADINA EXPRESS</strong><span>BOARDING TOKEN</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
+    {ticket.canBoard && <article style={style} className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
+      <header><strong>{layout.businessName}</strong><span>{layout.tokenTitle}</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
       <table className="token-table"><tbody><tr><th>Bus No.</th><th>Destination</th></tr><tr><td>{booking.bus}</td><td>{booking.destination}</td></tr><tr><th>Travel date</th><th>Departure</th></tr><tr><td>{ticketDate(booking.date)}</td><td className="token-time">{booking.time}</td></tr><tr><th>Ticket No.</th><th>Paid</th></tr><tr><td>{booking.ticketNo}</td><td>{money(netCollected(booking))}</td></tr></tbody></table>
-      <p className="ticket-urdu" lang="ur" dir="rtl">یہ ٹوکن کنڈکٹر کے حوالے کریں۔</p>
+      <p className="ticket-urdu" lang="ur" dir="rtl">{layout.tokenNote}</p>
     </article>}
   </>;
 }

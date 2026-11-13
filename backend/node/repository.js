@@ -1,3 +1,4 @@
+import { ticketVerificationUrl, verifyTicketKey } from "./ticket-verification.js";
 import { pool } from "./db.js";
 import { isoDateTime, parseJson, trimTime } from "./helpers.js";
 
@@ -97,7 +98,7 @@ const refundDetails = `SELECT r.id, r.booking_id, r.amount, r.method, r.reason, 
 
 function mapBooking(row, seats, refunds) {
   return {
-    id: row.id, ticketNo: row.ticket_no, source: row.source, passenger: row.passenger,
+    id: row.id, ticketNo: row.ticket_no, verificationUrl: ticketVerificationUrl(row), source: row.source, passenger: row.passenger,
     phone: row.phone, cnic: row.cnic, gender: row.gender, route: row.route_label,
     destination: row.destination, boardingPoint: row.boarding_point, bus: row.bus_registration,
     service: row.service, seats: seats.map((item) => Number(item.seat_number)), fare: Number(row.fare),
@@ -121,21 +122,22 @@ export function normalizeBookingPhone(phone) {
   return /^\d{7,15}$/.test(digits) ? digits : "";
 }
 
-export async function lookupJourney(reference, phone) {
+export async function lookupJourney(reference, phone, key = null) {
   const [booking] = await rows(
-    `SELECT id, ticket_no, phone, route_label, destination, boarding_point, service, travel_date, travel_time,
+    `SELECT id, ticket_no, phone, passenger, total, paid, (SELECT COALESCE(SUM(amount),0) FROM refunds WHERE booking_id=bookings.id) refunded, route_label, destination, boarding_point, service, travel_date, travel_time,
             booking_status, expires_at,
             (expires_at <= NOW() AND (booking_status = 'Reserved' OR
               (booking_status = 'Cancelled' AND updated_at >= expires_at))) AS expired
      FROM bookings WHERE ticket_no = ? OR reservation_no = ? LIMIT 1`,
     [reference, reference],
   );
-  if (!booking || normalizeBookingPhone(booking.phone) !== phone) return null;
+  if (!booking || (key !== null ? !verifyTicketKey(booking,key) : normalizeBookingPhone(booking.phone) !== phone)) return null;
 
   const seats = await rows("SELECT seat_number FROM booking_seats WHERE booking_id = ? ORDER BY seat_number", [booking.id]);
   const status = booking.expired ? "Expired" : booking.booking_status;
   return {
     reference: booking.ticket_no,
+    ...(key !== null ? {passenger:booking.passenger,total:Number(booking.total),paid:Number(booking.paid)-Number(booking.refunded)} : {}),
     status,
     route: booking.route_label,
     destination: booking.destination,

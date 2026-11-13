@@ -10,6 +10,25 @@ install -d -m 0755 -o root -g root /usr/local/libexec
 DEBIAN_FRONTEND=noninteractive apt-get install -y zip >/dev/null
 install -m 0755 -o root -g root "$PROJECT_DIR/deploy/terminal-control.py" /usr/local/libexec/madina-terminal-control
 install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-terminal.conf.template" "$STATE_DIR/nginx-terminal.conf.template"
+# Apply an accepted release's proxy fixes to an already paired installation too.
+python3 - <<'NGINX'
+import json,os,pathlib,subprocess
+root=pathlib.Path('/var/lib/madina-express/terminal')
+state=json.loads((root/'state.json').read_text()) if (root/'state.json').exists() else {}
+if state.get('phase')=='active':
+    relay=json.loads((root/'private.json').read_text())['relayKey']
+    target=pathlib.Path('/etc/nginx/sites-available/madina-express')
+    old=target.read_bytes()
+    try:
+        target.write_text((root/'nginx-terminal.conf.template').read_text().replace('__RELAY_KEY__',relay))
+        os.chmod(target,0o600)
+        subprocess.run(['nginx','-t'],check=True)
+        subprocess.run(['systemctl','reload','nginx'],check=True)
+    except Exception:
+        target.write_bytes(old)
+        subprocess.run(['nginx','-t'],check=True)
+        raise
+NGINX
 if ! id madina-terminal >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin madina-terminal
   usermod --password '*NP*' madina-terminal

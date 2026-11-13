@@ -6375,3 +6375,58 @@ td small {
 .admin-sidebar.collapsed .sidebar-version { flex-direction:column; padding:8px 0; font-size:11px; }
 .admin-sidebar.collapsed .sidebar-version span { font-size:9px; }
 .terminal-address { overflow-wrap:anywhere; font-size:13px; color:#52615f; }
+
+/* Receipt editor values are carried on each slip into its isolated print job. */
+.passenger-receipt, .conductor-token {
+  font-family:var(--receipt-font,Arial),sans-serif;
+  font-size:var(--receipt-font-size,11px);
+  line-height:var(--receipt-line-height,1.3);
+  padding:var(--receipt-padding-y,3mm) var(--receipt-padding-x,3mm);
+}
+.thermal-ticket .thermal-heading h2 { font-family:var(--receipt-font,Arial),sans-serif;font-size:var(--receipt-heading-size,23px);white-space:normal;overflow-wrap:anywhere; }
+.thermal-ticket .thermal-heading > p, .thermal-ticket .thermal-heading .ticket-contact, .thermal-details, .token-table { font-size:var(--receipt-font-size,11px);white-space:normal; }
+.ticket-departure .ticket-seat-number dd, .token-seats strong { font-size:var(--receipt-seat-size,23px); }
+.thermal-ticket .ticket-urdu { font-size:var(--receipt-urdu-size,11px); }
+.ticket-departure { grid-template-columns:minmax(0,1fr) var(--receipt-qr-size,23mm); }
+.ticket-departure svg { width:var(--receipt-qr-size,23mm);height:var(--receipt-qr-size,23mm); }
+.thermal-details td, .thermal-details th, .token-table td, .token-table th { line-height:var(--receipt-line-height,1.3); }
+.receipt-editor { margin-block:12px; }
+.receipt-editor summary { cursor:pointer;font-weight:700;padding-block:8px; }
+.receipt-editor textarea { width:100%;min-height:85px;resize:vertical; }
+.receipt-design-preview { margin:16px auto;max-width:100%!important;border:1px solid #d7dedb;background:#fff; }
+.confirmation-dialog { width:min(440px,calc(100vw - 32px));border:0;border-radius:14px;padding:24px;box-shadow:0 24px 80px #0004;color:var(--ink); }
+.confirmation-dialog::backdrop { background:#08221b80; }
+.confirmation-dialog h2 { font-size:20px;margin:0 0 12px; }
+.confirmation-dialog p { font-size:14px;line-height:1.55; }
+.confirmation-dialog label { display:grid;gap:6px;margin-block:15px; }
+.confirmation-dialog input { width:100%;padding:10px;border:1px solid var(--line);border-radius:7px; }
+.header-update-notice { display:flex;align-items:center;gap:8px;background:#fff2ca;color:#634900;border:1px solid #eadbaf;border-radius:7px;padding:5px 10px;font-size:12px;margin-left:auto; }
+@media(max-width:650px){.admin-topbar{flex-wrap:wrap;}.header-update-notice{order:3;width:100%;margin:0;}.admin-user>div strong{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;}}
+/* Keep the journey finder prominent and leave supporting information below it. */
+.public-hero { min-height:0; }
+.hero-copy { padding:30px 0 24px; }
+.public-hero h1 { font-size:clamp(28px,4vw,43px);line-height:1.15;margin-block:10px; }
+.public-kicker { margin-bottom:10px; }
+.route-finder { margin-top:0;position:relative;box-shadow:0 8px 28px #12362c10;border:1px solid #d9e5df; }
+.route-finder-heading h2 { font-size:25px; }
+.public-benefits { margin-top:32px; }
+.public-booking-unavailable { display:flex;align-items:center;gap:14px;padding:18px;border:1px solid #d9dce0;border-radius:10px;background:#f0f1f3;color:#404852;margin-block:14px; }
+.public-booking-unavailable>svg { flex-shrink:0; }
+.public-booking-unavailable strong { font-size:16px; }
+.public-booking-unavailable p { margin:5px 0 0;font-size:13px;line-height:1.5; }
+.reservation-unavailable .public-search { background:#f6f7f8;border-radius:9px;padding:12px; }
+.checkout-fieldset { border:0;margin:0;min-width:0; }
+.checkout-disabled { opacity:.45;filter:grayscale(1); }
+.departure-booked-count { font-size:12px;font-weight:700;padding:2px 5px;border-radius:4px;background:#e9eef4;color:#1d4468; }
+.departure-times .active .departure-booked-count { background:#ffffff26;color:inherit; }
+.lookup-download { margin:12px 0 0; }
+@media(max-width:650px){.public-hero{padding:0;width:calc(100% - 28px);}.hero-copy{padding:24px 0 18px;}.hero-copy h1 br{display:none;}.public-hero h1{font-size:29px;}.route-finder{padding:18px;margin-top:0;}.public-benefits{gap:14px;}.public-booking-unavailable{flex-wrap:wrap;padding:14px;}.public-booking-unavailable>div{flex:1;min-width:180px;}.public-booking-unavailable>button{width:100%;}.public-search{gap:12px;}}
+.thermal-ticket .thermal-details th, .thermal-ticket .thermal-details td { font-size:var(--receipt-font-size,11px);line-height:var(--receipt-line-height,1.3); }
+.thermal-ticket .thermal-details .ticket-fare td { font-size:calc(var(--receipt-font-size,11px) * 1.36); }
+.thermal-ticket .token-table td { font-size:var(--receipt-font-size,11px); }
+.thermal-ticket .token-table th { font-size:calc(var(--receipt-font-size,11px) * .85); }
+.thermal-ticket .conductor-token header strong { font-family:var(--receipt-font,Arial),sans-serif; }
+.header-notification { color:#185f4a;background:#eaf4ee;border:1px solid #cfe4d7;border-radius:7px;padding:7px 10px;font-size:12px;max-width:450px;margin-left:auto; }
+@media(max-width:650px){.header-notification{order:3;width:100%;max-width:none;margin:0;}}
+.admin-topbar { min-height:64px;height:auto;padding-block:10px;gap:10px; }
+@media(min-width:900px){.header-notification{flex:0 1 auto;}.admin-topbar-left,.admin-topbar-right{flex-shrink:0;}}

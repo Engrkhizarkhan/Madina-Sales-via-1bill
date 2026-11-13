@@ -4,6 +4,14 @@ export type TicketPaper = "thermal" | "a4" | "tm-t88iv";
 
 let ticketPrintQueue = Promise.resolve();
 
+export function silentCounterPrinting() {
+  try {
+    if (new URLSearchParams(window.location.search).get("counterPrint") === "dialog") sessionStorage.removeItem("madina-counter-silent");
+    if (new URLSearchParams(window.location.search).get("counterPrint") === "silent") sessionStorage.setItem("madina-counter-silent", "true");
+    return sessionStorage.getItem("madina-counter-silent") === "true";
+  } catch { return false; }
+}
+
 export function printTicketBatch(source: HTMLElement, paper: TicketPaper, signal: AbortSignal) {
   const slips = Array.from(source.querySelectorAll(".passenger-receipt, .conductor-token"), slip => slip.cloneNode(true) as Element);
   if (!slips.length) return Promise.resolve();
@@ -46,14 +54,16 @@ function printBrowserTickets(slips: Element[], paper: "thermal" | "a4", signal: 
         return `@page { size: 80mm ${heightMm}mm; margin: 0; } ${slipPages}`;
       },
     signal,
+    silent: paper === "thermal" && silentCounterPrinting(),
   });
 }
 
-export async function printDocument(content: HTMLElement, { title, width, pageCss, signal }: {
+export async function printDocument(content: HTMLElement, { title, width, pageCss, signal, silent = false }: {
   title: string;
   width: string;
   pageCss: string | ((printBody: HTMLElement) => string);
   signal: AbortSignal;
+  silent?: boolean;
 }) {
   signal.throwIfAborted();
 
@@ -93,17 +103,25 @@ export async function printDocument(content: HTMLElement, { title, width, pageCs
     printWindow.document.head.append(pageStyle);
 
     await new Promise<void>((resolve, reject) => {
+      let started = false;
+      let returned = false;
+      let completed = false;
+      let silentTimer: number | undefined;
       const clearStartTimer = () => window.clearTimeout(startTimer);
       const cleanup = () => {
         clearStartTimer();
-        printWindow.removeEventListener("beforeprint", clearStartTimer);
+        window.clearTimeout(silentTimer);
+        printWindow.removeEventListener("beforeprint", onBeforePrint);
         printWindow.removeEventListener("afterprint", onAfterPrint);
         signal.removeEventListener("abort", onAbort);
       };
       const onAfterPrint = () => {
+        if (completed) return;
+        completed = true;
         cleanup();
         resolve();
       };
+      const onBeforePrint = () => { started = true; clearStartTimer(); if (silent && returned && !completed) silentTimer=window.setTimeout(onAfterPrint,2000); };
       const onAbort = () => {
         cleanup();
         reject(signal.reason);
@@ -112,11 +130,16 @@ export async function printDocument(content: HTMLElement, { title, width, pageCs
         cleanup();
         reject(new Error("The browser did not start printing."));
       }, 10000);
-      printWindow.addEventListener("beforeprint", clearStartTimer, { once: true });
+      printWindow.addEventListener("beforeprint", onBeforePrint, { once: true });
       printWindow.addEventListener("afterprint", onAfterPrint, { once: true });
       signal.addEventListener("abort", onAbort, { once: true });
       try {
         printWindow.print();
+        returned = true;
+        // Chromium kiosk printing can omit afterprint. Once print() has returned
+        // and printing started, release this job after spooling; never reprint it.
+        // Ordinary dialog jobs still wait for afterprint, including cancellation.
+        if (silent && started && !completed) silentTimer = window.setTimeout(onAfterPrint, 2000);
       } catch (error) {
         cleanup();
         reject(error);

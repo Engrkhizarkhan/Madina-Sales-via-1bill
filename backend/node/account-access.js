@@ -1,3 +1,4 @@
+import { validTerminalSlot } from "../../shared/terminal-slots.mjs";
 import { createHmac, createCipheriv, createDecipheriv, hkdfSync, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from './config.js';
 import { fail, parseJson } from './helpers.js';
@@ -10,14 +11,14 @@ export function requireOwner(user) {
 export function permittedDevice(user, device) {
   if (canRemote(user)) return true;
   if (!config.restrictStaffDevices) return true;
-  const slot = Number(device?.match(/^terminal-([1-3])(?::|$)/)?.[1]);
+  const slot = Number(device?.match(/^terminal-([1-9][0-9]?)(?::|$)/)?.[1]);
   const allowed = parseJson(user.terminal_slots, [1, 2, 3]);
   return Boolean(slot && allowed.includes(slot));
 }
 export function accessDetails(data) {
   if (data.remoteAllowed !== undefined && typeof data.remoteAllowed !== 'boolean') fail('Choose whether remote login is allowed.', 422, 'validation_error');
   const terminals = data.terminals === undefined ? [1, 2, 3] : data.terminals;
-  if (!Array.isArray(terminals) || terminals.some(slot => ![1,2,3].includes(slot))) fail('Choose PC 1, 2 or 3.', 422, 'validation_error');
+  if (!Array.isArray(terminals) || terminals.some(slot => !validTerminalSlot(slot))) fail('Choose a valid terminal PC.', 422, 'validation_error');
   if (!data.remoteAllowed && !terminals.length) fail('Select at least one terminal PC or allow remote access.', 422, 'validation_error');
   const email = typeof data.email === 'string' ? data.email.trim().toLowerCase() : '';
   if (email && (email.length > 190 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) fail('Enter a valid optional email address.', 422, 'validation_error');

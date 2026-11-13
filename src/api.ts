@@ -1,3 +1,4 @@
+import type { ReceiptLayout } from "../shared/receipt-layout.mjs";
 import type { ReleaseInfo } from "./release";
 const API_BASE = (
   import.meta.env.VITE_API_BASE ?? "http://localhost:3101"
@@ -90,14 +91,18 @@ function rememberCsrf<T extends { csrfToken?: string }>(payload: T): T {
 }
 
 export const api = {
+  counterLauncherUrl: `${API_BASE}/terminal/counter-launcher`,
   terminalConnection: () => request<{ local: boolean; connected: boolean; replicated: boolean; readOnly?: boolean; secondsBehind?:number|null; replicationError?:boolean; cloudLatencyMs?:number|null }>("/terminal/connection"),
   terminalStatus: () => request<TerminalStatus>("/terminal/status"),
   cancelTerminalSetup: (currentPassword: string) => request("/terminal/cancel-setup", { method: "POST", body: JSON.stringify({ currentPassword }) }),
   mainPcSetup: (password: string) => downloadSetup("/terminal/package", password, "Madina-Express-Main-PC.zip"),
   terminalPcSetup: (slot: number, password: string, allowSoftwareKey = false) => downloadSetup(`/terminal/devices/${slot}/package`, password, `Madina-Express-PC-${slot}.zip`, {allowSoftwareKey}),
-  revokeTerminal: (slot: number) => request<{ ok: boolean }>(`/terminal/devices/${slot}`, { method: "DELETE" }),
+  addTerminal: (currentPassword: string) => request<{slot:number}>("/terminal/devices", {method:"POST",body:JSON.stringify({currentPassword})}),
+  revokeTerminal: (slot: number, currentPassword: string) => request<{ ok: boolean }>(`/terminal/devices/${slot}`, { method: "DELETE", body:JSON.stringify({currentPassword,confirm:true}) }),
   updateStatus: () => request<{current:ReleaseInfo;available:{version:string;releaseId:string;createdAt:string}|null;paused:boolean;cloudAvailable:boolean;terminal:{stage:string;checkedAt?:string;message?:string;current?:{releaseId:string;version:string}}|null}>("/updates/status"),
   pauseUpdates: (paused:boolean) => request("/updates/control",{method:"POST",body:JSON.stringify({paused})}),
+  receiptLayout: () => request<{layout:ReceiptLayout}>("/settings/receipt"),
+  saveReceiptLayout: (layout:ReceiptLayout) => request<{layout:ReceiptLayout}>("/settings/receipt",{method:"PUT",body:JSON.stringify(layout)}),
   policies: <T>() => request<{policies:T}>("/settings/policies"),
   savePolicies: <T>(policies:T) => request<{policies:T}>("/settings/policies",{method:"PUT",body:JSON.stringify(policies)}),
   accountAuthenticator: <T>(id:number,enabled:boolean) => request<{user:T;setup:{secret:string;uri:string}|null}>(`/users/${id}/authenticator`,{method:"POST",body:JSON.stringify({enabled})}),
@@ -132,10 +137,10 @@ export const api = {
     request<{ unlocked: boolean; pinConfigured: boolean; expiresIn: number }>("/finance/status"),
   setFinancePin: (pin: string, currentPassword: string) =>
     request<{ ok: boolean }>("/finance/pin", { method: "PUT", body: JSON.stringify({ pin, currentPassword }) }),
-  lookupJourney: <T>(reference: string, phone: string) =>
+  lookupJourney: <T>(reference: string, phone: string, key?: string) =>
     request<{ journey: T }>("/public/ticket-lookup", {
       method: "POST",
-      body: JSON.stringify({ reference, phone }),
+      body: JSON.stringify({ reference, phone, key }),
     }),
   createPublicBooking: <T>(booking: unknown) =>
     request<{ bookings: T[] }>("/public/bookings", {

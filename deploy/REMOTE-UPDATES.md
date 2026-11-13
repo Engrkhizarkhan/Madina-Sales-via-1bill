@@ -40,3 +40,9 @@ Pre-update backups: `backups\pre-update-*.sql.gz` (30 days); daily backups remai
 Cloud: `journalctl -u madina-release-update.service`, `madina-pm2 logs --nostream`, `/var/lib/madina-express/host/current.json`.
 
 A failed release is not repeatedly installed. Fix it and push a new tested commit. If Windows or MySQL itself needs an upgrade, treat that as separate maintenance; ordinary application releases do not replace those runtimes. Verify physical Windows/LAN/printer operation before accepting live tickets. Windows 10 must receive applicable ongoing security updates.
+
+## Explicit production preparation
+
+Ordinary updates never delete operational data. An owner can explicitly request cleanup using the password/CSRF-protected maintenance endpoint. An operator can also deliver the fixed `clear-test-data` operation through the existing authenticated terminal status channel, signed by the external release key. The signed payload must name the exact installation, accepted release, protected main administrator, a unique nonce and an expiry within 15 minutes. It accepts no SQL or shell commands. A cloud API compromise cannot manufacture a valid signature.
+
+Cleanup waits for in-flight counter writes, takes a protected recovery snapshot and deletes bookings, payments, refunds, expenses, shifts, date-specific run history, test crew and other user accounts. It preserves the named main administrator, configured routes, buses, recurring rosters, settings and enrolled PCs. An applied nonce is committed in the same transaction as deletion, so repeated delivery after a reconnect cannot erase subsequent sales. The operator verifies the cloud has replicated the result and removes the signed request. Recovery snapshots expire with local backup retention after 30 days.

@@ -1,3 +1,4 @@
+import { ConfirmationDialog } from "./confirmation";
 import { useEffect, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { api } from './api';
@@ -5,6 +6,9 @@ type Account = {id:number;name:string;username:string;role:'admin'|'manager'|'co
 const roles = {admin:'Sub-admin',manager:'Manager',counter:'Counter agent',dispatcher:'Dispatcher',finance:'Finance'};
 const empty = {name:'',username:'',email:'',role:'counter' as Account['role'],password:'',remoteAllowed:false,terminals:[1,2,3]};
 export function AccountAccessSettings({staffUsers,onSaved,onRemoved,showToast}:{staffUsers:Account[];onSaved:(account:Account)=>void;onRemoved:(id:number)=>void;showToast:(message:string)=>void}) {
+ const [confirmation,setConfirmation]=useState<{title:string;message:string;label:string;action:()=>Promise<void>}|null>(null);
+ const [terminalSlots,setTerminalSlots]=useState<number[]>([1,2,3]);
+ useEffect(()=>{const refresh=()=>api.terminalAccess().then(result=>setTerminalSlots(result.terminals.map(device=>device.slot))).catch(()=>{});void refresh();window.addEventListener('madina-terminals-changed',refresh);return()=>window.removeEventListener('madina-terminals-changed',refresh);},[]);
  const [draft,setDraft]=useState(empty),[editing,setEditing]=useState<number|null>(null),[busy,setBusy]=useState(false),[setup,setSetup]=useState<{secret:string;uri:string;name:string}|null>(null);
  const accounts=staffUsers.filter(account=>!account.isOwner);
  const remotePasswordRequired=editing!==null&&draft.remoteAllowed&&!staffUsers.find(account=>account.id===editing)?.remoteAllowed;
@@ -17,16 +21,17 @@ export function AccountAccessSettings({staffUsers,onSaved,onRemoved,showToast}:{
  <label><span>Role</span><select value={draft.role} onChange={event=>setDraft({...draft,role:event.target.value as Account['role']})}>{Object.entries(roles).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
  <label className="span-2"><span>{remotePasswordRequired?'New password (required for remote access)':editing===null?(draft.remoteAllowed?'Password':'Password / PIN'):'New password (leave blank to keep)'}</span><input type="password" autoComplete="new-password" required={editing===null||remotePasswordRequired} minLength={draft.remoteAllowed?12:4} maxLength={72} value={draft.password} onChange={event=>setDraft({...draft,password:event.target.value})}/><small>{draft.remoteAllowed?'Remote access: 12+ characters with upper-case, lower-case, a number and a symbol.':'Terminal-only access: 4+ characters; a PIN such as 1234 is allowed.'}</small></label>
  <label className="span-2"><span><input type="checkbox" checked={draft.remoteAllowed} onChange={event=>setDraft({...draft,remoteAllowed:event.target.checked})}/> Allow login from any device, including mobile</span></label>
- {!draft.remoteAllowed&&<div className="span-2"><small>Allowed enrolled terminal PCs</small><div className="view-actions">{[1,2,3].map(slot=><label key={slot}><span><input type="checkbox" checked={draft.terminals.includes(slot)} onChange={event=>setDraft({...draft,terminals:event.target.checked?[...draft.terminals,slot]:draft.terminals.filter(value=>value!==slot)})}/> PC {slot}</span></label>)}</div></div>}
+ {!draft.remoteAllowed&&<div className="span-2"><small>Allowed enrolled terminal PCs</small><div className="view-actions">{terminalSlots.map(slot=><label key={slot}><span><input type="checkbox" checked={draft.terminals.includes(slot)} onChange={event=>setDraft({...draft,terminals:event.target.checked?[...draft.terminals,slot]:draft.terminals.filter(value=>value!==slot)})}/> PC {slot}</span></label>)}</div></div>}
  <div className="span-2 view-actions"><button className="primary-button" disabled={busy}>{editing===null?'Create account':'Save account'}</button>{editing!==null&&<button type="button" className="secondary-button" onClick={()=>{setEditing(null);setDraft(empty);}}>Cancel</button>}</div>
  </form>
  <ul className="staff-accounts">{accounts.map(account=><li key={account.id}><div><strong>{account.name}</strong><small>{account.username} · {roles[account.role]} · {account.remoteAllowed?'Remote access allowed':`PC ${(account.terminals||[1,2,3]).join(', ')}`} · {account.mfaRequired?'Authenticator enabled':'Password login'}</small></div><div className="staff-account-actions">
  <button className="text-action" disabled={busy} onClick={()=>{setEditing(account.id);setDraft({name:account.name,username:account.username,email:account.email||'',role:account.role,password:'',remoteAllowed:Boolean(account.remoteAllowed),terminals:account.terminals||[1,2,3]});}}>Edit</button>
  <button className="text-action" disabled={busy} onClick={()=>void run(async()=>{const result=await api.accountAuthenticator<Account>(account.id,true);onSaved(result.user);if(result.setup)setSetup({...result.setup,name:account.name});})}>{account.mfaRequired?'Reset authenticator':'Add authenticator'}</button>
  {account.mfaRequired&&<button className="text-action" disabled={busy} onClick={()=>void run(async()=>{if(!window.confirm(`Disable authenticator for ${account.name}?`))return;const result=await api.accountAuthenticator<Account>(account.id,false);onSaved(result.user);showToast('Authenticator disabled and sessions revoked.');})}>Disable authenticator</button>}
- <button className="text-action" disabled={busy} onClick={()=>void run(async()=>{await api.revokeAccount(account.id);showToast('All sessions revoked. The account can sign in again using its allowed access.');})}>Sign out everywhere</button>
+ <button className="text-action" disabled={busy} onClick={()=>setConfirmation({title:`Sign out ${account.name}?`,message:'This ends all current sessions. The account can sign in again from its permitted devices.',label:'Sign out everywhere',action:async()=>{await api.revokeAccount(account.id);showToast('All sessions revoked.');}})}>Sign out everywhere</button>
  <button className="text-action" disabled={busy} onClick={()=>void run(async()=>{if(!window.confirm(`Delete ${account.name}'s access? Ticket history will be retained.`))return;await api.deleteUser(account.id);onRemoved(account.id);showToast('Account access removed.');})}>Delete</button>
  </div></li>)}</ul>
+ {confirmation&&<ConfirmationDialog title={confirmation.title} confirmLabel={confirmation.label} onClose={()=>setConfirmation(null)} onConfirm={confirmation.action}><p>{confirmation.message}</p></ConfirmationDialog>}
  {setup&&<div className="policy-box"><div><strong>Authenticator setup · {setup.name}</strong><p>Scan this code with the account holder’s authenticator, or enter the key manually. Save it before closing; this key is shown once.</p><QRCodeSVG value={setup.uri} size={180}/><p><code>{setup.secret}</code></p><button className="secondary-button" onClick={()=>setSetup(null)}>Done</button></div></div>}
  </section>;
 }

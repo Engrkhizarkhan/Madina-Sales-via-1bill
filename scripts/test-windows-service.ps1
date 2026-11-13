@@ -8,6 +8,38 @@ foreach ($file in Get-ChildItem (Join-Path $project 'deploy\windows\*.ps1')) {
     if ($errors.Count) { throw ($file.Name + ': ' + ($errors.Message -join '; ')) }
     Write-Host ('PASS Windows PowerShell 5.1 syntax: ' + $file.Name)
 }
+# Exercise real shortcut/profile creation without launching or installing a browser.
+$counterProfile = Join-Path $env:LOCALAPPDATA 'MadinaExpress'
+if (Test-Path $counterProfile) { throw 'Shortcut tests require a clean Windows runner profile.' }
+try {
+    $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $edge) { throw 'The Windows CI image must include its existing Edge browser.' }
+    $legacyPolicy='HKCU:\Software\Policies\Microsoft\Edge'
+    if (-not (Test-Path $legacyPolicy)) { New-Item -Path $legacyPolicy -Force | Out-Null }
+    New-ItemProperty -Path $legacyPolicy -Name SilentPrintingEnabled -Value 1 -PropertyType DWord -Force | Out-Null
+    & (Join-Path $project 'deploy\windows\Setup-Counter-Shortcut.ps1') -Origin 'https://192.168.50.1:8443' -BrowserPath $edge
+    if ((Get-ItemProperty $legacyPolicy -ErrorAction SilentlyContinue).SilentPrintingEnabled -eq 1) { throw 'The old global silent-print override still affects A4 reports.' }
+
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $shell = New-Object -ComObject WScript.Shell
+    $counter = $shell.CreateShortcut((Join-Path $desktop 'Madina Express Counter.lnk'))
+    $reports = $shell.CreateShortcut((Join-Path $desktop 'Madina Express Reports.lnk'))
+    if ($counter.TargetPath -ne $edge -or $counter.Arguments -notmatch '--kiosk-printing' -or $counter.Arguments -notmatch 'counterPrint=silent') { throw 'Counter shortcut does not configure the existing browser for silent tickets.' }
+    if ($reports.Arguments -match 'kiosk-printing' -or $reports.Arguments -notmatch 'view=reports') { throw 'A4 reports do not use the normal browser profile.' }
+    if (-not (Test-Path (Join-Path $counterProfile 'MadinaExpress.ico'))) { throw 'ME app icon was not generated.' }
+    $prefs = Get-Content (Join-Path $counterProfile 'CounterEdge\Default\Preferences') -Raw | ConvertFrom-Json
+    $printing = $prefs.printing.print_preview_sticky_settings.appState | ConvertFrom-Json
+    if ($printing.isHeaderFooterEnabled -ne $false -or $printing.marginsType -ne 1) { throw 'Thermal profile still enables browser headers/footers or margins.' }
+    & (Join-Path $project 'deploy\windows\Setup-Counter-Shortcut.ps1') -Origin 'https://192.168.50.2:8443' -BrowserPath $edge
+    if ($shell.CreateShortcut((Join-Path $desktop 'Madina Express Counter.lnk')).Arguments -notmatch '192.168.50.2:8443') { throw 'Moving the counter address does not update its shortcut.' }
+    Write-Host 'PASS existing Edge browser, silent thermal profile, separate normal A4 profile, ME icon and address changes'
+} finally {
+    if (Test-Path $counterProfile) { Remove-Item $counterProfile -Recurse -Force }
+    foreach ($name in @('Madina Express Counter.lnk','Madina Express Reports.lnk')) {
+        $path = Join-Path ([Environment]::GetFolderPath('Desktop')) $name
+        if (Test-Path $path) { Remove-Item $path -Force }
+    }
+}
 $base = Join-Path $env:ProgramData 'MadinaExpress'
 if (Test-Path $base) { throw 'This test requires an isolated runner with no existing Madina Express installation.' }
 # Exercise the installer's actual CNG request using the software KSP only on CI,

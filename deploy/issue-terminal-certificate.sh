@@ -2,8 +2,8 @@
 set -euo pipefail
 umask 077
 
-if [[ ${EUID} -ne 0 || $# -ne 2 || ! $1 =~ ^[1-3]$ || ! -f $2 ]]; then
-  echo 'Usage: sudo bash deploy/issue-terminal-certificate.sh SLOT (1-3) REQUEST.req' >&2
+if [[ ${EUID} -ne 0 || $# -ne 2 || ! $1 =~ ^[1-9][0-9]?$ || ! -f $2 ]]; then
+  echo 'Usage: sudo bash deploy/issue-terminal-certificate.sh SLOT (1-99) REQUEST.req' >&2
   exit 1
 fi
 

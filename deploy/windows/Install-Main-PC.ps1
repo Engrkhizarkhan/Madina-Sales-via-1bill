@@ -274,13 +274,7 @@ foreach ($entry in @(@('S-1-5-19', 'Read'), @('S-1-5-18', 'FullControl'), @('S-1
     $keyAcl.AddAccessRule($rule)
 }
 Set-Acl -LiteralPath $keyPath -AclObject $keyAcl
-if (-not (Get-NetFirewallRule -DisplayName 'Madina Express Local HTTPS' -ErrorAction SilentlyContinue)) {
-    New-NetFirewallRule -DisplayName 'Madina Express Local HTTPS' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8443 -Profile Private -RemoteAddress LocalSubnet | Out-Null
-}
-$network = Get-NetConnectionProfile | Where-Object { $_.IPv4Connectivity -ne 'Disconnected' }
-if ($network.NetworkCategory -notcontains 'Private') {
-    Write-Warning 'Set the terminal router connection to Private in Windows network settings so the child PCs can connect.'
-}
+& (Join-Path $application 'deploy\windows\Configure-Main-PC-Firewall.ps1') -Address $mainIp
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ("-NoProfile -ExecutionPolicy Bypass -File `"" + (Join-Path $application 'deploy\windows\Run-Server.ps1') + "`"")
 $taskPrincipal = New-ScheduledTaskPrincipal -UserId 'S-1-5-19' -LogonType ServiceAccount
 $taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable

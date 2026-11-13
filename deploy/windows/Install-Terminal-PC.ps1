@@ -20,6 +20,10 @@ $parsed = $null
 if (-not [Net.IPAddress]::TryParse($mainIp, [ref]$parsed) -or $mainIp -ne $defaultIp) {
     throw 'Use the IP saved by the main PC installer. If it changed, update the main PC installation first.'
 }
+Write-Host "Checking main PC $defaultIp on port 8443..."
+if (-not (Test-NetConnection -ComputerName $defaultIp -Port 8443 -InformationLevel Quiet -WarningAction SilentlyContinue)) {
+    throw "Cannot reach the main PC at $defaultIp`:8443. Check the LAN cable/router and the PCs' different IPv4 addresses on the same subnet. On the main PC, run Configure-Main-PC-Firewall.ps1 as Administrator. No device key has been created yet."
+}
 Import-Certificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
 $inf = @'
 [Version]
@@ -52,35 +56,24 @@ if ($LASTEXITCODE -ne 0 -and $setup.allowSoftwareKey -eq $true) {
 }
 if ($LASTEXITCODE -ne 0) { throw ('Windows could not create the TPM device key (certreq exit code ' + $LASTEXITCODE + '). In Administrator PowerShell, run: Get-Tpm | Select-Object TpmPresent,TpmReady,TpmEnabled,TpmActivated. Keep this setup folder and share the result; do not clear the TPM.') }
 $payload = @{ slot = [int]$setup.slot; token = $setup.token; keyStorage = $keyStorage; request = [IO.File]::ReadAllText($requestPath) } | ConvertTo-Json
-$response = Invoke-RestMethod -Method Post -Uri ($setup.localOrigin + '/api/terminal/enroll') -ContentType 'application/json' -Body $payload
+$response = Invoke-RestMethod -Method Post -Uri ($setup.localOrigin + '/api/terminal/enroll') -ContentType 'application/json' -Body $payload -TimeoutSec 45
 $signed = Join-Path $PSScriptRoot ('terminal-' + $setup.slot + '.cer')
 [IO.File]::WriteAllText($signed, $response.certificate, [Text.Encoding]::ASCII)
 & certreq.exe -accept -user $signed
 if ($LASTEXITCODE -ne 0) { throw 'The certificate could not be installed into this Windows profile.' }
+$currentCertificate = New-Object Security.Cryptography.X509Certificates.X509Certificate2($signed)
+$installed = Get-Item ("Cert:\CurrentUser\My\" + $currentCertificate.Thumbprint)
+if (-not $installed.HasPrivateKey) { throw 'The terminal certificate was installed without its device key.' }
+# Avoid duplicate certificate choices after intentionally re-enrolling this slot.
+Get-ChildItem Cert:\CurrentUser\My | Where-Object {
+    $_.Subject -eq $installed.Subject -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $installed.Thumbprint
+} | ForEach-Object {
+    if ($_.GetPublicKeyString() -eq $installed.GetPublicKeyString()) { Remove-Item -LiteralPath $_.PSPath -Force }
+    else { Remove-Item -LiteralPath $_.PSPath -DeleteKey -Force }
+}
 
-$launcherDirectory = Join-Path $env:LOCALAPPDATA 'MadinaExpress'
-New-Item -ItemType Directory -Force $launcherDirectory | Out-Null
-$launcher = @'
-@echo off
-setlocal
-set "chrome=%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
-if not exist "%chrome%" set "chrome=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
-if not exist "%chrome%" set "chrome=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
-if not exist "%chrome%" (
-    echo Install Google Chrome to use the counter launcher.
-    pause
-    exit /b 1
-)
-start "" "%chrome%" --user-data-dir="%LOCALAPPDATA%\MadinaExpress\CounterChrome" --no-first-run --no-default-browser-check --use-system-default-printer --kiosk-printing --app="__ORIGIN__/manage"
-'@
-$launcherPath = Join-Path $launcherDirectory 'Madina-Express-Counter.cmd'
-[IO.File]::WriteAllText($launcherPath, $launcher.Replace('__ORIGIN__', $setup.localOrigin), [Text.Encoding]::ASCII)
-$desktop = [Environment]::GetFolderPath('Desktop')
-$shell = New-Object -ComObject WScript.Shell
-$shortcut = $shell.CreateShortcut((Join-Path $desktop 'Madina Express Counter.lnk'))
-$shortcut.TargetPath = $launcherPath
-$shortcut.Save()
+& (Join-Path $PSScriptRoot 'Setup-Counter-Shortcut.ps1') -Origin $setup.localOrigin
 Write-Host 'Terminal enrollment is complete. Open Madina Express Counter from the desktop.'
-Write-Host 'Use the enrolled Windows profile. Select its terminal certificate when Chrome asks.'
-Write-Host 'Open the same local address in regular Firefox for the A4 report print dialog.'
+Write-Host 'Use the enrolled Windows profile. Select its terminal certificate when the browser asks.'
+Write-Host 'Use the Madina Express Reports desktop shortcut for A4 printer selection.'
 Remove-Item (Join-Path $PSScriptRoot 'setup.json') -Force

@@ -50,6 +50,7 @@ try {
     Start-ScheduledTask -TaskName 'Madina Express Terminal Server'
     throw
 }
+& (Join-Path $app 'deploy\windows\Configure-Main-PC-Firewall.ps1') -Address $ip
 Write-Host "Address updated: $origin/login"
 Write-Host 'Reserve this IP in the router and set this trusted LAN connection to Private in Windows.'
 Write-Host 'On enrolled child PCs, run Change-Terminal-PC-Address.cmd and enter this same IP. Their enrollment remains valid.'

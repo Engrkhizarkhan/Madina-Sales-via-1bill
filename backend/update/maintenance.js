@@ -3,6 +3,11 @@ import { timingSafeEqual } from 'node:crypto';
 import { config } from '../node/config.js';
 let active = 0, lastWrite = Date.now(), drainUntil = process.env.UPDATE_JOURNAL_PATH && existsSync(process.env.UPDATE_JOURNAL_PATH) ? Date.now()+300000 : 0;
 export const maintenance = {
+ beginOwnerMaintenance(allowedWrites = 1) {
+  if (active > allowedWrites || Date.now() < drainUntil) return false;
+  drainUntil=Date.now()+300000;return true;
+ },
+ endOwnerMaintenance() { drainUntil=0;lastWrite=Date.now(); },
  status: () => ({ activeWrites:active, quietSeconds:Math.floor((Date.now()-lastWrite)/1000), draining:Date.now()<drainUntil }),
  draining: () => Date.now()<drainUntil,
  middleware(req,res,next) {

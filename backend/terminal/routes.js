@@ -1,8 +1,9 @@
-import { updateChannel, saveUpdateControl, recordTerminalUpdate } from "../update/control.js";
+import { validTerminalSlot } from "../../shared/terminal-slots.mjs";
+import { updateChannel, saveUpdateControl, recordTerminalUpdate, updateDirectory } from "../update/control.js";
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { randomBytes, timingSafeEqual, createHash } from "node:crypto";
-import { mkdtemp, readFile, writeFile, copyFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, copyFile, rm, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve, join } from "node:path";
 import { zipSync } from "fflate";
@@ -24,7 +25,7 @@ const requireAdmin = req => {
 };
 async function confirmPassword(req) {
   requireAdmin(req);
-  limitAttempts("terminal-setup", req, 12, 15 * 60000);
+  limitAttempts("terminal-setup", req, 60, 15 * 60000);
   const password = req.body?.currentPassword;
   if (typeof password !== "string" || Buffer.byteLength(password) > 72) fail("Enter your administrator password.", 422, "invalid_password");
   const [[user]] = await pool.execute("SELECT password_hash FROM users WHERE id = ? AND active = 1", [req.user.id]);
@@ -73,8 +74,17 @@ for (const action of ["register", "activate", "abort"]) {
 terminalSyncRouter.post("/status", route(async (req, res) => {
   await authenticateInstaller(req);
   const state = await terminalControl("status", req.body);
+  let maintenanceCommand=null;
+  try { maintenanceCommand=JSON.parse(await readFile(join(config.terminal.directory,'owner-maintenance.json'),'utf8')); }
+  catch(error){if(error.code!=='ENOENT')throw error;}
+  const result=req.body?.maintenanceResult;
+  if(result&&/^[a-f0-9]{32}$/.test(result.nonce)&&['waiting','applied','failed'].includes(result.stage)) {
+    await mkdir(updateDirectory,{recursive:true,mode:0o700});
+    await writeFile(join(updateDirectory,'owner-maintenance-result.json'),JSON.stringify({...result,checkedAt:new Date().toISOString()}),{mode:0o600});
+  }
+
   const sessions = new CloudSessions(process.env.CLOUD_SESSION_DIRECTORY || resolve("backend", ".cloud-sessions"));
-  res.json({ ...state, revokedSessions: await sessions.revokedHashes(), mfaSteps:await sessions.consumedOtpSteps() });
+  res.json({ ...state, maintenanceCommand, revokedSessions: await sessions.revokedHashes(), mfaSteps:await sessions.consumedOtpSteps() });
 }));
 terminalSyncRouter.post("/bootstrap", route(async (req, res) => {
   await authenticateInstaller(req);
@@ -100,7 +110,7 @@ terminalEnrollmentRouter.post("/enroll", route(async (req, res) => {
   if (!config.terminal.local) fail("Open the main PC’s local address to enroll a PC.", 404, "not_found");
   limitAttempts("device-enrollment", req, 20, 15 * 60000);
   const { token, request, slot, keyStorage = "tpm" } = req.body || {};
-  if (![1, 2, 3].includes(slot) || typeof token !== "string" || !/^[0-9a-f]{64}$/.test(token)) {
+  if (!validTerminalSlot(slot) || typeof token !== "string" || !/^[0-9a-f]{64}$/.test(token)) {
     fail("Use the setup file provided by your administrator.", 422, "invalid_enrollment");
   }
   if (!["tpm", "windows"].includes(keyStorage)) fail("Choose a supported device key provider.", 422, "invalid_enrollment");
@@ -125,6 +135,15 @@ terminalEnrollmentRouter.post("/enroll", route(async (req, res) => {
 }));
 
 export const terminalAdminRouter = Router();
+terminalAdminRouter.get("/counter-launcher", route(async (_req,res) => {
+  const origin = config.terminal.local ? config.terminal.localOrigin : "https://staff.madinaexpress.duckdns.org";
+  const archive = zipSync({
+    "Setup-Counter-Shortcut.ps1":bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.ps1"))),
+    "Setup-Counter-Shortcut.cmd":bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.cmd"))),
+    "setup.json":bytes(JSON.stringify({localOrigin:origin})),
+  });
+  res.type("application/zip").attachment("Madina-Express-Counter-Shortcuts.zip").send(Buffer.from(archive));
+}));
 terminalAdminRouter.post("/cancel-setup", route(async (req, res) => {
   await confirmPassword(req);
   if (!config.terminal.cloud) fail("Cancel setup from the cloud staff website.", 409, "cloud_required");
@@ -177,11 +196,26 @@ terminalAdminRouter.post("/package", route(async (req, res) => {
     throw error;
   }
 }));
+terminalAdminRouter.post("/devices", route(async (req, res) => {
+  await confirmPassword(req);
+  if (!config.terminal.local) fail("Add PCs from the main PC's local Settings.", 409, "local_required");
+  const slot = await transaction(async connection => {
+    const [slots] = await connection.execute("SELECT slot FROM terminal_slots ORDER BY slot FOR UPDATE");
+    const next = Math.max(...slots.map(row => row.slot), 0) + 1;
+    if (!validTerminalSlot(next)) fail("Up to 99 terminal PCs are supported.", 422, "terminal_limit");
+    await connection.execute("INSERT INTO terminal_slots(slot) VALUES (?)", [next]);
+    await audit("terminal.added", "terminal_device", next, null, null, req.user.id, req, connection);
+    return next;
+  });
+  res.status(201).json({slot});
+}));
 terminalAdminRouter.post("/devices/:slot/package", route(async (req, res) => {
   await confirmPassword(req);
   if (!config.terminal.local) fail("Open Settings on the main PC’s local address to create child PC setup files.", 409, "local_required");
   const slot = Number(req.params.slot);
-  if (![1, 2, 3].includes(slot)) fail("Choose PC 1, 2 or 3.", 422, "invalid_slot");
+  if (!validTerminalSlot(slot)) fail("Choose a valid terminal PC.", 422, "invalid_slot");
+  const [[registered]] = await pool.execute("SELECT slot FROM terminal_slots WHERE slot = ?", [slot]);
+  if (!registered) fail("Add this PC in Settings before creating its setup.", 404, "invalid_slot");
   if (req.body.allowSoftwareKey !== undefined && typeof req.body.allowSoftwareKey !== "boolean") fail("Choose whether compatibility mode is allowed.", 422, "validation_error");
   const allowSoftwareKey = req.body.allowSoftwareKey === true;
   const token = randomBytes(32).toString("hex");
@@ -194,6 +228,8 @@ terminalAdminRouter.post("/devices/:slot/package", route(async (req, res) => {
   const ca = await readFile(join(config.terminal.directory, "tls", "ca.crt"));
   const archive = zipSync({
     "Install-Terminal-PC.ps1": bytes(await readFile(resolve("deploy/windows/Install-Terminal-PC.ps1"))),
+    "Setup-Counter-Shortcut.ps1": bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.ps1"))),
+    "Setup-Counter-Shortcut.cmd": bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.cmd"))),
     "Install-Terminal-PC.cmd": bytes(await readFile(resolve("deploy/windows/Install-Terminal-PC.cmd"))),
     "terminal-ca.cer": new Uint8Array(ca),
     "Change-Terminal-PC-Address.cmd": bytes(await readFile(resolve("deploy/windows/Change-Terminal-PC-Address.cmd"))),
@@ -207,10 +243,11 @@ terminalAdminRouter.post("/devices/:slot/package", route(async (req, res) => {
   res.type("application/zip").attachment(`Madina-Express-PC-${slot}.zip`).send(Buffer.from(archive));
 }));
 terminalAdminRouter.delete("/devices/:slot", route(async (req, res) => {
-  requireAdmin(req);
+  await confirmPassword(req);
+  if (req.body?.confirm !== true) fail("Confirm revoking this PC before continuing.", 422, "confirmation_required");
   if (!config.terminal.local) fail("Manage terminal PCs from the local main PC.", 409, "local_required");
   const slot = Number(req.params.slot);
-  if (![1, 2, 3].includes(slot)) fail("Choose a terminal slot.", 422, "invalid_slot");
+  if (!validTerminalSlot(slot)) fail("Choose a terminal slot.", 422, "invalid_slot");
   await transaction(async connection => {
     await connection.execute("DELETE FROM terminal_devices WHERE slot = ?", [slot]);
     await connection.execute("DELETE FROM terminal_enrollments WHERE slot = ?", [slot]);

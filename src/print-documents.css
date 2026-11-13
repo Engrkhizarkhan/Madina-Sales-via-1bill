@@ -179,3 +179,21 @@
   .operations-document.document-cnic .document-table th,
   .operations-document.document-cnic .document-table td { padding: 1px 4px !important; line-height: 1.15; }
 }
+/* A full coach's identity sheet fits one A4 landscape page without clipping rows. */
+.operations-document.document-cnic.document-dense .document-header { padding-bottom:5px;gap:12px; }
+.operations-document.document-cnic.document-dense .document-header h1 { font-size:18px; }
+.operations-document.document-cnic.document-dense .document-header h2 { font-size:13px; }
+.operations-document.document-cnic.document-dense .document-header p { font-size:9px;margin:1px 0 0; }
+.operations-document.document-cnic.document-dense .document-header .document-brand-urdu { font-size:9px;line-height:1.8;margin:0; }
+.operations-document.document-cnic.document-dense .document-title-block>strong { font-size:16px;margin-top:2px; }
+.operations-document.document-cnic.document-dense .document-meta { margin:5px 0; }
+.operations-document.document-cnic.document-dense .document-meta>span { padding:3px 5px; }
+.operations-document.document-cnic.document-dense .document-meta small { font-size:8px; }
+.operations-document.document-cnic.document-dense .document-meta strong { font-size:10px;margin-top:1px; }
+.operations-document.document-cnic.document-dense .document-table th,
+.operations-document.document-cnic.document-dense .document-table td { font-size:9.5px!important;line-height:1.1;padding:0 4px!important; }
+.operations-document.document-cnic.document-dense .document-table small { font-size:8px!important;line-height:1.1;margin:0; }
+.operations-document.document-cnic.document-dense .document-signatures { padding-top:12px; }
+.operations-document.document-cnic.document-dense .document-footer { font-size:8px;margin-top:6px;padding-top:3px; }
+.operations-document.document-cnic.document-dense .document-meta { grid-template-columns:repeat(6,minmax(0,1fr)); }
+.operations-document.document-cnic.document-dense .document-empty { font-size:9px;margin:4px 0; }

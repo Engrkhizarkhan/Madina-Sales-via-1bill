@@ -1,3 +1,6 @@
+import {publicBus,publicRoute,publicTrip} from "./public-data.js";
+import {clearOperationalData} from "./production-reset.js";
+import {getReceiptLayout,validateReceiptLayout} from "./receipt-config.js";
 import { terminalAdminRouter, terminalEnrollmentRouter, terminalSyncRouter } from "../terminal/routes.js";
 import { cloudAuthorityGuard, terminalState } from "../terminal/state.js";
 import { localTerminalGuard } from "../terminal/certificates.js";
@@ -230,7 +233,7 @@ app.post("/auth/login", asyncRoute(async (req, res) => {
 app.get("/public/bootstrap", asyncRoute(async (_req, res) => {
   const policy=await getPolicies();
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  res.json({ fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), occupancy: await publicOccupancy(pakistanDate()), reservationPolicy:{maxSeats:policy.publicMaxSeats,expiryEnabled:policy.publicExpiryEnabled,expiryHours:policy.publicExpiryHours}, terminalAvailable:policy.publicReservationsEnabled && !["preparing", "active"].includes((await terminalState()).phase) });
+  res.json({ fleet: (await fetchBuses(true)).map(publicBus), trips: (await fetchTrips(true)).map(publicTrip), routes: (await fetchRoutes(true)).map(publicRoute), occupancy: await publicOccupancy(pakistanDate()), reservationPolicy:{maxSeats:policy.publicMaxSeats,expiryEnabled:policy.publicExpiryEnabled,expiryHours:policy.publicExpiryHours}, terminalAvailable:policy.publicReservationsEnabled && !["preparing", "active"].includes((await terminalState()).phase) });
 }));
 
 app.get("/public/trip-runs", asyncRoute(async (req, res) => {
@@ -240,7 +243,7 @@ app.get("/public/trip-runs", asyncRoute(async (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("Choose a valid travel date.", 422, "validation_error");
   const runs = await fetchTripRuns(date);
   res.json({ runs: runs.map((run) => ({ id: run.id, tripId: run.tripId, date: run.date, runNumber: run.runNumber,
-    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: run.snapshot.bus, route: run.snapshot.route } : null })), occupancy: await publicOccupancy(date), fleet: await fetchBuses(true), trips: await fetchTrips(true), routes: await fetchRoutes(true), terminalAvailable: policy.publicReservationsEnabled && !["preparing", "active"].includes((await terminalState()).phase) });
+    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: publicBus(run.snapshot.bus), route: publicRoute(run.snapshot.route) } : null })), occupancy: await publicOccupancy(date), fleet: (await fetchBuses(true)).map(publicBus), trips: (await fetchTrips(true)).map(publicTrip), routes: (await fetchRoutes(true)).map(publicRoute), terminalAvailable: policy.publicReservationsEnabled && !["preparing", "active"].includes((await terminalState()).phase) });
 }));
 
 app.post("/public/bookings", asyncRoute(async (req, res) => {
@@ -248,21 +251,24 @@ app.post("/public/bookings", asyncRoute(async (req, res) => {
   limitAttempts("reservation", req, 30, 10 * 60_000);
   if (!req.body || Array.isArray(req.body)) fail("Enter the reservation details.", 422, "validation_error");
   const records = await createBooking(req.body, null, true, req);
-  const bookings = records.map(({ ticketNo, passenger, route, destination, boardingPoint, service, seats, total, date, time, expiresAt }) =>
-    ({ ticketNo, passenger, route, destination, boardingPoint, service, seats, total, date, time, expiresAt }));
+  const bookings = records.map(({ ticketNo, verificationUrl, passenger, route, destination, boardingPoint, service, seats, total, date, time, expiresAt }) =>
+    ({ ticketNo, verificationUrl, passenger, route, destination, boardingPoint, service, seats, total, date, time, expiresAt }));
   res.status(201).json({ bookings });
 }));
 
 app.post("/public/ticket-lookup", asyncRoute(async (req, res) => {
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  limitAttempts("ticket-lookup", req, 20, 10 * 60_000);
+  limitAttempts("ticket-lookup", req, 120, 10 * 60_000);
   const reference = typeof req.body?.reference === "string" ? req.body.reference.trim().toUpperCase() : "";
   const phone = normalizeBookingPhone(req.body?.phone);
-  if (reference.length > 40 || !/^(?:ME|RS)-[0-9A-Z]+(?:-[0-9A-Z]+)*$/.test(reference) || !phone) {
+  const key = typeof req.body?.key === "string" ? req.body.key : null;
+  if (reference.length > 40 || !/^(?:ME|RS)-[0-9A-Z]+(?:-[0-9A-Z]+)*$/.test(reference) || (!phone && key === null)) {
     fail("Enter your ticket or reservation reference and the mobile number used for the booking.", 422, "validation_error");
   }
-  const journey = await lookupJourney(reference, phone);
+  const journey = await lookupJourney(reference, phone, key);
   if (!journey) fail("No journey matches that reference and mobile number. Check both and try again.", 404, "not_found");
+  res.set("Cache-Control","no-store");
+  res.set("Referrer-Policy","no-referrer");
   res.json({ journey });
 }));
 
@@ -487,6 +493,28 @@ app.delete("/users/:id", asyncRoute(async (req, res) => {
   res.json({ ok: true });
 }));
 
+app.post("/settings/clear-operational-data", asyncRoute(async (req,res) => {
+  requireOwner(req.user);
+  limitAttempts("production-reset",req,5,15*60000);
+  if (req.body?.confirmation !== "CLEAR TEST DATA") fail("Explicit production cleanup confirmation is required.",422,"confirmation_required");
+  const password=req.body?.currentPassword;
+  const [[owner]]=await pool.execute("SELECT password_hash FROM users WHERE id=? AND active=1",[req.user.id]);
+  if (typeof password!=="string" || Buffer.byteLength(password)>72 || !(await passwordMatches(password,owner?.password_hash||""))) fail("Enter the current administrator password.",422,"invalid_password");
+  if (!maintenance.beginOwnerMaintenance()) fail("A counter operation or update is in progress. Wait for a quiet moment and retry.",409,"busy");
+  try { res.json(await clearOperationalData(req.user,req)); }
+  finally { maintenance.endOwnerMaintenance(); }
+}));
+app.get("/settings/receipt", asyncRoute(async (_req,res) => res.json({layout:await getReceiptLayout()})));
+app.put("/settings/receipt", asyncRoute(async (req,res) => {
+  requireOwner(req.user);
+  const layout = validateReceiptLayout(req.body);
+  await transaction(async connection => {
+    const before = await getReceiptLayout(connection);
+    await connection.execute("INSERT INTO settings(setting_key,setting_value,updated_by) VALUES ('receipt_layout',?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),updated_by=VALUES(updated_by)",[JSON.stringify(layout),req.user.id]);
+    await audit("receipt.updated","settings","receipt_layout",before,layout,req.user.id,req,connection);
+  });
+  res.json({layout});
+}));
 app.get("/settings/policies", asyncRoute(async (_req,res) => res.json({ policies: await getPolicies() })));
 app.put("/settings/policies", asyncRoute(async (req,res) => {
   requireOwner(req.user);
@@ -528,9 +556,10 @@ app.post("/users/:id/authenticator", asyncRoute(async (req,res) => {
 
 app.get("/users/terminal-access", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
+  const [slots] = await pool.execute("SELECT slot FROM terminal_slots ORDER BY slot");
   if (config.terminal.local) {
     const [devices] = await pool.execute("SELECT slot, key_storage FROM terminal_devices WHERE expires_at > NOW()");
-    return res.json({ enforced: true, terminals: [1, 2, 3].map(slot => ({
+    return res.json({ enforced: true, terminals: slots.map(({slot}) => ({
       slot, enrolled: devices.some(device => device.slot === slot),
       keyStorage: devices.find(device => device.slot === slot)?.key_storage || null,
     })) });
@@ -541,7 +570,7 @@ app.get("/users/terminal-access", asyncRoute(async (req, res) => {
         throw error;
       })
     : [];
-  res.json({ enforced: config.restrictStaffDevices, terminals: [1, 2, 3].map(slot => ({
+  res.json({ enforced: config.restrictStaffDevices, terminals: slots.map(({slot}) => ({
     slot, enrolled: files.includes(`terminal-${slot}.conf`),
   })) });
 }));

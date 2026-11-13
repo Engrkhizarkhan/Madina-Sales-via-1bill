@@ -1,12 +1,16 @@
+import { maintenance } from "../update/maintenance.js";
+import { releaseInfo } from "../update/version.js";
+import { applyOwnerCommand } from "./owner-command.js";
 import { spawn } from "node:child_process";
 import { readFile, writeFile, rename, readdir, unlink, mkdir } from "node:fs/promises";
 import { createWriteStream } from "node:fs";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
-import { join } from "node:path";
+import { join,resolve } from "node:path";
 import { config } from "../node/config.js";
 import { pool } from "../node/db.js";
 
+let maintenanceResult;
 let stopped = false;
 let tunnel;
 let statusTimer;
@@ -34,7 +38,7 @@ async function callCloud(action) {
   const response = await fetch(config.terminal.cloudOrigin + "/api/terminal-sync/" + action, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Terminal-Token": process.env.TERMINAL_INSTALL_TOKEN },
-    body: JSON.stringify({ installationId: process.env.TERMINAL_INSTALLATION_ID }),
+    body: JSON.stringify({ installationId: process.env.TERMINAL_INSTALLATION_ID,maintenanceResult }),
     signal: AbortSignal.timeout(action === "activate" ? 90000 : 15000),
   });
   if (!response.ok) throw new Error(`The cloud ${action} check returned ${response.status}.`);
@@ -60,6 +64,18 @@ async function refreshStatus() {
     if (!ready && status.active) {
       await writeFile(join(config.terminal.directory, "ready.json"),
         JSON.stringify({ installationId: process.env.TERMINAL_INSTALLATION_ID }), { mode: 0o600 });
+    }
+    if (ready && status.maintenanceCommand && status.ioRunning && status.sqlRunning) {
+      try {
+        const key=await readFile(resolve('deploy/updater/release-public-key.pem'));
+        const {clearOperationalData}=await import('../node/production-reset.js');
+        maintenanceResult=await applyOwnerCommand(status.maintenanceCommand,{
+          key,installationId:process.env.TERMINAL_INSTALLATION_ID,releaseId:releaseInfo.releaseId,
+          begin:()=>maintenance.beginOwnerMaintenance(0),end:()=>maintenance.endOwnerMaintenance(),
+          loadOwner:async id=>(await pool.execute('SELECT id,role,is_owner,active FROM users WHERE id=?',[id]))[0][0],
+          execute:(owner,command)=>clearOperationalData(owner,{ip:'signed-operator-command'},command),
+        });
+      } catch(error) { console.error('Signed maintenance:',error.message); }
     }
     await publishConnection({
       connected: (status.phase === "active" || status.active === true) && status.tunnelHealthy !== false,
@@ -117,6 +133,8 @@ async function backupLocalDatabase() {
     lastBackup = Date.now();
     for (const file of await readdir(directory)) {
       const match = file.match(/^madina-(\d{4})(\d{2})(\d{2})T\d{6}Z.sql.gz$/);
+      const resetStamp = file.match(/^production-reset-(\d+)(?:-[a-f0-9]+)?\.json\.gz$/);
+      if (resetStamp && Number(resetStamp[1]) < Date.now() - 30 * 86400000) await unlink(join(directory,file));
       if (match && Date.parse(`${match[1]}-${match[2]}-${match[3]}T00:00:00Z`) < Date.now() - 30 * 86400000) {
         await unlink(join(directory, file));
       }

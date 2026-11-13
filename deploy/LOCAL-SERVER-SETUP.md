@@ -59,3 +59,60 @@ Get-ScheduledTaskInfo -TaskName 'Madina Express Terminal Server'
 ```
 
 Do not share `backend\.env`, the installation ZIP's `setup.json`, tunnel keys, local-secrets.json, or database dumps. Do not expose port 3310 or 8443 through the public router.
+
+## Additional PCs, safe revocation and printing (v3.1)
+
+The main administrator can add PC 4 and further slots (up to 99) in local **Settings → Main PC & offline access → Add PC**, using the administrator password. New slots do not automatically grant staff access: edit each account's allowed PC checkboxes. Download one setup ZIP per PC, use it within 30 minutes and run it in the staff Windows profile. Revocation requires a confirmation dialog and re-entering the administrator password; an accidental first click does not revoke anything.
+
+Existing enrolled PCs do not need reinstallation. In Settings, download **Counter & Reports shortcuts**, extract it, close the old counter window and run `Setup-Counter-Shortcut.cmd` in the enrolled Windows profile. This uses the existing default Edge, Chrome or Firefox, installs no browser and creates two ME-branded desktop shortcuts:
+
+- **Madina Express Counter** uses a separate browser profile with silent thermal printing, browser headers/footers disabled and zero browser margins. Set the 80 mm printer as the Windows default, choose the correct paper in its driver and select document feed/cut for one cut per job. Tickets and boarding tokens are queued as separate portrait jobs. Enable auto-print after payment in Settings to skip the receipt preview; manual printing closes the preview after the queue finishes.
+- **Madina Express Reports** uses the normal default-browser profile and keeps the A4 printer-selection dialog. Sign in there once with the same account and enrolled profile. A4 reports are guarded against accidentally printing to the thermal printer from the silent Counter session. Browser silent mode is a profile setting, not a per-document web permission. Printer hardware margins and cutter settings remain in the printer driver.
+
+Receipt design is shared across counters. The owner can edit branding, contact text, English font, heading/body/seat/Urdu sizes, spacing, padding, QR size, Urdu instructions and the boarding slip title in **Settings → Receipt configuration → Edit receipt design**. A preview shows the draft before saving. Paper choice and auto-print remain local to each browser.
+
+## Direct Ethernet test network
+
+For a two-PC cable test, use main Ethernet `192.168.50.1`, counter Ethernet `192.168.50.2`, subnet mask `255.255.255.0`. Leave gateway and DNS blank on that direct cable; keep a separate Wi-Fi connection for internet. Both PCs must have different addresses. Do not assign the router's address to the main PC when using a router.
+
+For three or more PCs, connect every PC to the LAN ports of one router or a network switch. Reserve the main PC's address in the router, or set an unused static address in that router's subnet. Do not bridge adapters, enable internet sharing or expose MySQL/8443 through internet router forwarding.
+
+Main setup automatically configures a firewall rule for TCP 8443, restricted to its selected LAN interface, local address and local subnet. It attempts to mark that interface Private; the scoped rule also works if Windows policy prevents that category change. To repair access on an already installed main PC, open **Windows PowerShell → Run as administrator** and run:
+
+```powershell
+$b = 'C:\ProgramData\MadinaExpress'
+$a = (Get-Content "$b\host\current.json" -Raw | ConvertFrom-Json).application
+& "$a\deploy\windows\Configure-Main-PC-Firewall.ps1" -Address '192.168.50.1'
+```
+
+From a child PC:
+
+```powershell
+Test-NetConnection 192.168.50.1 -Port 8443
+```
+
+`TcpTestSucceeded` must be `True` before enrollment. The child installer now checks this before creating a device key and gives a LAN-specific error. If it fails, check cable/link lights, different IPs, subnet masks and the elevated main-PC firewall repair; the main PC testing its own address does not prove that another PC can reach it.
+
+If TPM is unavailable, the owner can approve **Allow this PC without TPM** for that setup download. The key is still non-exportable and tied to the enrolled Windows profile. Staff should use standard Windows accounts. Never clear the TPM as a troubleshooting step.
+
+When moving the same main PC to another network, use the current installed script rather than an old extracted installer:
+
+```powershell
+$b = 'C:\ProgramData\MadinaExpress'
+$a = (Get-Content "$b\host\current.json" -Raw | ConvertFrom-Json).application
+& "$a\deploy\windows\Change-Main-PC-Network.ps1"
+```
+
+Then update each enrolled child's shortcuts with the new origin. Run its saved helper in that child's normal Windows profile:
+
+```powershell
+& "$env:LOCALAPPDATA\MadinaExpress\Setup-Counter-Shortcut.ps1" -Origin 'https://192.168.50.1:8443'
+```
+
+Use the new main IP in place of the example. If the saved helper is absent, download the current Counter & Reports shortcuts ZIP from Settings at the new local address. Existing CA and device enrollment survive an address change.
+
+Keep the main PC awake while connected to AC power, enable BIOS **Restore after AC Power Loss → Power On**, and use a UPS for the main PC/router where possible. The database, server and updater start at Windows boot without a signed-in user. Child browsers are opened through their desktop shortcuts. Internet loss permits LAN counter work; main-PC power loss pauses all new reservations/sales. The cloud remains a read-only copy until the same main PC reconnects.
+
+Disable **Let Windows manage my default printer** in Windows printer settings so an A4 report does not change the thermal default. Shortcut setup attempts this per-user preference automatically; the actual default printer and feed/cut mode must be selected in the installed printer driver.
+
+The current shortcut setup removes the older Madina per-user Chrome/Edge global silent-print override, so A4 reports can show their dialog. After updating shortcuts, fully close and reopen the browser once. For Firefox, the normal Reports profile must have `about:config → print.always_print_silent = false`; the separate Counter profile remains silent. Do not run an old downloaded Print Setup CMD that enables silent printing for all profiles.

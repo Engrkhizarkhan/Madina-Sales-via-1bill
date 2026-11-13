@@ -95,7 +95,7 @@ try {
   check((await request('/auth/me', { cookie: login.cookie })).status === 401, 'copied staff cookie is rejected on another PC');
   check((await request('/terminal/devices/1/package', { cookie: login.cookie, csrf: login.payload.csrfToken, device, method: 'POST', body: { currentPassword: password } })).status === 403,
     'staff cannot generate device enrollment packages');
-  check((await request('/terminal/devices/2', { ...admin, method: 'DELETE' })).status === 200, 'admin revokes a terminal PC');
+  check((await request('/terminal/devices/2', { ...admin, method: 'DELETE', body:{currentPassword:password,confirm:true} })).status === 200, 'admin revokes a terminal PC');
   check((await request('/auth/me', { cookie: login.cookie, device })).status === 401, 'revoked terminal loses its existing session immediately');
   const compatible = await request('/terminal/devices/2/package', { ...admin, method: 'POST', body: { currentPassword: password, allowSoftwareKey: true } });
   const compatibleFiles = unzipSync(compatible.bytes);
@@ -109,7 +109,7 @@ try {
   check((await request('/auth/me', {cookie:compatibleLogin.cookie})).status === 401, 'compatible device session still fails without its TLS key');
   const access = await request('/users/terminal-access', admin);
   check(access.payload.terminals.find(device=>device.slot===2)?.keyStorage === 'windows', 'admin sees compatible device enrollment');
-  await request('/terminal/devices/2', {...admin,method:'DELETE'});
+  await request('/terminal/devices/2', {...admin,method:'DELETE',body:{currentPassword:password,confirm:true}});
   check((await request('/auth/me', {cookie:compatibleLogin.cookie,device:compatibleDevice})).status === 401, 'revoking a compatible device immediately ends access');
   const second = unzipSync((await packageRequest()).bytes);
   const expiredSetup = JSON.parse(strFromU8(second['setup.json']));
@@ -117,11 +117,27 @@ try {
   check((await request('/terminal/enroll', { method: 'POST', body: { slot: 2, token: expiredSetup.token, request: keys.request } })).status === 409,
     'expired enrollment packages are rejected');
   check((await request('/terminal/connection', { ...admin })).payload.local === true, 'counter connection status is available without disclosing credentials');
+  check((await request('/terminal/devices/2', {...admin,method:'DELETE'})).status === 422,'revocation requires re-entering administrator password');
+  check((await request('/terminal/devices/2', {...admin,method:'DELETE',body:{currentPassword:password}})).status === 422,'revocation requires explicit confirmation');
+  const added = await request('/terminal/devices',{...admin,method:'POST',body:{currentPassword:password}});
+  check(added.status===201 && added.payload.slot===4,'owner can add PC 4 without changing existing enrollment');
+  const pc4 = await request('/terminal/devices/4/package',{...admin,method:'POST',body:{currentPassword:password,allowSoftwareKey:true}});
+  check(pc4.status===200,'PC 4 setup download is supported');
+  const pc4Files=unzipSync(pc4.bytes),pc4Setup=JSON.parse(strFromU8(pc4Files['setup.json']));
+  check(Boolean(pc4Files['Setup-Counter-Shortcut.ps1']),'enrollment includes existing-browser shortcut setup');
+  const enrolled4=await request('/terminal/enroll',{method:'POST',body:{slot:4,token:pc4Setup.token,request:keys.request,keyStorage:'windows'}});
+  check(enrolled4.status===200,'PC 4 enrolls with its approved key');
+  await pool.execute('UPDATE users SET terminal_slots=? WHERE id=?',[JSON.stringify([4]),userIds[1]]);
+  const device4={key:keys.key,cert:enrolled4.payload.certificate};
+  check((await request('/auth/login',{method:'POST',body:credentials,device:device4})).status===200,'staff assigned to PC 4 can sign in there');
+  check((await request('/auth/login',{method:'POST',body:credentials,device:compatibleDevice})).status===403,'PC 4 staff cannot use a different enrolled PC');
+  check((await request('/terminal/devices/99/package',{...admin,method:'POST',body:{currentPassword:password}})).status===404,'PC must be added before setup can be generated');
   console.log(`Passed ${passed} terminal enrollment checks.`);
 } finally {
   if (server) await new Promise(resolve => server.close(resolve));
-  await pool.execute('DELETE FROM terminal_enrollments WHERE slot = 2');
-  await pool.execute('DELETE FROM terminal_devices WHERE slot = 2');
+  await pool.execute('DELETE FROM terminal_enrollments WHERE slot IN (2,4)');
+  await pool.execute('DELETE FROM terminal_devices WHERE slot IN (2,4)');
+  await pool.execute('DELETE FROM terminal_slots WHERE slot=4');
   for (const id of userIds) {
     await pool.execute('DELETE FROM audit_logs WHERE user_id = ?', [id]);
     await pool.execute('DELETE FROM users WHERE id = ?', [id]);
