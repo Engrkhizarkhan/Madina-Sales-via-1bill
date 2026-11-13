@@ -16,6 +16,10 @@ The main admin is exempt from counter-PC restrictions. Staff need an account cre
 6. On each other Windows 10/11 PC, connect to the same LAN, generate its own PC 2/3 setup ZIP, extract and run it in that counter's Windows profile. Setup files expire after 30 minutes. Use the **Madina Express Counter** desktop shortcut; Chrome may request the enrolled terminal certificate.
 7. Create staff usernames/passwords in Settings. Test staff login on an enrolled PC and rejection on a personal device.
 
+Terminal-only accounts may use a password/PIN of at least four characters. Keep staff Windows profiles protected; the enrolled device/profile is still required. Accounts approved for remote login need 12+ characters with upper-case, lower-case, a number and a symbol. Enabling remote access on a terminal-only account requires setting a strong new password. The main admin's password and authenticator requirements are unchanged.
+
+Deleting staff revokes access and releases their username/email for reuse. Historical records retain the former account ID and name; recreating a login creates a fresh account and does not restore old sessions, MFA or permissions. Older deleted accounts release their identifiers when the main admin reuses them.
+
 Compatibility approval is stored on the server against the one-use enrollment token and recorded in the audit log. Editing the downloaded setting cannot authorize a reported Windows software key by itself. The provider reported by the managed installer is not remote hardware attestation; these installations do not cryptographically prove TPM residency to the server. A malicious administrator on an enrolled PC is outside the ordinary staff-password restriction. Protect Windows administrator credentials and revoke a PC in Settings if it is lost or compromised.
 
 Setup also installs the signed application update service. Tested releases from GitHub install automatically during quiet periods; the main admin can pause them in Settings. The sidebar shows the running version. See [remote updates](REMOTE-UPDATES.md).

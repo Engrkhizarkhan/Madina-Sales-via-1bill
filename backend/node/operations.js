@@ -557,20 +557,54 @@ function staffAccountDetails(data) {
   return { name, username, role };
 }
 
-async function staffPasswordHash(password) {
-  if (typeof password !== "string" || password.length < 12 || Buffer.byteLength(password) > 72 ||
-      !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)) {
-    fail("Use 12–72 characters with upper-case, lower-case, number and symbol.", 422, "weak_password");
+async function staffPasswordHash(password, remote) {
+  if (typeof password !== "string" || password.length < (remote ? 12 : 4) || Buffer.byteLength(password) > 72 ||
+      (remote && (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password) || !/[^A-Za-z0-9]/.test(password)))) {
+    fail(remote ? "Use 12–72 characters with upper-case, lower-case, number and symbol for remote access." : "Use a password or PIN of at least 4 characters, up to 72 bytes.", 422, "weak_password");
   }
   return bcrypt.hash(password, 12);
+}
+
+async function retireStaffIdentifiers(connection, account) {
+  // Historical users remain referenced by ID/name. Their old login details and
+  // MFA must never be restored when a new person reuses the same username.
+  const archivedUsername = uuid(`~removed~${account.id}~`);
+  const changed = await query(connection,"UPDATE users SET username=?,email=NULL,remote_allowed=0,mfa_required=0,mfa_secret=NULL,mfa_last_step=-1,session_version=session_version+1 WHERE id=? AND active=0 AND is_owner=0",[archivedUsername,account.id]);
+  if (changed.affectedRows !== 1) fail("This account changed. Refresh and try again.",409,"account_changed");
+  await query(connection,"DELETE FROM api_sessions WHERE user_id=?",[account.id]);
+  return archivedUsername;
+}
+
+async function availableStaffIdentifiers(connection, username, email, excludeId, user, req) {
+  const matches = await query(connection,"SELECT id,username,email,active,is_owner,(username=?) username_match FROM users WHERE id<>? AND (username=? OR email=?)",[username,excludeId,username,email]);
+  for (const account of matches) {
+    if (account.active || account.is_owner) fail(account.username_match ? "That username is already in use. Edit the existing account or choose another username." : "That email is already used by another account. Choose another email or leave it blank.",409,account.username_match ? "duplicate_username" : "duplicate_email");
+  }
+  for (const account of matches) {
+    const archivedUsername = await retireStaffIdentifiers(connection,account);
+    await audit("user.identifiers_released","user",account.id,{username:account.username,email:account.email},{username:archivedUsername,email:null},user.id,req,connection);
+  }
+}
+
+async function staffTransaction(operation) {
+  try { return await transaction(operation); }
+  catch (error) {
+    // Unique indexes remain authoritative if two operators submit together.
+    if (error?.code === "ER_DUP_ENTRY") {
+      const key = String(error.sqlMessage || error.message).match(/for key ['`](?:[^'`]*\.)?(username|email)['`]/i)?.[1]?.toLowerCase();
+      if (key) fail(key === "username" ? "That username is already in use. Edit the existing account or choose another username." : "That email is already used by another account. Choose another email or leave it blank.",409,`duplicate_${key}`);
+    }
+    throw error;
+  }
 }
 
 export async function createStaffUser(data, user, req) {
   const { name, username, role } = staffAccountDetails(data);
   requireOwner(user);
   const access = accessDetails(data);
-  const hash = await staffPasswordHash(data.password);
-  return transaction(async (connection) => {
+  const hash = await staffPasswordHash(data.password,access.remote);
+  return staffTransaction(async (connection) => {
+    await availableStaffIdentifiers(connection,username,access.email,0,user,req);
     const result = await query(connection,
       "INSERT INTO users (name, username, password_hash, role, force_password_change, email, remote_allowed, terminal_slots) VALUES (?, ?, ?, ?, 0, ?, ?, ?)",
       [name, username, hash, role, access.email, access.remote, JSON.stringify(access.terminals)]);
@@ -593,9 +627,11 @@ export async function updateStaffUser(id, data, user, req) {
   requireOwner(user);
   const access = accessDetails(data);
   const { name, username, role } = staffAccountDetails(data);
-  const hash = data.password == null || data.password === "" ? null : await staffPasswordHash(data.password);
-  return transaction(async (connection) => {
+  const hash = data.password == null || data.password === "" ? null : await staffPasswordHash(data.password,access.remote);
+  return staffTransaction(async (connection) => {
     const before = await lockStaffAccount(connection, id);
+    if (access.remote && !before.remoteAllowed && !hash) fail("Set a strong new password when enabling remote access.",422,"remote_password_required");
+    await availableStaffIdentifiers(connection,username,access.email,id,user,req);
     await query(connection,
       "UPDATE users SET name = ?, username = ?, role = ?, password_hash = COALESCE(?, password_hash), force_password_change = 0, session_version=session_version+1, email=?, remote_allowed=?, terminal_slots=? WHERE id = ?",
       [name, username, role, hash, access.email, access.remote, JSON.stringify(access.terminals), id]);
@@ -611,8 +647,8 @@ export async function removeStaffUser(id, user, req) {
   return transaction(async (connection) => {
     const before = await lockStaffAccount(connection, id);
     await query(connection, "UPDATE users SET active = 0 WHERE id = ?", [id]);
-    await query(connection, "DELETE FROM api_sessions WHERE user_id = ?", [id]);
-    await audit("user.removed", "user", id, before, { active: false }, user.id, req, connection);
+    await retireStaffIdentifiers(connection,{id});
+    await audit("user.removed", "user", id, before, { active: false, usernameReleased: true }, user.id, req, connection);
   });
 }
 
