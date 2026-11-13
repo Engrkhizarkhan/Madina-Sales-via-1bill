@@ -51,6 +51,7 @@ jobs:
           python3 backend/tests/terminal-reset.py
           python3 backend/tests/terminal-reconnect.py
           python3 backend/tests/main-handover.py
+          python3 backend/tests/discard-test-main.py
       - name: Start isolated MySQL and test booking API
         run: |
           sudo systemctl start mysql
