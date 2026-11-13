@@ -63,6 +63,15 @@ try{
  const editedTrip=await request(`/trips/${trip.id}`,{method:'PUT',body:{...trip,departure:'21:30'}});
  check(editedTrip.status===200,'recurring schedule can be edited');changes=await apply();
  check(changes.removedRunIds.includes(emptyRun.body.trip.id)&&changes.catalog.trips.some(row=>row.id===trip.id&&row.departure==='21:30'),'removed empty snapshots and updated roster choices reach other counters');
+ const [[clockBefore]]=await pool.query('SELECT CAST(revision AS CHAR) revision FROM live_state WHERE id=1');
+ await transaction(async connection=>{
+  await recordLiveEntries(connection,[['booking',paid.body.booking.id]]);
+  const [[clockDuring]]=await connection.query('SELECT CAST(revision AS CHAR) revision FROM live_state WHERE id=1');
+  check(clockDuring.revision===clockBefore.revision,'business transaction queues change markers without acquiring the commit clock early');
+  await connection.execute('UPDATE bookings SET passenger=? WHERE id=?',['Queued change passenger',paid.body.booking.id]);
+  await recordLiveEntries(connection,[['booking',paid.body.booking.id],['booking',reserved.body.booking.id]]);
+ });
+ changes=await apply();check(changes.bookings.length===2&&changes.bookings.some(row=>row.passenger==='Queued change passenger'),'queued changes are deduplicated and published only after all business writes');
  const rollbackCursor=cursor;
  await assert.rejects(transaction(async connection=>{await connection.execute('UPDATE bookings SET passenger=? WHERE id=?',['Must rollback',paid.body.booking.id]);await recordLiveEntries(connection,[['booking',paid.body.booking.id]]);throw new Error('rollback probe');}),/rollback probe/);
  check((await delta(rollbackCursor)).body.changed===false,'rolled-back changes never appear or advance a cursor');

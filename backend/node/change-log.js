@@ -1,4 +1,5 @@
 import {pool,transaction} from './db.js';
+import {queueChanges,writeChanges} from './transaction-changes.js';
 
 // A compact latest-change index, not another copy of passenger/payment data.
 // Always acquire the clock inside the business transaction, so an uncommitted
@@ -7,9 +8,8 @@ export async function recordLiveEntries(executor, entries) {
   const unique=[...new Map(entries.map(entry=>[entry.join(':'),entry])).values()];
   if (!unique.length) return;
   if (executor===pool) return transaction(connection=>recordLiveEntries(connection,unique));
-  await executor.execute('UPDATE live_state SET revision=revision+1 WHERE id=1');
-  await executor.query(`INSERT INTO live_changes(entity_type,entity_id,revision) VALUES ${unique.map(()=>'(?,?,(SELECT revision FROM live_state WHERE id=1))').join(',')}
-    ON DUPLICATE KEY UPDATE revision=VALUES(revision)`,unique.flat());
+  if(queueChanges(executor,unique))return;
+  await writeChanges(executor,unique);
 }
 
 export async function recordAuditedChange(executor,action,type,id,before,after) {
