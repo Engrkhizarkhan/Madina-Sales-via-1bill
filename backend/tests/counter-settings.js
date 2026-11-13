@@ -65,6 +65,14 @@ try {
   const refund=await request(`/bookings/${ticket.id}/refunds`,{method:"POST",body:{amount:100,method:"Cash",reason:"Passenger request"}});
   check(refund.status===201,"refund updates the issued ticket");
   check((await request("/public/ticket-lookup",{method:"POST",authenticated:false,body:{reference:ticket.ticketNo,key}})).body.journey.paid===ticket.paid-100,"the same QR reflects the current net amount after refund");
+  const reservation=await request('/public/bookings',{method:'POST',authenticated:false,body:{tripId:trip.id,date,seats:[3],passenger:'Reservation QR passenger',phone:'03001234567'}});
+  check(reservation.status===201,'public reservation returns a verification QR link');
+  const hold=reservation.body.bookings[0],holdKey=new URLSearchParams(new URL(hold.verificationUrl).hash.slice(1)).get('key');
+  const [[held]]=await pool.execute('SELECT id FROM bookings WHERE ticket_no=?',[hold.ticketNo]);
+  const collected=await request(`/bookings/${held.id}/confirm`,{method:'POST',body:{paymentMethod:'Cash',cnic:'1730112345671',gender:'Male'}});
+  check(collected.status===200,'counter can collect the QR reservation');
+  const converted=await request('/public/ticket-lookup',{method:'POST',authenticated:false,body:{reference:hold.ticketNo,key:holdKey}});
+  check(converted.status===200&&converted.body.journey.status==='Confirmed'&&converted.body.journey.reference===collected.body.booking.ticketNo,'the original reservation QR still opens the paid ticket after collection');
   const preserved=async()=>{
     const result={};
     for(const [table,columns] of [["routes","*"],["buses","id,registration,service,seats,model,is_template,seat_classes,commission_rate"],["trips","id,route_id,bus_id,departure,arrival,service_days,active"],["terminal_slots","*"],["terminal_devices","*"]])result[table]=(await pool.query(`SELECT ${columns} FROM ${table} ORDER BY 1`))[0];

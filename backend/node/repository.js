@@ -124,7 +124,7 @@ export function normalizeBookingPhone(phone) {
 
 export async function lookupJourney(reference, phone, key = null) {
   const [booking] = await rows(
-    `SELECT id, ticket_no, phone, passenger, total, paid, (SELECT COALESCE(SUM(amount),0) FROM refunds WHERE booking_id=bookings.id) refunded, route_label, destination, boarding_point, service, travel_date, travel_time,
+    `SELECT id, ticket_no, reservation_no, phone, passenger, total, paid, (SELECT COALESCE(SUM(amount),0) FROM refunds WHERE booking_id=bookings.id) refunded, route_label, destination, boarding_point, service, travel_date, travel_time,
             booking_status, expires_at,
             (expires_at <= NOW() AND (booking_status = 'Reserved' OR
               (booking_status = 'Cancelled' AND updated_at >= expires_at))) AS expired
