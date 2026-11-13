@@ -13,6 +13,7 @@ export function silentCounterPrinting() {
 }
 
 export function printTicketBatch(source: HTMLElement, paper: TicketPaper, signal: AbortSignal) {
+  if (paper === "a4" && silentCounterPrinting()) return Promise.reject(new Error("Use the Reports browser shortcut for A4 printer selection. Choose 80 mm thermal paper in the Counter shortcut."));
   const slips = Array.from(source.querySelectorAll(".passenger-receipt, .conductor-token"), slip => slip.cloneNode(true) as Element);
   if (!slips.length) return Promise.resolve();
   const batch = ticketPrintQueue.then(async () => {

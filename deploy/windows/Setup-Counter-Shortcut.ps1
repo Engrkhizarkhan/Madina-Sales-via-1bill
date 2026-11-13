@@ -34,6 +34,8 @@ if ($progId -like 'MSEdge*' -and (-not $browser -or -not (Test-Path $browser))) 
     $browser = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
 $name = if ($browser) { [IO.Path]::GetFileName($browser).ToLowerInvariant() } else { '' }
+$reportsBrowser = "$env:WINDIR\System32\cmd.exe"
+$reportsArguments = "/c start `"`" `"$Origin/manage?view=reports`""
 $url = "$Origin/manage?counterPrint=silent"
 if ($name -in @('chrome.exe','msedge.exe')) {
     $profile = Join-Path $directory $(if ($name -eq 'chrome.exe') { 'CounterChrome' } else { 'CounterEdge' })
@@ -53,6 +55,26 @@ if ($name -in @('chrome.exe','msedge.exe')) {
     $prefs.printing = $printing
     [IO.File]::WriteAllText($preferences,($prefs | ConvertTo-Json -Depth 100 -Compress),(New-Object Text.UTF8Encoding($false)))
     $arguments = "--user-data-dir=`"$profile`" --no-first-run --no-default-browser-check --use-system-default-printer --kiosk-printing --app=`"$url`""
+    $reportsProfile = Join-Path $directory $(if ($name -eq 'chrome.exe') { 'ReportsChrome' } else { 'ReportsEdge' })
+    $reportPreferences = Join-Path $reportsProfile 'Default\Preferences'
+    New-Item -ItemType Directory -Force (Split-Path $reportPreferences) | Out-Null
+    $reportPrefs = @{}
+    # Preserve profile preferences (certificate selections, printer and saved data).
+    if (Test-Path $reportPreferences) {
+        $reportParsed = Get-Content $reportPreferences -Raw | ConvertFrom-Json
+        foreach ($reportProperty in $reportParsed.PSObject.Properties) { $reportPrefs[$reportProperty.Name] = $reportProperty.Value }
+    }
+    $reportPrinting = if ($reportPrefs.printing) { $reportPrefs.printing | ConvertTo-Json -Depth 60 | ConvertFrom-Json } else { New-Object PSObject }
+    $reportState = @{version=2;isHeaderFooterEnabled=$false}
+    if ($reportPrinting.print_preview_sticky_settings.appState) {
+        $previous = $reportPrinting.print_preview_sticky_settings.appState | ConvertFrom-Json
+        foreach ($saved in $previous.PSObject.Properties) { if ($saved.Name -ne 'isHeaderFooterEnabled') { $reportState[$saved.Name] = $saved.Value } }
+    }
+    $reportPrinting | Add-Member -MemberType NoteProperty -Name print_preview_sticky_settings -Value @{appState=($reportState | ConvertTo-Json -Compress)} -Force
+    $reportPrefs.printing = $reportPrinting
+    [IO.File]::WriteAllText($reportPreferences,($reportPrefs | ConvertTo-Json -Depth 100 -Compress),(New-Object Text.UTF8Encoding($false)))
+    $reportsBrowser = $browser
+    $reportsArguments = "--user-data-dir=`"$reportsProfile`" --no-first-run --no-default-browser-check --new-window `"$Origin/manage?view=reports&counterPrint=dialog`""
 } elseif ($name -eq 'firefox.exe') {
     $profile = Join-Path $directory 'CounterFirefox'
     New-Item -ItemType Directory -Force $profile | Out-Null
@@ -66,6 +88,14 @@ if ($name -in @('chrome.exe','msedge.exe')) {
     foreach ($side in @('top','bottom','left','right')) { $settings += ('user_pref("print.print_margin_' + $side + '", "0");') }
     $settings | Set-Content (Join-Path $profile 'user.js') -Encoding ASCII
     $arguments = "-no-remote -profile `"$profile`" `"$url`""
+    $reportsProfile = Join-Path $directory 'ReportsFirefox'
+    New-Item -ItemType Directory -Force $reportsProfile | Out-Null
+    $reportSettings = @('user_pref("print.always_print_silent", false);','user_pref("security.enterprise_roots.enabled", true);','user_pref("security.osclientcerts.autoload", true);')
+    foreach ($position in @('headerleft','headercenter','headerright','footerleft','footercenter','footerright')) { $reportSettings += ('user_pref("print.print_' + $position + '", "");') }
+    $reportSettings | Set-Content (Join-Path $reportsProfile 'user.js') -Encoding ASCII
+    $reportsBrowser = $browser
+    $reportsArguments = "-no-remote -profile `"$reportsProfile`" `"$Origin/manage?view=reports&counterPrint=dialog`""
+
 } else {
     $browser = "$env:WINDIR\System32\cmd.exe"
     $arguments = "/c start `"`" `"$Origin/manage`""
@@ -93,8 +123,8 @@ $shortcut.Description = 'Madina Express - silent thermal tickets'
 $shortcut.Save()
 # Normal browser profile keeps the printer-selection dialog for A4 documents.
 $reports = $shell.CreateShortcut((Join-Path $desktop 'Madina Express Reports.lnk'))
-$reports.TargetPath = "$env:WINDIR\System32\cmd.exe"
-$reports.Arguments = "/c start `"`" `"$Origin/manage?view=reports`""
+$reports.TargetPath = $reportsBrowser
+$reports.Arguments = $reportsArguments
 $reports.IconLocation = "$iconPath,0"
 $reports.Description = 'Madina Express - A4 reports with printer selection'
 $reports.Save()

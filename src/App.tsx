@@ -5906,8 +5906,8 @@ function AutomaticTicketPrint({ request, onFinish }: {
   return <div ref={source} hidden><TicketPrintPairs entries={request.entries} printedAt={printedAt} /></div>;
 }
 
-function ticketPrintError(paper: TicketPaper, error: unknown) {
-  if (paper === "tm-t88iv" && error instanceof Error) return error.message;
+function ticketPrintError(_paper: TicketPaper, error: unknown) {
+  if (error instanceof Error) return error.message;
   return "Printing stopped. Check your print settings and reprint the ticket.";
 }
 
