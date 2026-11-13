@@ -73,10 +73,17 @@ def main():
         shutil.copyfile(site, archive / 'nginx.conf')
         os.chmod(archive / 'nginx.conf', 0o600)
         # External APIs stay closed until the signed release and fresh DB are ready.
-        text = site.read_text().replace('    location /api/ {', '    location ^~ /api/ { return 503; }\n    location /api/ {')
+        previous = site.read_text()
+        text = previous.replace('    location /api/ {', '    location ^~ /api/ { return 503;')
+        if text == previous:
+            raise ValueError('Expected API locations are missing. No pairing was changed.')
         site.write_text(text)
-        subprocess.run(['nginx', '-t'], check=True)
-        subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+        try:
+            subprocess.run(['nginx', '-t'], check=True)
+            subprocess.run(['systemctl', 'reload', 'nginx'], check=True)
+        except Exception:
+            site.write_text(previous)
+            raise
         write_state('require-main.json', {'required': True, 'createdAt': int(time.time())})
         for name in ('private.json', 'state.json', 'owner-maintenance.json', 'snapshot.sql'):
             path = ROOT / name
