@@ -112,4 +112,4 @@ The main administrator can create staff accounts under **Settings**. Staff requi
 
 ### Backup retention
 
-The daily backup runs around 02:30 Pakistan time. It verifies the gzip file before publishing it and removes local database backups older than 30 days. Store important backups outside the VPS if you need to recover from loss of the machine.
+The daily backup runs around 02:30 Pakistan time. It verifies the gzip file before publishing it and removes local database backups older than 7 days. Store important backups outside the VPS if you need to recover from loss of the machine.

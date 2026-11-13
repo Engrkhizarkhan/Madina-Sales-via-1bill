@@ -35,7 +35,7 @@ Windows protected updater: `C:\ProgramData\MadinaExpress\host`.
 Current application pointer: `host\current.json`.
 Updater output: `host\updater-out.log`, `host\updater-error.log`.
 App output: `logs\server.log`, `logs\server-error.log`.
-Pre-update backups: `backups\pre-update-*.sql.gz` (30 days); daily backups remain under `data\backups`.
+Pre-update backups: `backups\pre-update-*.sql.gz` (7 days); daily backups remain under `data\backups`.
 
 Cloud: `journalctl -u madina-release-update.service`, `madina-pm2 logs --nostream`, `/var/lib/madina-express/host/current.json`.
 
@@ -45,9 +45,17 @@ A failed release is not repeatedly installed. Fix it and push a new tested commi
 
 Ordinary updates never delete operational data. An owner can explicitly request cleanup using the password/CSRF-protected maintenance endpoint. An operator can also deliver the fixed `clear-test-data` operation through the existing authenticated terminal status channel, signed by the external release key. The signed payload must name the exact installation, accepted release, protected main administrator, a unique nonce and an expiry within 15 minutes. It accepts no SQL or shell commands. A cloud API compromise cannot manufacture a valid signature.
 
-Cleanup waits for in-flight counter writes, takes a protected recovery snapshot and deletes bookings, payments, refunds, expenses, shifts, date-specific run history, test crew and other user accounts. It preserves the named main administrator, configured routes, buses, recurring rosters, settings and enrolled PCs. An applied nonce is committed in the same transaction as deletion, so repeated delivery after a reconnect cannot erase subsequent sales. The operator verifies the cloud has replicated the result and removes the signed request. Recovery snapshots expire with local backup retention after 30 days.
+Cleanup waits for in-flight counter writes, takes a protected recovery snapshot and deletes bookings, payments, refunds, expenses, shifts, date-specific run history, test crew and other user accounts. It preserves the named main administrator, configured routes, buses, recurring rosters, settings and enrolled PCs. An applied nonce is committed in the same transaction as deletion, so repeated delivery after a reconnect cannot erase subsequent sales. The operator verifies the cloud has replicated the result and removes the signed request. Recovery snapshots expire with local backup retention after 7 days.
 
 For a different-main-PC handover, the signed `prepare-main-pc-handover` action also revokes test device enrollments and durably fences the test server before cleanup. The old main stays fenced after restarts and internet loss. Only after an operator verifies its retirement nonce and that all source GTIDs reached the cloud may the root-only handover tool detach the old replica/tunnel. A persistent `require-main.json` guard keeps cloud bookings closed while the new main is being installed, even if unfinished setup is cancelled. The main admin can still sign in and download the fresh installer.
 
 
 If the owner explicitly confirms that an unavailable **test** main PC has been uninstalled and its unsynced data can be discarded, root can use `discard-unavailable-test-main.py --confirm DISCARD-OLD-TEST-PC-AND-UNSYNCED-DATA`. It refuses a reachable main PC, backs up the cloud copy, revokes the old tunnel credentials and leaves external APIs closed. Finish by installing a verified release, explicitly clearing operational data while preserving the owner and route/bus/roster configuration, and restoring that release's production nginx template. This is an operator recovery procedure, never automatic failover or an ordinary update. New main and counter PCs must enroll again.
+
+## Quiet counter refresh
+
+The initial `/admin/bootstrap` returns one consistent snapshot and its `liveCursor`. Visible counters subsequently call `/admin/changes` every five seconds. The compact latest-change index contains opaque record IDs and revisions, not another copy of passenger data. Business writes and their change marker commit together; the locked revision row orders those commits. Reservation expiry and affected tickets after departure edits also publish changes. Rollbacks publish nothing. The reader uses one repeatable-read snapshot so it cannot mix a new cursor with older booking details.
+
+Unchanged responses contain no history arrays. Changed responses contain affected bookings/runs plus deleted IDs; small catalog data is returned only when changed. Existing objects are preserved when identical, so editing, selected seats, dialogs and scroll are not reset. Background refresh does not spin the manual Refresh button, display timestamps, open receipts or print another counter's ticket. Connection errors remain visible; successful quiet refreshes have no status message. Restores, cleanup and large catch-up batches request one consistent full resync. Historical data is still loaded once on entry for the existing history/finance views; server pagination of those views remains a separate improvement as history becomes large.
+
+Daily and pre-update SQL backups retain seven days. This does not remove tickets from the live database or shorten the main PC's replication binlog retention.

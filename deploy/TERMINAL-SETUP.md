@@ -50,7 +50,7 @@ If setup reports "The remote name could not be resolved", download a fresh insta
 
 ## Backups, logs and recovery
 
-- Main PC daily SQL backups: `C:\ProgramData\MadinaExpress\data\backups` (30 days). Cloud SQL backups retain 30 days under `/var/backups/madina-express`.
+- Main PC daily SQL backups: `C:\ProgramData\MadinaExpress\data\backups` (7 days). Cloud SQL backups retain 7 days under `/var/backups/madina-express`.
 - Main server logs: `C:\ProgramData\MadinaExpress\logs\server.log` and `server-error.log`; MySQL logs/data: `data\mysql`. The scheduled task is **Madina Express Terminal Server**; database service is **MadinaTerminalMySQL**.
 - Cloud logs remain under PM2: `ssh root@62.171.173.11 'pm2 logs --nostream'`.
 - Main PC binary logs retain 30 days. If cloud replication is disconnected for longer than that, or Settings reports a replication error, do not clear logs or force writes on the cloud. An administrator must create a fresh consistent replica seed.

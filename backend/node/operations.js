@@ -1,4 +1,5 @@
 import {seatFare,routeDestinations,commissionPolicy} from '../../shared/service-pricing.mjs';
+import {recordAuditedChange,recordLiveEntries} from './change-log.js';
 import {validateClasses,validateRouteConfig} from './service-config.js';
 import { accessDetails, requireOwner } from "./account-access.js";
 import { getPolicies, staffCollectionPolicy, staffRefundPolicy, reservationExpiry } from "./policies.js";
@@ -20,6 +21,7 @@ export async function audit(action, entityType, entityId, before, after, userId,
     [userId || null, action, entityType, String(entityId), before == null ? null : JSON.stringify(before),
       after == null ? null : JSON.stringify(after), String(req?.ip || "system").slice(0, 64)],
   );
+  await recordAuditedChange(executor,action,entityType,entityId,before,after);
 }
 
 const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value)) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
@@ -53,13 +55,14 @@ function counterFares(fares, overrides) {
 }
 
 export async function releaseExpiredReservations(executor = pool, tripRunId = null) {
-  await query(executor,
-    `UPDATE bookings b JOIN booking_seats bs ON bs.booking_id = b.id
-     SET b.booking_status = 'Cancelled', bs.active = 0
-     WHERE b.booking_status = 'Reserved' AND b.expires_at <= NOW()
-     ${tripRunId ? "AND b.trip_run_id = ?" : ""}`,
-    tripRunId ? [tripRunId] : [],
-  );
+  if (executor===pool) return transaction(connection=>releaseExpiredReservations(connection,tripRunId));
+  const expired=await query(executor,`SELECT id,trip_run_id FROM bookings WHERE booking_status='Reserved' AND expires_at<=NOW()
+    ${tripRunId?'AND trip_run_id=?':''} ORDER BY id FOR UPDATE`,tripRunId?[tripRunId]:[]);
+  if (!expired.length) return;
+  const ids=expired.map(booking=>booking.id),placeholders=ids.map(()=>'?').join(',');
+  await query(executor,`UPDATE bookings SET booking_status='Cancelled' WHERE id IN (${placeholders})`,ids);
+  await query(executor,`UPDATE booking_seats SET active=0 WHERE booking_id IN (${placeholders})`,ids);
+  await recordLiveEntries(executor,expired.flatMap(booking=>[['booking',booking.id],['run',booking.trip_run_id]]));
 }
 
 export async function createBooking(data, user, isPublic, req) {
@@ -349,7 +352,9 @@ export async function saveTrip(id, data, user, req) {
   const changingAssignment = before && (before.routeId !== data.routeId || before.busId !== data.busId || before.departure !== data.departure || before.arrival !== data.arrival || before.driver !== data.driver || before.attendant !== data.attendant || before.platform !== data.platform || [...before.days].sort().join() !== [...days].sort().join());
   if (changingAssignment) {
     // Empty future snapshots can be rebuilt from the amended schedule.
+    const emptyRuns=await query(connection,"SELECT id FROM trip_runs WHERE trip_id=? AND service_date>=? AND status='Scheduled' AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.trip_run_id=trip_runs.id)",[recordId,pakistanDate()]);
     await query(connection, "DELETE FROM trip_runs WHERE trip_id = ? AND service_date >= ? AND status = 'Scheduled' AND NOT EXISTS (SELECT 1 FROM bookings b WHERE b.trip_run_id = trip_runs.id)", [recordId, pakistanDate()]);
+    await recordLiveEntries(connection,emptyRuns.map(run=>['run',run.id]));
   }
   await query(connection,
     `INSERT INTO trips (id, route_id, bus_id, departure, arrival, driver, attendant, platform, status, service_days, active, run_number, last_departed_at)

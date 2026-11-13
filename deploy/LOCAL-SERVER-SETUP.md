@@ -39,7 +39,7 @@ On already enrolled child PCs, run **Change-Terminal-PC-Address.cmd**, enter the
 - Disconnect the router's internet connection while keeping LAN connected. Book, reserve and refund locally; reconnect internet and check cloud counts/payment totals agree.
 - From a phone using mobile data, sign in as main admin with MFA. When the main PC is connected, full operations are available. If it is offline or setup is incomplete, the cloud allows login and viewing the last synced data, and blocks changes to prevent conflicting bookings. A cloud-only offline session may require signing in again after the main PC reconnects.
 - Print the receipt/token through the counter shortcut and check both cuts. Check the separate A4 voucher/CNIC dialog.
-- Confirm local backups exist in `C:\ProgramData\MadinaExpress\data\backups`; backups are made daily and retained for 30 days. Back up to separate storage as well; backups on the same disk cannot protect against disk failure.
+- Confirm local backups exist in `C:\ProgramData\MadinaExpress\data\backups`; backups are made daily and retained for 7 days. Back up to separate storage as well; backups on the same disk cannot protect against disk failure.
 
 ## Troubleshooting
 

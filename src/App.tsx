@@ -1,3 +1,4 @@
+import {mergeLiveRecords} from "../shared/live-records.mjs";
 import { receiptDefaults, receiptFonts, receiptNumberBounds, type ReceiptLayout } from "../shared/receipt-layout.mjs";
 import { ReceiptSettingsContext, useReceiptSettings } from "./receipt-settings";
 import { ConfirmationDialog } from "./confirmation";
@@ -270,6 +271,7 @@ type PublicBootstrap = {
   occupancy: PublicOccupancy[];
 };
 type AdminBootstrap = {
+  liveCursor?:string;
   policies?:OperatingPolicies;
   release?: ReleaseInfo;
   readOnly?: boolean;
@@ -282,6 +284,11 @@ type AdminBootstrap = {
   users: StaffUser[];
   user: StaffUser;
   paymentMode: string;
+};
+type AdminChanges = {
+  liveCursor:string;changed?:boolean;reset?:boolean;readOnly:boolean;release?:ReleaseInfo;
+  bookings?:Booking[];runs?:TripRun[];removedBookingIds?:string[];removedRunIds?:string[];
+  catalog?:Pick<AdminBootstrap,"trips"|"fleet"|"routes"|"crew"|"users"|"policies">;
 };
 type PassengerForm = {
   destination:string;
@@ -1631,10 +1638,12 @@ function ManagementApp({
     [cloudReadOnly, setCloudReadOnly] = useState(false),
     [availableBuild,setAvailableBuild]=useState<ReleaseInfo>(),
     [staffPolicy,setStaffPolicy]=useState<OperatingPolicies|null>(null);
+  const liveCursor=useRef<string|null>(null);
   useEffect(() => {
     api
       .adminBootstrap<AdminBootstrap>()
       .then((result) => {
+        liveCursor.current=result.liveCursor||null;
         setBookings(result.bookings);
         setFleet(result.fleet);
         setTrips(result.trips);
@@ -1651,23 +1660,38 @@ function ManagementApp({
       )
       .finally(() => setLoading(false));
   }, [onUserChange]);
-  const [lastUpdated,setLastUpdated]=useState("");
   const [refreshError,setRefreshError]=useState("");
   const [refreshing,setRefreshing]=useState(false);
   const refreshingRef=useRef(false);
   const dataVersion=useRef(0);
-  const refreshData=useCallback(async()=>{
-    if(refreshingRef.current)return;
-    refreshingRef.current=true;setRefreshing(true);
+  const refreshData=useCallback(async(manual=false)=>{
+    if(refreshingRef.current||!liveCursor.current)return;
+    refreshingRef.current=true;
+    if(manual)setRefreshing(true);
     const version=dataVersion.current;
     try{
-      const result=await api.adminBootstrap<AdminBootstrap>();
-      setCloudReadOnly(Boolean(result.readOnly));setAvailableBuild(result.release);setStaffPolicy(result.policies||null);
+      const changes=await api.adminChanges<AdminChanges>(liveCursor.current);
       if(version!==dataVersion.current)return;
-      setBookings(result.bookings);setTrips(result.trips);setRuns(result.runs);setFleet(result.fleet);setRoutes(result.routes);setCrew(result.crew);setStaffUsers(result.users);
-      setLastUpdated(new Date().toLocaleTimeString("en-GB",{timeZone:"Asia/Karachi"}));setRefreshError("");
-    }catch(e){setRefreshError(e instanceof Error?e.message:"Live updates unavailable. Refresh to retry.");}
-    finally{refreshingRef.current=false;setRefreshing(false);}
+      setCloudReadOnly(Boolean(changes.readOnly));
+      setAvailableBuild(previous=>previous?.releaseId===changes.release?.releaseId?previous:changes.release);
+      if(changes.reset){
+        const result=await api.adminBootstrap<AdminBootstrap>();
+        if(version!==dataVersion.current)return;
+        const ids=new Set(result.bookings.map(row=>row.id));
+        setBookings(current=>mergeLiveRecords(current,result.bookings,current.filter(row=>!ids.has(row.id)).map(row=>row.id)));
+        setRuns(result.runs);setTrips(result.trips);setFleet(result.fleet);setRoutes(result.routes);setCrew(result.crew);setStaffUsers(result.users);setStaffPolicy(result.policies||null);
+        setCloudReadOnly(Boolean(result.readOnly));liveCursor.current=result.liveCursor||null;
+      }else{
+        if(changes.changed){
+          setBookings(current=>mergeLiveRecords(current,changes.bookings,changes.removedBookingIds));
+          setRuns(current=>mergeLiveRecords(current,changes.runs,changes.removedRunIds));
+          if(changes.catalog){const catalog=changes.catalog;setTrips(catalog.trips);setFleet(catalog.fleet);setRoutes(catalog.routes);setCrew(catalog.crew);setStaffUsers(catalog.users);setStaffPolicy(catalog.policies||null);}
+        }
+        liveCursor.current=changes.liveCursor;
+      }
+      setRefreshError("");
+    }catch(e){setRefreshError(e instanceof Error?e.message:"Connection lost. Refresh seats before continuing.");}
+    finally{refreshingRef.current=false;if(manual)setRefreshing(false);}
   },[]);
   useEffect(()=>{
     const refresh=()=>{if(!document.hidden)void refreshData();};
@@ -1858,6 +1882,7 @@ function ManagementApp({
     try {
       const person = crew.find((item) => item.id === id);
       await api.deleteCrew(id);
+      dataVersion.current++;
       setCrew((current) => current.filter((item) => item.id !== id));
       showToast(`${person?.name ?? "Staff member"} deleted.`);
     } catch (error) {
@@ -1870,8 +1895,7 @@ function ManagementApp({
       const result = await api.transitionTrip<TripRun>(id, action, date, notes,options);
       dataVersion.current++;
       setRuns((current) => [...current.filter((run) => run.id !== result.trip.id), result.trip]);
-      const fresh = await api.adminBootstrap<AdminBootstrap>();
-      setTrips(fresh.trips); setFleet(fresh.fleet); setRuns(fresh.runs);setBookings(fresh.bookings);
+      await refreshData();
       showToast(action === "depart" ? "Bus departed. Tickets closed." : action==="pause"?"Seat sales paused.":action==="resume"?"Seat sales resumed.":action==="reopen"?"Counter sales reopened. Override recorded.":"Counter sales closed.");
     } catch (error) { failure(error); throw error; }
   };
@@ -2054,7 +2078,7 @@ function ManagementApp({
               initialSelection={saleTarget}
               readOnly={cloudReadOnly || user.role==="dispatcher"}
               onTransition={transitionTrip}
-              onRefresh={refreshData} refreshing={refreshing} lastUpdated={lastUpdated} refreshError={refreshError}
+              onRefresh={()=>refreshData(true)} refreshing={refreshing} refreshError={refreshError}
               onCounterSave={saveCounter}
               onAddDeparture={canAddSchedule ? (date, defaults) => setNewCounterSchedule({ date, defaults }) : undefined}
               onDeleteDeparture={canManageSchedules ? deleteTrip : undefined}
@@ -2314,11 +2338,11 @@ function SettlementNote({ title, text }: { title: string; text: string }) {
   );
 }
 
-function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onSave,showToast,paymentMode,onCounterSave,onAddDeparture,onDeleteDeparture,onPrint,onCancel,onConfirm,onRefund,onUpdate,onReport,onTransition,onRefresh,refreshing,lastUpdated,refreshError,readOnly}: {
+function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onSave,showToast,paymentMode,onCounterSave,onAddDeparture,onDeleteDeparture,onPrint,onCancel,onConfirm,onRefund,onUpdate,onReport,onTransition,onRefresh,refreshing,refreshError,readOnly}: {
   bookings: Booking[]; trips: TripRecord[]; fleet: BusRecord[]; routes: RouteRecord[]; runs: TripRun[];
   onTransition:(id:string,action:DepartureAction,date:string,notes?:string,options?:DepartureOptions)=>Promise<void>;
   readOnly:boolean;
-  onRefresh:()=>Promise<void>;refreshing:boolean;lastUpdated:string;refreshError:string;
+  onRefresh:()=>Promise<void>;refreshing:boolean;refreshError:string;
   initialSelection: {tripId:string;date:string;mode?:"Ticket"|"Reservation"}|null;
   onSave: (booking:Booking)=>Promise<void>; showToast:(message:string)=>void; paymentMode:string;
   onCounterSave:(id:string,date:string,changes:CounterChanges)=>Promise<TripRun>;
@@ -2471,7 +2495,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
       {destinations.length>1&&<div className="destination-statistics" aria-label="Passengers by destination">{destinations.map(d=><span key={d.name}>{d.name}<strong>{active.filter(b=>b.destination===d.name).reduce((sum,b)=>sum+b.seats.length,0)}</strong></span>)}</div>}
       </div><section className="surface counter-seats"><div className="panel-heading"><h2>{bus.model||bus.service}</h2><span>{vehicleLabel(bus)} · {trip.departure}</span></div>
         <SeatMap seatClasses={bus.seatClasses} locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onEnter={collectFromSeat} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);if(selectionBasis!==selectionContext)setFareEdits({});setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
-        <div className="seat-refresh"><button className="secondary-button" type="button" disabled={refreshing} onClick={()=>void onRefresh()}><RefreshCw size={15} className={refreshing?"spin":""}/> Refresh seats</button><small>{refreshError||`Auto-updates every 5s${lastUpdated?" · Updated "+lastUpdated:""}`}</small></div>
+        <div className="seat-refresh"><button className="secondary-button" type="button" disabled={refreshing} onClick={()=>void onRefresh()}><RefreshCw size={15} className={refreshing?"spin":""}/> Refresh seats</button>{refreshError&&<small role="status">{refreshError}</small>}</div>
         <p className="counter-hint">Click any booked or reserved seat to edit, collect payment, remove a reservation or refund. W = online; R = reserved.</p>
       </section>
     </div>
@@ -5412,7 +5436,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
       <li>Use the new Madina Express Counter desktop shortcut. Keep the main PC awake. Its server starts after reboot.</li>
       <li>When moving the same main PC to another LAN, run Change-Main-PC-Network.cmd from the retained main installer folder. On enrolled child PCs run Change-Terminal-PC-Address.cmd with the new main IP. Data and PC enrollment are preserved.</li>
     </ol><p>Child setup files expire after 30 minutes. TPM is required unless the main admin approves compatibility mode for that download. Staff need both their account password and an enrolled Windows profile. Use standard Windows accounts for staff. The main admin can sign in remotely with the authenticator even when the main PC is offline; the cloud then shows the last synced data. Changes resume when the main PC reconnects.</p>
-    <p>During internet outages, the counters continue locally. Public reservations pause and the cloud catches up after reconnection. The main PC stores daily backups for 30 days.</p></details>
+    <p>During internet outages, the counters continue locally. Public reservations pause and the cloud catches up after reconnection. The main PC stores daily backups for 7 days.</p></details>
   </section>;
 }
 

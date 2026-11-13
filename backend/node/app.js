@@ -1,4 +1,5 @@
 import {publicBus,publicRoute,publicTrip} from "./public-data.js";
+import {adminSnapshot,adminChanges} from './admin-data.js';
 import {clearOperationalData} from "./production-reset.js";
 import {getReceiptLayout,validateReceiptLayout} from "./receipt-config.js";
 import { terminalAdminRouter, terminalEnrollmentRouter, terminalSyncRouter } from "../terminal/routes.js";
@@ -20,7 +21,7 @@ import { getPolicies, validatePolicies } from "./policies.js";
 import { pool, transaction } from "./db.js";
 import { ApiError, fail, isoDateTime, pakistanDate, randomToken, requireFields } from "./helpers.js";
 import {
-  fetchBookings, fetchBuses, fetchCrew,
+  fetchBuses,
   fetchExpenses, fetchRoutes, fetchTripRuns, fetchTrips, fetchUsers, lookupJourney, normalizeBookingPhone, publicOccupancy,
 } from "./repository.js";
 import {
@@ -319,17 +320,14 @@ app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
     return res.json({ bookings: [], fleet: [], trips: [], runs: [], routes: [], crew: [], users: [],
       user: publicUser(req.user), paymentMode: config.paymentMode });
   }
-  const trips = await fetchTrips();
-  const runs = await fetchTripRuns();
-  const todayTrips = trips.map((trip) => {
-    const run = runs.find((item) => item.tripId === trip.id && item.date === pakistanDate());
-    return run ? { ...trip, status: run.status, runNumber: run.runNumber } : { ...trip, status: "Scheduled", runNumber: 1 };
-  });
   res.json({
-    bookings: await fetchBookings(), fleet: await fetchBuses(), trips: todayTrips, runs, routes: await fetchRoutes(),
-    crew: await fetchCrew(), users: isOwner(req.user) ? await fetchUsers() : [],
-    user: publicUser(req.user), release:releaseInfo, policies:await getPolicies(), paymentMode: config.paymentMode, readOnly: Boolean(req.cloudReadOnly),
+    ...await adminSnapshot(req.user),
+    user: publicUser(req.user), release:releaseInfo, paymentMode: config.paymentMode, readOnly: Boolean(req.cloudReadOnly),
   });
+}));
+
+app.get('/admin/changes',asyncRoute(async(req,res)=>{
+  res.json({...await adminChanges(req.query.cursor,req.user),release:releaseInfo,readOnly:Boolean(req.cloudReadOnly)});
 }));
 
 const financePinKey = "finance_pin_hash";

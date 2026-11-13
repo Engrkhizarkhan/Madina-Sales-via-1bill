@@ -9,6 +9,7 @@ import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { verifyRelease,verifyPackage,zipEntries,fetchBounded,maxPackageBytes } from './release.mjs';
 import { atomicJson,jsonFile,activate,recover } from './engine.mjs';
+import {expiredBackup} from './backup-retention.mjs';
 const exec=promisify(execFile),sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const quote=value=>"'"+value.replaceAll("'","''")+"'";
 const ps=code=>exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop';"+code,'utf16le').toString('base64')],{windowsHide:true,timeout:180000,maxBuffer:1024*1024});
@@ -23,7 +24,7 @@ export async function run(base){
  // Expired update backups are separate from the daily app backup rotation.
  try{for(const name of await readdir(join(base,'backups'))){
   if(!/^pre-update-[0-9TZ-]+\.sql\.gz$/.test(name))continue;
-  const file=join(base,'backups',name);if((await stat(file)).mtimeMs<Date.now()-30*86400000)await rm(file,{force:true});
+  const file=join(base,'backups',name);if(expiredBackup(name,(await stat(file)).mtimeMs))await rm(file,{force:true});
  }}catch{/* Cleanup must never prevent an application update. */}
  const report=async status=>{
   const value={...status,checkedAt:new Date().toISOString()};

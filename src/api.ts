@@ -112,6 +112,7 @@ export const api = {
   publicTripRuns: <T>(date: string) =>
     request<{ terminalAvailable?: boolean; runs: T[]; occupancy: unknown[]; fleet: unknown[]; trips: unknown[]; routes: unknown[] }>(`/public/trip-runs?date=${encodeURIComponent(date)}`),
   adminBootstrap: <T>() => request<T>("/admin/bootstrap"),
+  adminChanges: <T>(cursor:string) => request<T>(`/admin/changes?cursor=${encodeURIComponent(cursor)}`),
   me: <T>() =>
     request<T & { csrfToken?: string }>("/auth/me").then(rememberCsrf),
   login: <T>(identity: string, password: string, otp = "") =>

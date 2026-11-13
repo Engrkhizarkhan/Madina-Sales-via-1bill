@@ -126,4 +126,10 @@ chmod 0640 "$ENV_FILE"
 repair_archive=/var/www/madina-express/Madina-Express-Main-PC-Repair.zip
 zip -q -j "$repair_archive" "$PROJECT_DIR/deploy/windows/Repair-Main-PC.cmd" "$PROJECT_DIR/deploy/windows/Repair-Main-PC.ps1" "$PROJECT_DIR/deploy/windows/Run-Server.ps1"
 chmod 0644 "$repair_archive"
+# Refresh the scheduled backup implementation from this accepted release too;
+# otherwise an old mutable checkout can silently keep an obsolete retention.
+sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/deploy/madina-express-backup.service" > /etc/systemd/system/madina-express-backup.service
+install -m 0644 "$PROJECT_DIR/deploy/madina-express-backup.timer" /etc/systemd/system/madina-express-backup.timer
+systemctl daemon-reload
+systemctl enable --now madina-express-backup.timer
 echo 'Terminal installer support is prepared. The cloud stays the writer until the main PC begins setup.'

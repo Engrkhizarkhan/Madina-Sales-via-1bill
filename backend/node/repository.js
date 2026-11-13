@@ -65,14 +65,15 @@ export async function fetchTrips(activeOnly = false, executor = pool) {
   }));
 }
 
-export async function fetchTripRuns(serviceDate = null, executor = pool) {
+export async function fetchTripRuns(serviceDate = null, executor = pool, ids = null) {
+  if (ids && !ids.length) return [];
   const result = await rows(
     `SELECT tr.id, tr.trip_id, tr.service_date, tr.run_number, tr.bus_id, tr.driver,
             tr.attendant, tr.platform, tr.status, tr.notes, tr.sales_paused, tr.sales_override, tr.boarding_started_at, tr.departed_at, tr.returned_at, tr.snapshot
      FROM trip_runs tr
-     ${serviceDate ? 'WHERE tr.service_date = ?' : ''}
+     ${ids ? `WHERE tr.id IN (${ids.map(()=>'?').join(',')})` : serviceDate ? 'WHERE tr.service_date = ?' : ''}
      ORDER BY tr.service_date DESC, tr.id`,
-    serviceDate ? [serviceDate] : [], executor,
+    ids || (serviceDate ? [serviceDate] : []), executor,
   );
   return result.map((row) => ({
     id: row.id,
@@ -168,11 +169,13 @@ function groupByBooking(records) {
   return groups;
 }
 
-export async function fetchBookings(executor = pool) {
+export async function fetchBookings(executor = pool, ids = null) {
+  if (ids && !ids.length) return [];
+  const placeholders=ids?.map(()=>'?').join(',');
   const [bookings, seats, refunds] = await Promise.all([
-    rows("SELECT * FROM bookings ORDER BY created_at DESC", [], executor),
-    rows("SELECT booking_id, seat_number FROM booking_seats ORDER BY booking_id, seat_number", [], executor),
-    rows(`${refundDetails} ORDER BY r.booking_id, r.processed_at`, [], executor),
+    rows(`SELECT * FROM bookings ${ids?`WHERE id IN (${placeholders})`:''} ORDER BY created_at DESC`, ids||[], executor),
+    rows(`SELECT booking_id, seat_number FROM booking_seats ${ids?`WHERE booking_id IN (${placeholders})`:''} ORDER BY booking_id, seat_number`, ids||[], executor),
+    rows(`${refundDetails} ${ids?`WHERE r.booking_id IN (${placeholders})`:''} ORDER BY r.booking_id, r.processed_at`, ids||[], executor),
   ]);
   const bookingSeats = groupByBooking(seats);
   const bookingRefunds = groupByBooking(refunds);

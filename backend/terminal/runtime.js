@@ -3,6 +3,7 @@ import { releaseInfo } from "../update/version.js";
 import { applyOwnerCommand } from "./owner-command.js";
 import { spawn } from "node:child_process";
 import { readFile, writeFile, rename, readdir, unlink, mkdir } from "node:fs/promises";
+import {expiredBackup} from '../../deploy/updater/backup-retention.mjs';
 import { createWriteStream } from "node:fs";
 import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
@@ -150,12 +151,7 @@ async function backupLocalDatabase() {
     await rename(temporary, join(directory, name));
     lastBackup = Date.now();
     for (const file of await readdir(directory)) {
-      const match = file.match(/^madina-(\d{4})(\d{2})(\d{2})T\d{6}Z.sql.gz$/);
-      const resetStamp = file.match(/^production-reset-(\d+)(?:-[a-f0-9]+)?\.json\.gz$/);
-      if (resetStamp && Number(resetStamp[1]) < Date.now() - 30 * 86400000) await unlink(join(directory,file));
-      if (match && Date.parse(`${match[1]}-${match[2]}-${match[3]}T00:00:00Z`) < Date.now() - 30 * 86400000) {
-        await unlink(join(directory, file));
-      }
+      if (expiredBackup(file,NaN)) await unlink(join(directory,file));
     }
   } catch (error) {
     console.error("Local backup:", error.message);
