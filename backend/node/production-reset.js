@@ -8,6 +8,7 @@ import { audit } from "./operations.js";
 
 // An explicit owner operation, never an automatic release migration or seed.
 export async function clearOperationalData(owner, req, command = null) {
+  const devicesPreserved=command?.action!=="prepare-main-pc-handover";
   const tables = ["financial_transactions","expenses","shift_closures","counter_shifts","refunds","booking_seats","payment_events","bookings","trip_runs","api_sessions","audit_logs","users","crew"];
   return transaction(async connection => {
     const marker = command ? `production_reset_${command.nonce}` : null;
@@ -31,13 +32,18 @@ export async function clearOperationalData(owner, req, command = null) {
     }
     await connection.execute("UPDATE settings SET updated_by=? WHERE updated_by IS NOT NULL",[owner.id]);
     await connection.execute("UPDATE terminal_enrollments SET created_by=?",[owner.id]);
+    if (command?.action==="prepare-main-pc-handover") {
+      const [enrollments]=await connection.execute("DELETE FROM terminal_enrollments");
+      const [devices]=await connection.execute("DELETE FROM terminal_devices");
+      cleared.terminal_enrollments=enrollments.affectedRows;cleared.terminal_devices=devices.affectedRows;
+    }
     await connection.execute("DELETE FROM api_sessions WHERE user_id<>?",[owner.id]);
     const [removed] = await connection.execute("DELETE FROM users WHERE id<>?",[owner.id]);
     cleared.users = removed.affectedRows;
     await connection.execute("UPDATE trips SET status='Scheduled',run_number=1,last_departed_at=NULL");
     await connection.execute("UPDATE buses SET status='Ready' WHERE status='On route'");
-    if (marker) await connection.execute("INSERT INTO settings(setting_key,setting_value,updated_by) VALUES (?,?,?)",[marker,JSON.stringify({cleared,inventoryPreserved:true,devicesPreserved:true,releaseId:command.releaseId,completedAt:new Date().toISOString()}),owner.id]);
-    await audit("production.data_cleared","system","operational-data",null,{cleared,backup:filename,inventoryPreserved:true,devicesPreserved:true},owner.id,req,connection);
-    return {cleared,inventoryPreserved:true,devicesPreserved:true};
+    if (marker) await connection.execute("INSERT INTO settings(setting_key,setting_value,updated_by) VALUES (?,?,?)",[marker,JSON.stringify({cleared,inventoryPreserved:true,devicesPreserved,releaseId:command.releaseId,completedAt:new Date().toISOString()}),owner.id]);
+    await audit("production.data_cleared","system","operational-data",null,{cleared,backup:filename,inventoryPreserved:true,devicesPreserved},owner.id,req,connection);
+    return {cleared,inventoryPreserved:true,devicesPreserved};
   });
 }

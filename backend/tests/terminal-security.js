@@ -93,6 +93,14 @@ test('certificate, relay and staff device boundaries', async t => {
       await writeFile(join(directory, 'ready.json'), JSON.stringify({ installationId: 'another-installation' }));
       assert.equal(await terminalReady(), false);
     });
+    await t.test('a retired test main stays fenced even after a restart and without internet', async () => {
+      await writeFile(join(directory,'ready.json'),JSON.stringify({installationId:'security-test'}));
+      await writeFile(join(directory,'handover.json'),JSON.stringify({installationId:'security-test',nonce:'fixture',stage:'preparing'}));
+      assert.equal(await terminalReady(),false);
+      await writeFile(join(directory,'handover.json'),JSON.stringify({installationId:'security-test',nonce:'fixture',stage:'ready'}));
+      const restarted=await import('../terminal/runtime.js?restart-fence-test');
+      assert.equal(await restarted.terminalPaired(),true);assert.equal(await restarted.terminalReady(),false);
+    });
   } finally {
     pool.execute = originalExecute;
     await pool.end();

@@ -5,7 +5,7 @@ import { verify } from "node:crypto";
 export function verifyOwnerCommand(envelope,key,{installationId,releaseId,now=Date.now()}) {
   if (!envelope || typeof envelope.payload!=="string" || envelope.payload.length>2048 || typeof envelope.signature!=="string" || !/^[A-Za-z0-9+/]{86}==$/.test(envelope.signature) || !verify(null,Buffer.from(envelope.payload),key,Buffer.from(envelope.signature,"base64"))) throw new Error("Invalid signed maintenance request.");
   const command=JSON.parse(envelope.payload);
-  if (command.project!=="madina-express" || command.action!=="clear-test-data" || command.installationId!==installationId || command.releaseId!==releaseId || !/^[a-f0-9]{32}$/.test(command.nonce) || !Number.isSafeInteger(command.ownerId) || command.ownerId<1 || !Number.isFinite(command.expiresAt) || command.expiresAt<=now || command.expiresAt>now+15*60000) throw new Error("Maintenance request does not match this PC/release or has expired.");
+  if (command.project!=="madina-express" || !["clear-test-data","prepare-main-pc-handover"].includes(command.action) || command.installationId!==installationId || command.releaseId!==releaseId || !/^[a-f0-9]{32}$/.test(command.nonce) || !Number.isSafeInteger(command.ownerId) || command.ownerId<1 || !Number.isFinite(command.expiresAt) || command.expiresAt<=now || command.expiresAt>now+15*60000) throw new Error("Maintenance request does not match this PC/release or has expired.");
   return command;
 }
 

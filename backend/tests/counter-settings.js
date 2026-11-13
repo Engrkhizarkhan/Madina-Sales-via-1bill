@@ -90,6 +90,10 @@ try {
   check(subsequent.status===201,'new sales work after production cleanup');
   check((await clearOperationalData(owner,{ip:'signed-operator-qa'},command)).alreadyApplied===true,'replaying a signed cleanup never deletes later sales');
   check((await pool.execute('SELECT id FROM bookings WHERE id=?',[subsequent.body.booking.id]))[0].length===1,'post-cleanup booking survives duplicate maintenance delivery');
+  await pool.execute("INSERT INTO terminal_devices(slot,fingerprint,certificate,expires_at) VALUES (1,?,'QA certificate',DATE_ADD(NOW(),INTERVAL 1 DAY))",['b'.repeat(64)]);
+  await pool.execute("INSERT INTO terminal_enrollments(slot,token_hash,expires_at,created_by) VALUES (1,?,DATE_ADD(NOW(),INTERVAL 1 DAY),?)",['c'.repeat(64),owner.id]);
+  await clearOperationalData(owner,{ip:'handover-qa'},{nonce:randomBytes(16).toString('hex'),releaseId:'qa-release',action:'prepare-main-pc-handover'});
+  check((await pool.query('SELECT slot FROM terminal_devices'))[0].length===0&&(await pool.query('SELECT slot FROM terminal_enrollments'))[0].length===0,'a different-main handover revokes old device certificates and unused enrollment tokens');
   console.log(`Passed ${passed} receipt, QR and production cleanup checks.`);
 } finally {
   await new Promise(resolve=>server.close(resolve));await pool.end();

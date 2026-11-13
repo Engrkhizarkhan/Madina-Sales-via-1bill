@@ -2,9 +2,9 @@ import {publicBus,publicRoute,publicTrip} from "./public-data.js";
 import {clearOperationalData} from "./production-reset.js";
 import {getReceiptLayout,validateReceiptLayout} from "./receipt-config.js";
 import { terminalAdminRouter, terminalEnrollmentRouter, terminalSyncRouter } from "../terminal/routes.js";
-import { cloudAuthorityGuard, terminalState } from "../terminal/state.js";
+import { cloudAuthorityGuard, terminalState, cloudNeedsMain } from "../terminal/state.js";
 import { localTerminalGuard } from "../terminal/certificates.js";
-import { terminalReady } from "../terminal/runtime.js";
+import { terminalReady, terminalHandover } from "../terminal/runtime.js";
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { CloudSessions } from "./cloud-sessions.js";
@@ -77,7 +77,7 @@ app.use((req, res, next) => {
   if (!config.terminal.local || req.path === "/health") return next();
   void terminalReady().then(ready => {
     if (ready) return next();
-    res.status(503).json({ error: { code: "terminal_starting", message: "The main PC is completing its initial connection. Please wait." } });
+    res.status(503).json({ error: { code: "terminal_starting", message: "The main PC is not available for booking. If this is the retired test PC, use the cloud staff website or the new main PC." } });
   }).catch(next);
 });
 
@@ -166,7 +166,7 @@ async function createSession(connection, req, user) {
 app.get("/health", asyncRoute(async (_req, res) => {
   await pool.query("SELECT 1");
   res.json({ status: "ok", database: "connected", runtime: "node", time: new Date().toISOString(), release:releaseInfo, paymentMode: config.paymentMode,
-    ...(config.terminal.local ? { installationId: process.env.TERMINAL_INSTALLATION_ID } : {}) });
+    ...(config.terminal.local ? { installationId: process.env.TERMINAL_INSTALLATION_ID, handover:await terminalHandover() } : {}) });
 }));
 
 app.post("/auth/login", asyncRoute(async (req, res) => {
@@ -233,7 +233,7 @@ app.post("/auth/login", asyncRoute(async (req, res) => {
 app.get("/public/bootstrap", asyncRoute(async (_req, res) => {
   const policy=await getPolicies();
   if (!config.publicSiteEnabled) fail("Public booking is temporarily unavailable.", 404, "public_site_disabled");
-  res.json({ fleet: (await fetchBuses(true)).map(publicBus), trips: (await fetchTrips(true)).map(publicTrip), routes: (await fetchRoutes(true)).map(publicRoute), occupancy: await publicOccupancy(pakistanDate()), reservationPolicy:{maxSeats:policy.publicMaxSeats,expiryEnabled:policy.publicExpiryEnabled,expiryHours:policy.publicExpiryHours}, terminalAvailable:policy.publicReservationsEnabled && !["preparing", "active"].includes((await terminalState()).phase) });
+  res.json({ fleet: (await fetchBuses(true)).map(publicBus), trips: (await fetchTrips(true)).map(publicTrip), routes: (await fetchRoutes(true)).map(publicRoute), occupancy: await publicOccupancy(pakistanDate()), reservationPolicy:{maxSeats:policy.publicMaxSeats,expiryEnabled:policy.publicExpiryEnabled,expiryHours:policy.publicExpiryHours}, terminalAvailable:policy.publicReservationsEnabled && !cloudNeedsMain(await terminalState()) });
 }));
 
 app.get("/public/trip-runs", asyncRoute(async (req, res) => {
@@ -243,7 +243,7 @@ app.get("/public/trip-runs", asyncRoute(async (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("Choose a valid travel date.", 422, "validation_error");
   const runs = await fetchTripRuns(date);
   res.json({ runs: runs.map((run) => ({ id: run.id, tripId: run.tripId, date: run.date, runNumber: run.runNumber,
-    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: publicBus(run.snapshot.bus), route: publicRoute(run.snapshot.route) } : null })), occupancy: await publicOccupancy(date), fleet: (await fetchBuses(true)).map(publicBus), trips: (await fetchTrips(true)).map(publicTrip), routes: (await fetchRoutes(true)).map(publicRoute), terminalAvailable: policy.publicReservationsEnabled && !["preparing", "active"].includes((await terminalState()).phase) });
+    busId: run.busId, status: run.status, salesPaused:run.salesPaused, salesOverride:false, snapshot: run.snapshot ? { routeId: run.snapshot.routeId, departure: run.snapshot.departure, arrival: run.snapshot.arrival, bus: publicBus(run.snapshot.bus), route: publicRoute(run.snapshot.route) } : null })), occupancy: await publicOccupancy(date), fleet: (await fetchBuses(true)).map(publicBus), trips: (await fetchTrips(true)).map(publicTrip), routes: (await fetchRoutes(true)).map(publicRoute), terminalAvailable: policy.publicReservationsEnabled && !cloudNeedsMain(await terminalState()) });
 }));
 
 app.post("/public/bookings", asyncRoute(async (req, res) => {

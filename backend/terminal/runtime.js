@@ -17,7 +17,7 @@ let statusTimer;
 let backupTimer;
 let reconnectTimer;
 
-export async function terminalReady() {
+export async function terminalPaired() {
   if (!config.terminal.local) return true;
   try {
     const ready = JSON.parse(await readFile(join(config.terminal.directory, "ready.json"), "utf8"));
@@ -26,6 +26,15 @@ export async function terminalReady() {
     if (error.code === "ENOENT") return false;
     throw error;
   }
+}
+
+export async function terminalHandover() {
+  if (!config.terminal.local) return null;
+  try {return JSON.parse(await readFile(join(config.terminal.directory,'handover.json'),'utf8'));}
+  catch(error){if(error.code==='ENOENT')return null;throw error;}
+}
+export async function terminalReady() {
+  return await terminalPaired() && !(await terminalHandover());
 }
 
 async function publishConnection(status) {
@@ -47,18 +56,19 @@ async function callCloud(action) {
 
 async function refreshStatus() {
   try {
-    const ready = await terminalReady();
+    const ready = await terminalPaired();
+    const handingOver = await terminalHandover();
     const checkStarted = performance.now();
     const status = await callCloud(ready ? "status" : "activate");
     const cloudLatencyMs = Math.round(performance.now() - checkStarted);
-    if (Array.isArray(status.revokedSessions)) {
+    if (!handingOver && Array.isArray(status.revokedSessions)) {
       const hashes = status.revokedSessions.filter(hash => typeof hash === "string" && /^[a-f0-9]{64}$/.test(hash));
       for (let index = 0; index < hashes.length; index += 100) {
         const batch = hashes.slice(index, index + 100);
         await pool.execute(`DELETE FROM api_sessions WHERE token_hash IN (${batch.map(() => "?").join(",")})`, batch);
       }
     }
-    if(Array.isArray(status.mfaSteps))for(const value of status.mfaSteps){
+    if(!handingOver && Array.isArray(status.mfaSteps))for(const value of status.mfaSteps){
       if(Number.isSafeInteger(value.userId)&&Number.isSafeInteger(value.step))await pool.execute('UPDATE users SET mfa_last_step=GREATEST(mfa_last_step,?) WHERE id=?',[value.step,value.userId]);
     }
     if (!ready && status.active) {
@@ -73,7 +83,15 @@ async function refreshStatus() {
           key,installationId:process.env.TERMINAL_INSTALLATION_ID,releaseId:releaseInfo.releaseId,
           begin:()=>maintenance.beginOwnerMaintenance(0),end:()=>maintenance.endOwnerMaintenance(),
           loadOwner:async id=>(await pool.execute('SELECT id,role,is_owner,active FROM users WHERE id=?',[id]))[0][0],
-          execute:(owner,command)=>clearOperationalData(owner,{ip:'signed-operator-command'},command),
+          execute:async(owner,command)=>{
+            if(command.action!=='prepare-main-pc-handover')return clearOperationalData(owner,{ip:'signed-operator-command'},command);
+            const handover={installationId:process.env.TERMINAL_INSTALLATION_ID,nonce:command.nonce,stage:'preparing'};
+            const path=join(config.terminal.directory,'handover.json');
+            await writeFile(path,JSON.stringify(handover),{mode:0o600});
+            const result=await clearOperationalData(owner,{ip:'signed-operator-handover'},command);
+            await writeFile(path,JSON.stringify({...handover,stage:'ready'}),{mode:0o600});
+            return {...result,retired:true};
+          },
         });
       } catch(error) { console.error('Signed maintenance:',error.message); }
     }

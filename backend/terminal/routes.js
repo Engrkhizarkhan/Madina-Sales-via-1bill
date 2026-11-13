@@ -188,7 +188,7 @@ terminalAdminRouter.post("/package", route(async (req, res) => {
     }), { mode: 0o600 });
     await runProcess("zip", ["-0", "-q", join(temporary, "main-pc.zip"), "application.zip", "Install-Main-PC.ps1",
       "Install-Main-PC.cmd", "runtime.json", "setup.json", "Change-Main-PC-Network.cmd", "Change-Main-PC-Network.ps1", "Change-Terminal-PC-Address.cmd", "Change-Terminal-PC-Address.ps1"], { cwd: temporary });
-    await audit("terminal.installer_downloaded", "user", req.user.id, null, null, req.user.id, req);
+    if (!req.cloudReadOnly) await audit("terminal.installer_downloaded", "user", req.user.id, null, null, req.user.id, req);
     res.set("X-Accel-Buffering", "no");
     res.download(join(temporary, "main-pc.zip"), "Madina-Express-Main-PC.zip", () => void rm(temporary, { recursive: true, force: true }));
   } catch (error) {

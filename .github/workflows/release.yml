@@ -46,10 +46,11 @@ jobs:
           npm run server:check
           npm run test:terminal
           npm run test:layout
-          node --test backend/tests/policies-access.js backend/tests/updater.js backend/tests/owner-command.js
+          node --test backend/tests/policies-access.js backend/tests/updater.js backend/tests/owner-command.js backend/tests/cloud-authority.js
           python3 backend/tests/terminal-broker.py
           python3 backend/tests/terminal-reset.py
           python3 backend/tests/terminal-reconnect.py
+          python3 backend/tests/main-handover.py
       - name: Start isolated MySQL and test booking API
         run: |
           sudo systemctl start mysql

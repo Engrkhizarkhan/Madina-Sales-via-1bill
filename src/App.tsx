@@ -5435,7 +5435,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
   return <section className="surface settings-card">
     <SettingsTitle icon={<ShieldCheck size={19} />} title="Main PC & offline access"
       text={local ? "All counters use this local server, including during internet outages." : "Install one local server on the main Windows PC, then enroll each counter PC."} />
-    {status && <p className="terminal-address">{local ? `Local server: ${status.localOrigin}` : "Cloud server · starting the main PC installer transfers booking authority to that PC."}</p>}
+    {status && <p className="terminal-address">{local ? `Local server: ${status.localOrigin}` : status.phase==="awaiting-main"?"Ready for the new main PC. Online reservations stay paused until it is installed and connected.":"Cloud server · starting the main PC installer transfers booking authority to that PC."}</p>}
     <div className="settings-fields"><label className="span-2"><span>Current administrator password</span>
       <input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} />
     </label></div>

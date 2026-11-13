@@ -25,6 +25,10 @@ if (-not (Test-NetConnection -ComputerName $defaultIp -Port 8443 -InformationLev
     throw "Cannot reach the main PC at $defaultIp`:8443. Check the LAN cable/router and the PCs' different IPv4 addresses on the same subnet. On the main PC, run Configure-Main-PC-Firewall.ps1 as Administrator. No device key has been created yet."
 }
 Import-Certificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+$newCa = New-Object Security.Cryptography.X509Certificates.X509Certificate2($certificatePath)
+Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
+    $_.Subject -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $newCa.Thumbprint
+} | Remove-Item -Force
 $inf = @'
 [Version]
 Signature="$Windows NT$"
