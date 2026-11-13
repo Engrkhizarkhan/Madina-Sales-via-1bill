@@ -18,7 +18,6 @@ import {
   CloudOff,
   ArrowLeft,
   ArrowRight,
-  Armchair,
   Banknote,
   BookOpenCheck,
   Bus,
@@ -37,14 +36,12 @@ import {
   LogOut,
   MapPinned,
   Menu,
-  Navigation,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
   Printer,
   ReceiptText,
   RefreshCw,
-  Route,
   Search,
   Settings,
   ShieldCheck,
@@ -672,7 +669,9 @@ function App() {
     return <ReceiptSettingsContext.Provider value={receiptSettings}><ManagementGate onNavigate={navigate} /></ReceiptSettingsContext.Provider>;
   }
   if (publicSiteEnabled && path !== "/login") {
-    return <PublicHome onNavigate={navigate} />;
+    return path.split(/[?#]/)[0] === "/check"
+      ? <PublicLookupPage onNavigate={navigate} />
+      : <PublicHome onNavigate={navigate} />;
   }
   return <LoginPage onNavigate={navigate} />;
 }
@@ -715,6 +714,33 @@ function AppLoading({ message }: { message: string }) {
       <span>{message}</span>
     </div>
   );
+}
+
+function PublicHeader({onNavigate, lookupPage = false}: {onNavigate: (path: string) => void; lookupPage?: boolean}) {
+  return <header className="public-nav public-compact-nav">
+    <button className="public-brand" type="button" onClick={() => onNavigate("/")}>
+      <span className="brand-mark">ME</span>
+      <strong>Madina Express</strong>
+    </button>
+    <nav aria-label="Main navigation">
+      <a href={`${appBase}${lookupPage ? "/" : "/check"}`}>{lookupPage ? "Book a seat" : "Check a ticket"}</a>
+    </nav>
+  </header>;
+}
+
+function PublicFooter() {
+  return <footer className="public-footer public-compact-footer">
+    <p>Madina Terminal, Peshawar · <a href="tel:03117772299">0311-777-2299</a></p>
+    <span>© 2026 Madina Express</span>
+  </footer>;
+}
+
+function PublicLookupPage({onNavigate}: {onNavigate: (path: string) => void}) {
+  return <div className="public-site">
+    <PublicHeader onNavigate={onNavigate} lookupPage />
+    <main className="public-main public-lookup-main"><PublicTicketLookup /></main>
+    <PublicFooter />
+  </div>;
 }
 
 function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
@@ -842,50 +868,13 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
   };
   return (
     <div className="public-site">
-      <header className="public-nav">
-        <button
-          className="public-brand"
-          type="button"
-          onClick={() => onNavigate("/")}
-        >
-          <span className="brand-mark">ME</span>
-          <span>
-            <strong>Madina Express</strong>
-            <small>Travel with confidence</small>
-          </span>
-        </button>
-        <nav aria-label="Main navigation">
-          <a href="#routes">Reserve a seat</a>
-          <a href="#ticket-lookup">Check a ticket</a>
-          <a href="#services">Services</a>
-          <a href="#contact">Contact</a>
-        </nav>
-      </header>
-      <main className="public-main">
-        <section className="public-hero">
-          <div className="hero-copy">
-            <p className="public-kicker">
-              <span /> Intercity travel across Pakistan
-            </p>
-            <h1>
-              Reserve your seat.
-              <br />
-              {" "}<em>Travel with confidence.</em>
-            </h1>
-            <p>
-              Find a departure, reserve your seats online and pay at the terminal.
-            </p>
-
-          </div>
-        </section>
+      <PublicHeader onNavigate={onNavigate} />
+      <main className="public-main public-booking-main">
         <section className={`route-finder${!terminalAvailable?" reservation-unavailable":""}`} id="routes">
           <div className="route-finder-heading">
-            <span>
-              <Route size={18} />
-            </span>
             <div>
-              <h2>Find your bus</h2>
-              <p>Choose your seats and reserve online.</p>
+              <h1>Find your bus</h1>
+              <p>Choose your route and travel date.</p>
             </div>
 
           </div>
@@ -953,7 +942,6 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
               <Search size={16} /> Search buses
             </button>
           </form>
-          <a className="lookup-jump" href="#ticket-lookup">Already booked? Check your ticket or reservation</a>
         </section>
         {searched && (
           <section className="public-results" aria-live="polite">
@@ -1030,55 +1018,8 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
             )}
           </section>
         )}
-        <PublicTicketLookup />
-        <section className="public-benefits" id="services">
-          <article>
-            <span>
-              <Navigation size={21} />
-            </span>
-            <div>
-              <strong>Major city routes</strong>
-              <p>
-                Intercity departures from Peshawar. Choose a route above to see the current timetable.
-              </p>
-            </div>
-          </article>
-          <article>
-            <span>
-              <Armchair size={21} />
-            </span>
-            <div>
-              <strong>Choose your exact seat</strong>
-              <p>
-                See live seat availability and choose your seats in one
-                reservation.
-              </p>
-            </div>
-          </article>
-          <article>
-            <span>
-              <CreditCard size={21} />
-            </span>
-            <div>
-              <strong>Pay at the terminal</strong>
-              <p>
-                Download your reservation confirmation and show it when you pay at the counter.
-              </p>
-            </div>
-          </article>
-        </section>
       </main>
-      <footer className="public-footer" id="contact">
-        <div className="public-brand">
-          <span className="brand-mark">ME</span>
-          <span>
-            <strong>Madina Express</strong>
-            <small>Bus Service</small>
-          </span>
-        </div>
-        <p>Madina Terminal, Peshawar · 0311-777-2299</p>
-        <span>© 2026 Madina Express</span>
-      </footer>
+      <PublicFooter />
       {checkoutTrip && (
         <PublicCheckout
           terminalAvailable={terminalAvailable}
@@ -1145,7 +1086,7 @@ function PublicTicketLookup() {
       <div className="route-finder-heading">
         <span><Ticket size={18} /></span>
         <div>
-          <h2 id="ticket-lookup-heading">Check a ticket or reservation</h2>
+          <h1 id="ticket-lookup-heading">Check a ticket or reservation</h1>
           <p>Use the reference and mobile number from your booking.</p>
         </div>
       </div>
