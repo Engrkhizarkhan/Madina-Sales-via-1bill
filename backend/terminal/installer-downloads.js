@@ -1,5 +1,5 @@
 import {constants} from 'node:fs';
-import {copyFile,mkdir,mkdtemp,writeFile,readFile,chmod,readdir,stat,rm} from 'node:fs/promises';
+import {copyFile,mkdir,mkdtemp,writeFile,readFile,chmod,readdir,stat,rm,rename} from 'node:fs/promises';
 import {randomBytes} from 'node:crypto';
 import {join,resolve} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -26,7 +26,7 @@ export async function buildMainInstaller(setup,{project=resolve('.'),baseArchive
 }
 
 async function removeGrant(directory,id){
-  await Promise.all([rm(join(directory,id+'.json'),{force:true}),rm(join(directory,id+'.zip'),{force:true})]);
+  await Promise.all([rm(join(directory,id+'.json'),{force:true}),rm(join(directory,id+'.json.next'),{force:true}),rm(join(directory,id+'.zip'),{force:true})]);
 }
 
 export async function pruneInstallerDownloads(directory=installerDirectory(),now=Date.now()) {
@@ -37,11 +37,20 @@ export async function pruneInstallerDownloads(directory=installerDirectory(),now
     try{
       const grant=JSON.parse(await readFile(join(directory,name),'utf8'));
       if(Number.isFinite(grant.expiresAt)&&grant.expiresAt<=now)await removeGrant(directory,name.slice(0,-5));
-    }catch(error){if(error.code!=='ENOENT')throw error;}
+    }catch(error){
+      if(error instanceof SyntaxError){
+        try{if((await stat(join(directory,name))).mtimeMs<now-installerDownloadLifetime)await removeGrant(directory,name.slice(0,-5));}catch(cleanupError){if(cleanupError.code!=='ENOENT')throw cleanupError;}
+      }
+      else if(error.code!=='ENOENT')throw error;
+    }
   }
   // A process interruption between ZIP copy and metadata publication can leave
   // an orphan. Never remove a recent/in-progress archive or unrelated files.
   for(const name of names){
+    if(/^[a-f0-9]{64}\.json\.next$/.test(name)){
+      try{if((await stat(join(directory,name))).mtimeMs<now-installerDownloadLifetime)await rm(join(directory,name),{force:true});}catch(error){if(error.code!=='ENOENT')throw error;}
+      continue;
+    }
     if(!/^[a-f0-9]{64}\.zip$/.test(name))continue;
     try{
       const file=join(directory,name),metadata=join(directory,name.slice(0,-4)+'.json');
@@ -62,16 +71,17 @@ export async function createInstallerDownload(file,userId,sessionHash,{directory
     // Authorization metadata remains private to the app account.
     await chmod(destination,0o640);
     const grant={userId:Number(userId),sessionHash,createdAt:now,expiresAt:now+installerDownloadLifetime};
-    await writeFile(join(directory,id+'.json'),JSON.stringify(grant),{mode:0o600,flag:'wx'});
+    await writeFile(join(directory,id+'.json.next'),JSON.stringify(grant),{mode:0o600,flag:'wx'});
+    await rename(join(directory,id+'.json.next'),join(directory,id+'.json'));
     const own=[];
     for(const name of await readdir(directory)){
       if(!/^[a-f0-9]{64}\.json$/.test(name))continue;
       let value;
-      try{value=JSON.parse(await readFile(join(directory,name),'utf8'));}catch(error){if(error.code==='ENOENT')continue;throw error;}
+      try{value=JSON.parse(await readFile(join(directory,name),'utf8'));}catch(error){if(error.code==='ENOENT'||error instanceof SyntaxError)continue;throw error;}
       if(value.userId===Number(userId))own.push({id:name.slice(0,-5),createdAt:value.createdAt});
     }
-    own.sort((a,b)=>b.createdAt-a.createdAt||a.id.localeCompare(b.id));
-    for(const previous of own.slice(5))if(previous.id!==id)await removeGrant(directory,previous.id);
+    own.sort((a,b)=>a.id===id?-1:b.id===id?1:b.createdAt-a.createdAt||a.id.localeCompare(b.id));
+    for(const previous of own.slice(5))await removeGrant(directory,previous.id);
     return {downloadPath:'/terminal/installer-download/'+id,expiresAt:grant.expiresAt};
   }catch(error){await removeGrant(directory,id);throw error;}
 }
@@ -80,7 +90,7 @@ export async function installerDownload(id,userId,sessionHash,{directory=install
   if(!validId(id))fail('Prepare a new main PC download in Settings.',404,'download_unavailable');
   let grant;
   try{grant=JSON.parse(await readFile(join(directory,id+'.json'),'utf8'));}
-  catch(error){if(error.code==='ENOENT')fail('This installer download expired. Prepare it again in Settings.',410,'download_expired');throw error;}
+  catch(error){if(error.code==='ENOENT'||error instanceof SyntaxError)fail('This installer download expired. Prepare it again in Settings.',410,'download_expired');throw error;}
   if(grant.userId!==Number(userId)||!validId(sessionHash)||grant.sessionHash!==sessionHash)fail('Use the same signed-in browser that prepared this installer.',403,'download_session_required');
   if(!Number.isFinite(grant.expiresAt)||grant.expiresAt<=now){await removeGrant(directory,id);fail('This installer download expired. Prepare it again in Settings.',410,'download_expired');}
   const file=join(directory,id+'.zip');

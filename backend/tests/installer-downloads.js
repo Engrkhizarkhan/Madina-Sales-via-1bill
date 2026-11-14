@@ -32,8 +32,16 @@ test('main installer stays complete and session protected across interrupted/res
   await writeFile(join(cache,'mysql-admin.cnf'),'protected fixture');
   await assert.rejects(installerDownload(id,1,session,{directory:cache,now:now+installerDownloadLifetime+1}),e=>e.status===410);
   assert.equal(await readFile(join(cache,'mysql-admin.cnf'),'utf8'),'protected fixture');
-  for(let index=0;index<7;index++)await createInstallerDownload(archive.file,1,session,{directory:cache,now:now+index});
+  const corrupt=join(cache,randomBytes(32).toString('hex')+'.json');await writeFile(corrupt,'{');
+  for(let index=0;index<7;index++){
+   const fresh=await createInstallerDownload(archive.file,1,session,{directory:cache,now});
+   await installerDownload(fresh.downloadPath.split('/').at(-1),1,session,{directory:cache,now});
+  }
+  await rm(corrupt);
   assert.equal((await readdir(cache)).filter(name=>name.endsWith('.json')).length,5);
+  const staleNext=join(cache,randomBytes(32).toString('hex')+'.json.next');await writeFile(staleNext,'{');
+  await writeFile(corrupt,'{');
+  for(const file of [staleNext,corrupt])await utimes(file,new Date(now-installerDownloadLifetime-1000),new Date(now-installerDownloadLifetime-1000));
   const orphan=join(cache,randomBytes(32).toString('hex')+'.zip');await writeFile(orphan,'orphan fixture');await utimes(orphan,new Date(now-installerDownloadLifetime-1000),new Date(now-installerDownloadLifetime-1000));
   await pruneInstallerDownloads(cache,now+installerDownloadLifetime+100);
   assert.deepEqual(await readdir(cache),['mysql-admin.cnf']);
