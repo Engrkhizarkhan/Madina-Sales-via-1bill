@@ -76,7 +76,14 @@ try {
     }
     throw
 } finally {
-    Start-ScheduledTask -TaskName 'Madina Express Application Updates' -ErrorAction SilentlyContinue
+    $updateTask = Get-ScheduledTask -TaskName 'Madina Express Application Updates' -ErrorAction SilentlyContinue
+    if ($updateTask) {
+        # A task created while the clock was ahead can otherwise wait hours
+        # for its original start boundary after the Windows time is corrected.
+        $repeat = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1)) -RepetitionInterval (New-TimeSpan -Minutes 1)
+        Set-ScheduledTask -TaskName 'Madina Express Application Updates' -Trigger @((New-ScheduledTaskTrigger -AtStartup),$repeat) | Out-Null
+        Start-ScheduledTask -TaskName 'Madina Express Application Updates' -ErrorAction SilentlyContinue
+    }
 }
 Write-Host 'Local HTTPS passed. Database, accounts and private keys were preserved.'
 Write-Host 'Close and reopen the browser. Download a NEW PC 1 setup in Settings and run it in your normal Windows profile.'
