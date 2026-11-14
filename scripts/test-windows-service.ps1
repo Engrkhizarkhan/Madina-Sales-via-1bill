@@ -57,7 +57,7 @@ try {
     $foreign = New-SelfSignedCertificate -Subject 'CN=Madina Express Terminal 1' -Signer $otherCa -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable
     $fixtureCertificates += $oldPc1, $oldPc2, $installed, $unrelated, $foreign
     $enrollment = Get-Content (Join-Path $project 'deploy\windows\Install-Terminal-PC.ps1') -Raw
-    $start = $enrollment.IndexOf('Get-ChildItem Cert:\CurrentUser\My | Where-Object {')
+    $start = $enrollment.IndexOf('$oldCertificates = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object {')
     $end = $enrollment.IndexOf('& (Join-Path $PSScriptRoot ''Setup-Counter-Shortcut.ps1'')', $start)
     if ($start -lt 0 -or $end -lt $start) { throw 'The enrollment certificate cleanup block is missing.' }
     & ([ScriptBlock]::Create($enrollment.Substring($start, $end - $start)))
@@ -66,7 +66,6 @@ try {
     try {
         $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
         $remaining = @($store.Certificates)
-        foreach ($certificate in $remaining) { Write-Host ('Remaining certificate: ' + $certificate.Subject + '; issuer: ' + $certificate.Issuer + '; thumbprint: ' + $certificate.Thumbprint) }
         foreach ($removed in @($oldPc1,$oldPc2)) {
             if ($remaining.Thumbprint -contains $removed.Thumbprint) { throw ('An obsolete terminal certificate still appears: ' + $removed.Subject) }
         }

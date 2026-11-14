@@ -77,14 +77,17 @@ if (-not $installed.HasPrivateKey) { throw 'The terminal certificate was install
 # One enrolled terminal identity per Windows counter profile. Remove old local
 # slots only after the new certificate and its private key are installed.
 # This changes this profile's certificate store, never server PC registrations.
-Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
+@(Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
     $_.Subject -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $newCa.Thumbprint
-} | Remove-Item -Force
-Get-ChildItem Cert:\CurrentUser\My | Where-Object {
+}) | Remove-Item -Force
+# Snapshot before removal: deleting while the certificate provider enumerates
+# the live store can skip the next obsolete certificate.
+$oldCertificates = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object {
     $_.Subject -match '^CN=Madina Express Terminal [1-9][0-9]?$' -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $installed.Thumbprint
-} | ForEach-Object {
-    if ($_.GetPublicKeyString() -eq $installed.GetPublicKeyString()) { Remove-Item -LiteralPath $_.PSPath -Force }
-    else { Remove-Item -LiteralPath $_.PSPath -DeleteKey -Force }
+})
+foreach ($previous in $oldCertificates) {
+    if ($previous.GetPublicKeyString() -eq $installed.GetPublicKeyString()) { Remove-Item -LiteralPath $previous.PSPath -Force }
+    else { Remove-Item -LiteralPath $previous.PSPath -DeleteKey -Force }
 }
 
 & (Join-Path $PSScriptRoot 'Setup-Counter-Shortcut.ps1') -Origin $setup.localOrigin
