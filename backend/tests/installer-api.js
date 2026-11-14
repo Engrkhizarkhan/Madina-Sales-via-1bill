@@ -8,7 +8,7 @@ import {randomBytes,createHash} from 'node:crypto';
 import {zipSync,unzipSync} from 'fflate';
 import * as processTools from '../terminal/process.js';
 const directory=await mkdtemp(join(tmpdir(),'madina-installer-api-qa-'));
-process.env.TERMINAL_ROLE='cloud';process.env.TERMINAL_DIRECTORY=join(directory,'state');process.env.TERMINAL_INSTALLER_DIRECTORY=join(directory,'downloads');process.env.CLOUD_SESSION_DIRECTORY=join(directory,'sessions');
+process.env.TERMINAL_ROLE='cloud';process.env.TERMINAL_DIRECTORY=join(directory,'state');process.env.TERMINAL_INSTALLER_DIRECTORY=join(directory,'.installer-downloads');process.env.CLOUD_SESSION_DIRECTORY=join(directory,'sessions');
 process.env.TERMINAL_ACCEL_DOWNLOADS='false';process.env.SESSION_SECURE='false';process.env.RESTRICT_STAFF_DEVICES='false';process.env.ADMIN_TOTP_HEX='';process.env.ADMIN_TOTP_PAUSED='false';
 await mkdir(process.env.TERMINAL_DIRECTORY);await writeFile(join(process.env.TERMINAL_DIRECTORY,'state.json'),JSON.stringify({phase:'awaiting-main'}));
 const application=zipSync({'fixture.bin':randomBytes(2*1024*1024)},{level:0});await writeFile(join(process.env.TERMINAL_DIRECTORY,'base.zip'),application);

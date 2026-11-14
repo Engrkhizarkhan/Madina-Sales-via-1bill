@@ -201,7 +201,7 @@ terminalAdminRouter.get('/installer-download/:id',route(async(req,res)=>{
   res.set({'Cache-Control':'private, no-store','X-Accel-Buffering':'no'});
   if(process.env.TERMINAL_ACCEL_DOWNLOADS==='true'){
     res.attachment('Madina-Express-Main-PC.zip').set('X-Accel-Redirect',`/_madina-installers/${req.params.id}.zip`).end();
-  }else res.download(file,'Madina-Express-Main-PC.zip');
+  }else res.download(file,'Madina-Express-Main-PC.zip',{dotfiles:'allow'});
 }));
 terminalAdminRouter.post("/devices", route(async (req, res) => {
   await confirmPassword(req);
