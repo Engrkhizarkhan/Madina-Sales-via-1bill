@@ -46,7 +46,7 @@ jobs:
           npm run server:check
           npm run test:terminal
           npm run test:layout
-          node --test backend/tests/policies-access.js backend/tests/updater.js backend/tests/owner-command.js backend/tests/cloud-authority.js backend/tests/live-records.js backend/tests/installer-downloads.js
+          node --test backend/tests/policies-access.js backend/tests/updater.js backend/tests/owner-command.js backend/tests/cloud-authority.js backend/tests/live-records.js backend/tests/installer-downloads.js backend/tests/certificate-clock-repair.js
           python3 backend/tests/terminal-broker.py
           python3 backend/tests/terminal-reset.py
           python3 backend/tests/terminal-reconnect.py
@@ -86,6 +86,11 @@ jobs:
       - name: Signed updater transactions on Windows
         shell: powershell
         run: node --test backend/tests/updater.js
+      - name: Trusted HTTPS certificate repair on Windows
+        shell: powershell
+        run: |
+          npm ci --omit=dev --ignore-scripts
+          node --test backend/tests/certificate-clock-repair.js
   publish:
     needs: [application, windows]
     runs-on: ubuntu-24.04

@@ -13,6 +13,10 @@ const directory = join(config.terminal.directory, "tls");
 try {
   await Promise.all(["ca.key", "ca.crt", "server.key", "server.crt"].map(file => access(join(directory, file))));
   const certificate = new X509Certificate(await readFile(join(directory, "server.crt")));
+  const ca = new X509Certificate(await readFile(join(directory, "ca.crt")));
+  if (Date.parse(certificate.validFrom) > Date.now() || Date.parse(ca.validFrom) > Date.now()) {
+    throw new Error("Local certificates were created with a future clock. Correct Windows time, then run Repair-Local-HTTPS.cmd on the main PC.");
+  }
   if (!certificate.checkIP(ip) || Date.parse(certificate.validTo) < Date.now() + 30 * 86400000) {
     if (!process.argv.includes("--renew")) throw new Error("Use Change-Main-PC-Network.cmd to update the local address.");
     await renewTerminalServerCertificate(directory, ip);

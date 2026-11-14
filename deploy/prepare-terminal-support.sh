@@ -131,6 +131,9 @@ chmod 0640 "$ENV_FILE"
 repair_archive=/var/www/madina-express/Madina-Express-Main-PC-Repair.zip
 zip -q -j "$repair_archive" "$PROJECT_DIR/deploy/windows/Repair-Main-PC.cmd" "$PROJECT_DIR/deploy/windows/Repair-Main-PC.ps1" "$PROJECT_DIR/deploy/windows/Run-Server.ps1"
 chmod 0644 "$repair_archive"
+certificate_repair=/var/www/madina-express/Madina-Express-HTTPS-Repair.zip
+zip -q -j "$certificate_repair" "$PROJECT_DIR/deploy/windows/Repair-Local-HTTPS.cmd" "$PROJECT_DIR/deploy/windows/Repair-Local-HTTPS.ps1" "$PROJECT_DIR/deploy/windows/Repair-Certificate-Dates.mjs"
+chmod 0644 "$certificate_repair"
 # Refresh the scheduled backup implementation from this accepted release too;
 # otherwise an old mutable checkout can silently keep an obsolete retention.
 sed "s|__PROJECT_DIR__|$PROJECT_DIR|g" "$PROJECT_DIR/deploy/madina-express-backup.service" > /etc/systemd/system/madina-express-backup.service

@@ -23,6 +23,11 @@ $data = Join-Path $base 'data'
 $configDirectory = Join-Path $base 'config'
 $setup = Get-Content (Join-Path $PSScriptRoot 'setup.json') -Raw | ConvertFrom-Json
 $manifest = Get-Content (Join-Path $PSScriptRoot 'runtime.json') -Raw | ConvertFrom-Json
+$cloudHealth = Invoke-RestMethod -Uri ($setup.cloudOrigin + '/api/health') -TimeoutSec 20
+if ($cloudHealth.status -ne 'ok' -or $cloudHealth.installationId) { throw 'Could not verify the cloud clock.' }
+if ([Math]::Abs(([DateTimeOffset]::Parse($cloudHealth.time).UtcDateTime - [DateTime]::UtcNow).TotalSeconds) -gt 60) {
+    throw 'The Windows clock is incorrect. Enable automatic time and synchronize it before setup. No database transfer or certificates have been created.'
+}
 $mainIp = Read-Host 'Enter this main PC local IPv4 address (for example 192.168.1.20)'
 $parsed = $null
 if (-not [Net.IPAddress]::TryParse($mainIp, [ref]$parsed) -or $mainIp -notmatch '^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)') {

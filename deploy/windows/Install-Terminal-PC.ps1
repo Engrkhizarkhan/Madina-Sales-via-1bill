@@ -26,9 +26,15 @@ if (-not (Test-NetConnection -ComputerName $defaultIp -Port 8443 -InformationLev
 }
 Import-Certificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
 $newCa = New-Object Security.Cryptography.X509Certificates.X509Certificate2($certificatePath)
-Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
-    $_.Subject -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $newCa.Thumbprint
-} | Remove-Item -Force
+if ($newCa.NotBefore.ToUniversalTime() -gt [DateTime]::UtcNow -or $newCa.NotAfter.ToUniversalTime() -le [DateTime]::UtcNow) {
+    throw 'This setup certificate is not valid at the current time. Check this PC clock. On the main server, run Repair-Local-HTTPS.cmd, then download a NEW PC setup. Do not disable certificate checks.'
+}
+try {
+    $health = Invoke-RestMethod -Uri ($setup.localOrigin + '/api/health') -TimeoutSec 15
+    if ($health.status -ne 'ok') { throw 'The main PC health check failed.' }
+} catch {
+    throw 'The main PC HTTPS connection is not trusted or available. Check the PCs clocks and saved IP. On the main server, run Repair-Local-HTTPS.cmd, then download a NEW PC setup. No device key was created.'
+}
 $inf = @'
 [Version]
 Signature="$Windows NT$"
@@ -69,6 +75,9 @@ $currentCertificate = New-Object Security.Cryptography.X509Certificates.X509Cert
 $installed = Get-Item ("Cert:\CurrentUser\My\" + $currentCertificate.Thumbprint)
 if (-not $installed.HasPrivateKey) { throw 'The terminal certificate was installed without its device key.' }
 # Avoid duplicate certificate choices after intentionally re-enrolling this slot.
+Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
+    $_.Subject -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $newCa.Thumbprint
+} | Remove-Item -Force
 Get-ChildItem Cert:\CurrentUser\My | Where-Object {
     $_.Subject -eq $installed.Subject -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $installed.Thumbprint
 } | ForEach-Object {
