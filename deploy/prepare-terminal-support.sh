@@ -5,11 +5,13 @@ umask 022
 PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 STATE_DIR=/var/lib/madina-express/terminal
 install -d -m 0750 -o root -g madina-express "$STATE_DIR"
+install -d -m 2750 -o madina-express -g www-data /var/cache/madina-express/installers
 install -d -m 0700 -o madina-express -g madina-express /var/lib/madina-express/admin-sessions
 install -d -m 0755 -o root -g root /usr/local/libexec
 DEBIAN_FRONTEND=noninteractive apt-get install -y zip >/dev/null
 install -m 0755 -o root -g root "$PROJECT_DIR/deploy/terminal-control.py" /usr/local/libexec/madina-terminal-control
 install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-terminal.conf.template" "$STATE_DIR/nginx-terminal.conf.template"
+install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-production.conf.template" "$STATE_DIR/nginx-production.conf.template"
 # Apply an accepted release's proxy fixes to an already paired installation too.
 python3 - <<'NGINX'
 import json,os,pathlib,subprocess
@@ -17,17 +19,20 @@ root=pathlib.Path('/var/lib/madina-express/terminal')
 state=json.loads((root/'state.json').read_text()) if (root/'state.json').exists() else {}
 if state.get('phase')=='active':
     relay=json.loads((root/'private.json').read_text())['relayKey']
-    target=pathlib.Path('/etc/nginx/sites-available/madina-express')
-    old=target.read_bytes()
-    try:
-        target.write_text((root/'nginx-terminal.conf.template').read_text().replace('__RELAY_KEY__',relay))
-        os.chmod(target,0o600)
-        subprocess.run(['nginx','-t'],check=True)
-        subprocess.run(['systemctl','reload','nginx'],check=True)
-    except Exception:
-        target.write_bytes(old)
-        subprocess.run(['nginx','-t'],check=True)
-        raise
+    template=(root/'nginx-terminal.conf.template').read_text().replace('__RELAY_KEY__',relay)
+else:
+    template=(root/'nginx-production.conf.template').read_text().replace('__PUBLIC_HOST__','madinaexpress.duckdns.org').replace('__STAFF_HOST__','staff.madinaexpress.duckdns.org')
+target=pathlib.Path('/etc/nginx/sites-available/madina-express')
+old=target.read_bytes()
+try:
+    target.write_text(template)
+    os.chmod(target,0o600)
+    subprocess.run(['nginx','-t'],check=True)
+    subprocess.run(['systemctl','reload','nginx'],check=True)
+except Exception:
+    target.write_bytes(old)
+    subprocess.run(['nginx','-t'],check=True)
+    raise
 NGINX
 if ! id madina-terminal >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin madina-terminal
@@ -113,7 +118,7 @@ printf '%s  %s\n' "$runtime_sha" "$runtime_file" | sha256sum -c -
 chmod 0644 "$runtime_file"
 ENV_FILE="$PROJECT_DIR/backend/.env"
 if [[ -f /etc/madina-express/backend.env ]]; then ENV_FILE=/etc/madina-express/backend.env; fi
-for setting in CLOUD_UPDATE_DIRECTORY=/var/lib/madina-express/updates TERMINAL_ROLE=cloud TERMINAL_DIRECTORY="$STATE_DIR" ADMIN_TOTP_PAUSED=false CLOUD_SESSION_DIRECTORY=/var/lib/madina-express/admin-sessions; do
+for setting in CLOUD_UPDATE_DIRECTORY=/var/lib/madina-express/updates TERMINAL_ROLE=cloud TERMINAL_DIRECTORY="$STATE_DIR" ADMIN_TOTP_PAUSED=false CLOUD_SESSION_DIRECTORY=/var/lib/madina-express/admin-sessions TERMINAL_INSTALLER_DIRECTORY=/var/cache/madina-express/installers TERMINAL_ACCEL_DOWNLOADS=true; do
   key=${setting%%=*}
   if grep -q "^$key=" "$ENV_FILE"; then
     sed -i "s|^$key=.*|$setting|" "$ENV_FILE"

@@ -5368,6 +5368,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
   const [status, setStatus] = useState<Awaited<ReturnType<typeof api.terminalStatus>>>();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const [downloadLink,setDownloadLink]=useState<string|null>(null);
   const [allowSoftwareKey, setAllowSoftwareKey] = useState(false);
   const [revoking, setRevoking] = useState<number|null>(null);
   const [devices, setDevices] = useState<Awaited<ReturnType<typeof api.terminalAccess>>>();
@@ -5388,10 +5389,10 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
     setBusy(true);
     try {
       if (slot) await api.terminalPcSetup(slot, password, allowSoftwareKey);
-      else await api.mainPcSetup(password);
+      else setDownloadLink(await api.mainPcSetup(password)||null);
       setPassword("");
       setAllowSoftwareKey(false);
-      showToast(slot ? `PC ${slot} setup downloaded. Use it within 30 minutes.` : "Main PC setup downloaded. Extract the ZIP on the main Windows PC.");
+      showToast(slot ? `PC ${slot} setup downloaded. Use it within 30 minutes.` : "Main PC download started. Check your browser’s Downloads, then extract the ZIP on the Windows PC.");
       await refresh();
     } catch (error) { showToast(error instanceof Error ? error.message : "Setup file could not be created."); }
     finally { setBusy(false); }
@@ -5408,6 +5409,7 @@ function TerminalServerSettings({ showToast }: { showToast: (message: string) =>
     <div className="view-actions">
       {local ? devices?.terminals.map(({slot}) => <button className="secondary-button" key={slot} disabled={busy} onClick={() => void download(slot)}>PC {slot} setup</button>) :
         <button className="primary-button" disabled={busy || !status || status.mode !== "cloud"} onClick={() => void download()}>{busy ? "Preparing setup…" : "Download main PC installer"}</button>}
+      {!local&&downloadLink&&<a className="secondary-button" href={downloadLink} download="Madina-Express-Main-PC.zip">Download prepared installer</a>}
       {local && <button className="primary-button" disabled={busy || !password} onClick={async () => {
         setBusy(true);
         try { const result = await api.addTerminal(password); await refresh(); window.dispatchEvent(new Event("madina-terminals-changed")); showToast(`PC ${result.slot} added. Download its setup to enroll it.`); }

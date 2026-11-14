@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,writeFile,readFile,rm,readdir,stat,utimes} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {randomBytes} from 'node:crypto';
+import {zipSync,unzipSync} from 'fflate';
+process.env.DB_NAME||='installer_module_qa';process.env.DB_USER||='qa';process.env.DB_PASSWORD||='unused';
+const {buildMainInstaller,createInstallerDownload,installerDownload,pruneInstallerDownloads,installerDownloadLifetime}=await import('../terminal/installer-downloads.js');
+
+test('main installer stays complete and session protected across interrupted/resumed downloads',async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'madina-installer-qa-'));
+ let archive;
+ try{
+  const base=join(directory,'base.zip'),payload=zipSync({'fixture.bin':randomBytes(2*1024*1024)},{level:0});await writeFile(base,payload);
+  const token=randomBytes(32).toString('hex'),setup={installToken:token,knownHost:'62.171.173.11 ssh-ed25519 QA-PUBLIC-KEY'};
+  archive=await buildMainInstaller(setup,{project:resolve('.'),baseArchive:base});
+  const bytes=await readFile(archive.file),entries=unzipSync(bytes);
+  assert.deepEqual(Buffer.from(entries['application.zip']),Buffer.from(payload));
+  assert.equal(JSON.parse(Buffer.from(entries['setup.json'])).token,token);
+  for(const name of ['Install-Main-PC.cmd','Install-Main-PC.ps1','runtime.json','Change-Main-PC-Network.cmd'])assert.ok(entries[name]);
+  const cache=join(directory,'downloads'),session=randomBytes(32).toString('hex'),now=Date.now();
+  const grant=await createInstallerDownload(archive.file,1,session,{directory:cache,now});
+  assert.ok(!JSON.stringify(grant).includes(token));const id=grant.downloadPath.split('/').at(-1);
+  assert.deepEqual(await readFile(await installerDownload(id,1,session,{directory:cache,now})),bytes);
+  await assert.rejects(installerDownload(id,2,session,{directory:cache,now}),e=>e.status===403);
+  await assert.rejects(installerDownload(id,1,randomBytes(32).toString('hex'),{directory:cache,now}),e=>e.status===403);
+  await assert.rejects(installerDownload('../private.json',1,session,{directory:cache,now}),e=>e.status===404);
+  const reloaded=await import('../terminal/installer-downloads.js?fresh-grant-reader');
+  assert.deepEqual(await readFile(await reloaded.installerDownload(id,1,session,{directory:cache,now})),bytes);
+  if(process.platform!=='win32')assert.equal((await stat(join(cache,id+'.json'))).mode&0o777,0o600);
+  await writeFile(join(cache,'mysql-admin.cnf'),'protected fixture');
+  await assert.rejects(installerDownload(id,1,session,{directory:cache,now:now+installerDownloadLifetime+1}),e=>e.status===410);
+  assert.equal(await readFile(join(cache,'mysql-admin.cnf'),'utf8'),'protected fixture');
+  for(let index=0;index<7;index++)await createInstallerDownload(archive.file,1,session,{directory:cache,now:now+index});
+  assert.equal((await readdir(cache)).filter(name=>name.endsWith('.json')).length,5);
+  const orphan=join(cache,randomBytes(32).toString('hex')+'.zip');await writeFile(orphan,'orphan fixture');await utimes(orphan,new Date(now-installerDownloadLifetime-1000),new Date(now-installerDownloadLifetime-1000));
+  await pruneInstallerDownloads(cache,now+installerDownloadLifetime+100);
+  assert.deepEqual(await readdir(cache),['mysql-admin.cnf']);
+ }finally{await archive?.dispose();await rm(directory,{recursive:true,force:true});}
+});

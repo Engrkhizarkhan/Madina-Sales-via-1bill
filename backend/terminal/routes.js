@@ -16,6 +16,7 @@ import { limitAttempts } from "../node/access.js";
 import { terminalControl, runProcess } from "./process.js";
 import { terminalState } from "./state.js";
 import { signTerminalRequest } from "./certificates.js";
+import {buildMainInstaller,createInstallerDownload,installerDownload} from './installer-downloads.js';
 import { CloudSessions } from "../node/cloud-sessions.js";
 
 const route = handler => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
@@ -173,28 +174,34 @@ terminalAdminRouter.get("/status", route(async (req, res) => {
 terminalAdminRouter.post("/package", route(async (req, res) => {
   await confirmPassword(req);
   if (!config.terminal.cloud) fail("Download the main PC installer from the production staff website.", 409, "cloud_required");
+  const state=await terminalState();
+  if(state.phase==='active')fail('A main PC is already connected. Restore that PC instead of installing another main server.',409,'terminal_already_active');
+  if(state.phase==='preparing')fail('Main PC setup is already in progress. Cancel unfinished setup in Settings before downloading a fresh installer.',409,'terminal_setup_in_progress');
   const setup = await terminalControl("prepare");
-  const temporary = await mkdtemp(join(tmpdir(), "madina-installer-"));
+  const archive=await buildMainInstaller(setup);
   try {
-    await copyFile(join(config.terminal.directory, "base.zip"), join(temporary, "application.zip"));
-    await copyFile(resolve("deploy/windows/Install-Main-PC.ps1"), join(temporary, "Install-Main-PC.ps1"));
-    await copyFile(resolve("deploy/windows/Install-Main-PC.cmd"), join(temporary, "Install-Main-PC.cmd"));
-    await copyFile(resolve("deploy/windows/runtime.json"), join(temporary, "runtime.json"));
-    for (const file of ["Change-Main-PC-Network.cmd", "Change-Main-PC-Network.ps1", "Change-Terminal-PC-Address.cmd", "Change-Terminal-PC-Address.ps1"]) {
-      await copyFile(resolve("deploy/windows", file), join(temporary, file));
-    }
-    await writeFile(join(temporary, "setup.json"), JSON.stringify({
-      token: setup.installToken, knownHost: setup.knownHost, cloudOrigin: "https://staff.madinaexpress.duckdns.org",
-    }), { mode: 0o600 });
-    await runProcess("zip", ["-0", "-q", join(temporary, "main-pc.zip"), "application.zip", "Install-Main-PC.ps1",
-      "Install-Main-PC.cmd", "runtime.json", "setup.json", "Change-Main-PC-Network.cmd", "Change-Main-PC-Network.ps1", "Change-Terminal-PC-Address.cmd", "Change-Terminal-PC-Address.ps1"], { cwd: temporary });
     if (!req.cloudReadOnly) await audit("terminal.installer_downloaded", "user", req.user.id, null, null, req.user.id, req);
+    if(req.body.delivery==='browser') {
+      const download=await createInstallerDownload(archive.file,req.user.id,req.sessionTokenHash);
+      await archive.dispose();
+      return res.json(download);
+    }
+    // Older clients remain compatible while their open forms finish.
     res.set("X-Accel-Buffering", "no");
-    res.download(join(temporary, "main-pc.zip"), "Madina-Express-Main-PC.zip", () => void rm(temporary, { recursive: true, force: true }));
+    res.download(archive.file, "Madina-Express-Main-PC.zip", () => void archive.dispose());
   } catch (error) {
-    await rm(temporary, { recursive: true, force: true });
+    await archive.dispose();
     throw error;
   }
+}));
+terminalAdminRouter.get('/installer-download/:id',route(async(req,res)=>{
+  requireAdmin(req);
+  if(!config.terminal.cloud)fail('Download the main PC installer from the staff website.',404,'not_found');
+  const file=await installerDownload(req.params.id,req.user.id,req.sessionTokenHash);
+  res.set({'Cache-Control':'private, no-store','X-Accel-Buffering':'no'});
+  if(process.env.TERMINAL_ACCEL_DOWNLOADS==='true'){
+    res.attachment('Madina-Express-Main-PC.zip').set('X-Accel-Redirect',`/_madina-installers/${req.params.id}.zip`).end();
+  }else res.download(file,'Madina-Express-Main-PC.zip');
 }));
 terminalAdminRouter.post("/devices", route(async (req, res) => {
   await confirmPassword(req);

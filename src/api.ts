@@ -64,19 +64,40 @@ async function request<T>(
 }
 
 async function downloadSetup(path: string, currentPassword: string, filename: string, options: {allowSoftwareKey?:boolean} = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: "POST", credentials: "include",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": sessionStorage.getItem(csrfKey) || "" },
-    body: JSON.stringify({ currentPassword, ...options }),
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    throw new ApiError(payload?.error?.message || "The setup file could not be created.", response.status);
+  const main=path==="/terminal/package";
+  for(let attempt=0;attempt<(main?2:1);attempt++){
+    const controller=new AbortController();let timedOut=false;
+    const timer=window.setTimeout(()=>{timedOut=true;controller.abort();},180000);
+    try{
+      const response=await fetch(`${API_BASE}${path}`,{
+        method:"POST",credentials:"include",signal:controller.signal,
+        headers:{"Content-Type":"application/json","X-CSRF-Token":sessionStorage.getItem(csrfKey)||""},
+        body:JSON.stringify({currentPassword,...options,...(main?{delivery:"browser"}:{})}),
+      });
+      if(!response.ok){
+        const payload=await response.json().catch(()=>({}));
+        throw new ApiError(response.status===401?"Your session expired. Sign in again, then download the installer.":payload?.error?.message||"The setup file could not be created.",response.status);
+      }
+      if(main&&response.headers.get("content-type")?.includes("application/json")){
+        const payload=await response.json();
+        if(typeof payload.downloadPath!=="string"||!/^\/terminal\/installer-download\/[a-f0-9]{64}$/.test(payload.downloadPath))throw new ApiError("The server returned an invalid installer link. Try preparing it again.",502);
+        const url=`${API_BASE}${payload.downloadPath}`;
+        const link=document.createElement("a");link.href=url;link.download=filename;link.hidden=true;
+        document.body.appendChild(link);link.click();link.remove();
+        return url;
+      }
+      // Compatibility for child setup files and an older server during rollout.
+      const url=URL.createObjectURL(await response.blob());
+      const link=document.createElement("a");link.href=url;link.download=filename;link.click();
+      window.setTimeout(()=>URL.revokeObjectURL(url),60000);
+      return;
+    }catch(error){
+      if(timedOut)throw new ApiError("Preparing the installer timed out. Check your connection and try again.",0,"connection_timeout");
+      if(main&&attempt===0&&error instanceof TypeError){await new Promise(resolve=>window.setTimeout(resolve,750));continue;}
+      if(error instanceof TypeError)throw new ApiError("The setup service could not be reached. Check your connection and try again.",0,"connection_error");
+      throw error;
+    }finally{window.clearTimeout(timer);}
   }
-  const url = URL.createObjectURL(await response.blob());
-  const link = document.createElement("a");
-  link.href = url; link.download = filename; link.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
 export type TerminalStatus = {
