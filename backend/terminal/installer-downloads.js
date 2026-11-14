@@ -1,4 +1,3 @@
-import {constants} from 'node:fs';
 import {copyFile,mkdir,mkdtemp,writeFile,readFile,chmod,readdir,stat,rm,rename} from 'node:fs/promises';
 import {randomBytes} from 'node:crypto';
 import {join,resolve} from 'node:path';
@@ -66,7 +65,10 @@ export async function createInstallerDownload(file,userId,sessionHash,{directory
   await pruneInstallerDownloads(directory,now);
   const id=randomBytes(32).toString('hex'),destination=join(directory,id+'.zip');
   try{
-    await copyFile(file,destination,constants.COPYFILE_EXCL);
+    // Create first so libuv cannot copy the source's group onto a new file.
+    // The protected setgid cache supplies nginx's read-only group.
+    await writeFile(destination,'',{flag:'wx',mode:0o640});
+    await copyFile(file,destination);
     // The dedicated production directory inherits the nginx read-only group.
     // Authorization metadata remains private to the app account.
     await chmod(destination,0o640);
