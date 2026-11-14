@@ -42,6 +42,39 @@ try {
 }
 $base = Join-Path $env:ProgramData 'MadinaExpress'
 if (Test-Path $base) { throw 'This test requires an isolated runner with no existing Madina Express installation.' }
+# Exercise the actual enrollment cleanup against a disposable Windows store.
+# Moving this profile from PC 1 to PC 2 must keep only PC 2's identity, without
+# removing the CA, unrelated certificates or a different company's identity.
+$fixtureCertificates = @()
+try {
+    $ca = New-SelfSignedCertificate -Subject 'CN=Madina Express Local Terminal CA' -CertStoreLocation Cert:\CurrentUser\My -KeyUsage CertSign,CRLSign -KeyExportPolicy NonExportable -TextExtension @('2.5.29.19={critical}{text}ca=true&pathlength=0')
+    $otherCa = New-SelfSignedCertificate -Subject 'CN=Other Company CA' -CertStoreLocation Cert:\CurrentUser\My -KeyUsage CertSign,CRLSign -KeyExportPolicy NonExportable -TextExtension @('2.5.29.19={critical}{text}ca=true&pathlength=0')
+    $fixtureCertificates += $ca, $otherCa
+    $oldPc1 = New-SelfSignedCertificate -Subject 'CN=Madina Express Terminal 1' -Signer $ca -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable
+    $oldPc2 = New-SelfSignedCertificate -Subject 'CN=Madina Express Terminal 2' -Signer $ca -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable
+    $installed = New-SelfSignedCertificate -Subject 'CN=Madina Express Terminal 2' -Signer $ca -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable
+    $unrelated = New-SelfSignedCertificate -Subject 'CN=Personal Work Certificate' -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable
+    $foreign = New-SelfSignedCertificate -Subject 'CN=Madina Express Terminal 1' -Signer $otherCa -CertStoreLocation Cert:\CurrentUser\My -KeyExportPolicy NonExportable
+    $fixtureCertificates += $oldPc1, $oldPc2, $installed, $unrelated, $foreign
+    $enrollment = Get-Content (Join-Path $project 'deploy\windows\Install-Terminal-PC.ps1') -Raw
+    $start = $enrollment.IndexOf('Get-ChildItem Cert:\CurrentUser\My | Where-Object {')
+    $end = $enrollment.IndexOf('& (Join-Path $PSScriptRoot ''Setup-Counter-Shortcut.ps1'')', $start)
+    if ($start -lt 0 -or $end -lt $start) { throw 'The enrollment certificate cleanup block is missing.' }
+    & ([ScriptBlock]::Create($enrollment.Substring($start, $end - $start)))
+    foreach ($removed in @($oldPc1,$oldPc2)) {
+        if (Test-Path ('Cert:\CurrentUser\My\' + $removed.Thumbprint)) { throw 'An obsolete terminal certificate still appears in the browser selection.' }
+    }
+    foreach ($kept in @($ca,$otherCa,$installed,$unrelated,$foreign)) {
+        if (-not (Test-Path ('Cert:\CurrentUser\My\' + $kept.Thumbprint))) { throw 'Certificate cleanup removed the active or an unrelated identity.' }
+    }
+    if (-not (Get-Item ('Cert:\CurrentUser\My\' + $installed.Thumbprint)).HasPrivateKey) { throw 'The current terminal lost its private key.' }
+    Write-Host 'PASS PC 2 enrollment removes old local PC 1 and duplicate PC 2 certificates while preserving active and unrelated keys'
+} finally {
+    foreach ($certificate in $fixtureCertificates) {
+        $path = 'Cert:\CurrentUser\My\' + $certificate.Thumbprint
+        if (Test-Path $path) { Remove-Item -LiteralPath $path -DeleteKey -Force }
+    }
+}
 # Exercise the installer's actual CNG request using the software KSP only on CI,
 # where a physical TPM is unavailable. Production retains the platform provider.
 $enrollmentScript = Get-Content (Join-Path $project 'deploy\windows\Install-Terminal-PC.ps1') -Raw

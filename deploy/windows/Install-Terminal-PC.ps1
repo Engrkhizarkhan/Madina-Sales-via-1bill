@@ -74,12 +74,14 @@ if ($LASTEXITCODE -ne 0) { throw 'The certificate could not be installed into th
 $currentCertificate = New-Object Security.Cryptography.X509Certificates.X509Certificate2($signed)
 $installed = Get-Item ("Cert:\CurrentUser\My\" + $currentCertificate.Thumbprint)
 if (-not $installed.HasPrivateKey) { throw 'The terminal certificate was installed without its device key.' }
-# Avoid duplicate certificate choices after intentionally re-enrolling this slot.
+# One enrolled terminal identity per Windows counter profile. Remove old local
+# slots only after the new certificate and its private key are installed.
+# This changes this profile's certificate store, never server PC registrations.
 Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
     $_.Subject -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $newCa.Thumbprint
 } | Remove-Item -Force
 Get-ChildItem Cert:\CurrentUser\My | Where-Object {
-    $_.Subject -eq $installed.Subject -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $installed.Thumbprint
+    $_.Subject -match '^CN=Madina Express Terminal [1-9][0-9]?$' -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.Thumbprint -ne $installed.Thumbprint
 } | ForEach-Object {
     if ($_.GetPublicKeyString() -eq $installed.GetPublicKeyString()) { Remove-Item -LiteralPath $_.PSPath -Force }
     else { Remove-Item -LiteralPath $_.PSPath -DeleteKey -Force }
