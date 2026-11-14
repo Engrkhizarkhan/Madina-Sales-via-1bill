@@ -1,12 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,writeFile,readFile,rm,readdir,stat,utimes} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,rm,readdir,stat,utimes,mkdir,chown,chmod} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {randomBytes} from 'node:crypto';
 import {zipSync,unzipSync} from 'fflate';
 process.env.DB_NAME||='installer_module_qa';process.env.DB_USER||='qa';process.env.DB_PASSWORD||='unused';
 const {buildMainInstaller,createInstallerDownload,installerDownload,pruneInstallerDownloads,installerDownloadLifetime}=await import('../terminal/installer-downloads.js');
+
+const alternateGroup=process.getgroups?.().find(gid=>gid!==process.getgid?.());
+test('Linux installer archives inherit the protected nginx cache group',{skip:process.platform!=='linux'||alternateGroup===undefined},async()=>{
+ const directory=await mkdtemp(join(tmpdir(),'madina-installer-group-qa-'));
+ try{
+  const source=join(directory,'source.zip'),cache=join(directory,'downloads');
+  await writeFile(source,'installer fixture',{mode:0o600});await mkdir(cache);
+  await chown(cache,process.getuid(),alternateGroup);await chmod(cache,0o2750);
+  const grant=await createInstallerDownload(source,1,'a'.repeat(64),{directory:cache});
+  const id=grant.downloadPath.split('/').at(-1),file=await stat(join(cache,id+'.zip'));
+  assert.equal(file.gid,alternateGroup);assert.equal(file.mode&0o777,0o640);
+  assert.equal((await stat(join(cache,id+'.json'))).mode&0o777,0o600);
+ }finally{await rm(directory,{recursive:true,force:true});}
+});
 
 test('main installer stays complete and session protected across interrupted/resumed downloads',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'madina-installer-qa-'));

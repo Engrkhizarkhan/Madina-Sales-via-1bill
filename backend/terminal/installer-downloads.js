@@ -65,10 +65,9 @@ export async function createInstallerDownload(file,userId,sessionHash,{directory
   await pruneInstallerDownloads(directory,now);
   const id=randomBytes(32).toString('hex'),destination=join(directory,id+'.zip');
   try{
-    // Create first so libuv cannot copy the source's group onto a new file.
-    // The protected setgid cache supplies nginx's read-only group.
-    await writeFile(destination,'',{flag:'wx',mode:0o640});
-    await copyFile(file,destination);
+    // Stream to a new file: fs.copyFile can preserve the source's group and
+    // undo the protected cache's nginx group inheritance on Linux.
+    await pipeline(createReadStream(file),createWriteStream(destination,{flags:'wx',mode:0o640}));
     // The dedicated production directory inherits the nginx read-only group.
     // Authorization metadata remains private to the app account.
     await chmod(destination,0o640);
@@ -104,3 +103,5 @@ if(config.terminal.cloud){
   const cleanup=()=>pruneInstallerDownloads().catch(()=>console.error('Installer download cleanup could not complete.'));
   void cleanup();setInterval(cleanup,5*60000).unref();
 }
+import {createReadStream,createWriteStream} from 'node:fs';
+import {pipeline} from 'node:stream/promises';
