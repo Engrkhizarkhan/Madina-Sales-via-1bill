@@ -61,13 +61,20 @@ try {
     $end = $enrollment.IndexOf('& (Join-Path $PSScriptRoot ''Setup-Counter-Shortcut.ps1'')', $start)
     if ($start -lt 0 -or $end -lt $start) { throw 'The enrollment certificate cleanup block is missing.' }
     & ([ScriptBlock]::Create($enrollment.Substring($start, $end - $start)))
-    foreach ($removed in @($oldPc1,$oldPc2)) {
-        if (Test-Path ('Cert:\CurrentUser\My\' + $removed.Thumbprint)) { throw 'An obsolete terminal certificate still appears in the browser selection.' }
-    }
-    foreach ($kept in @($ca,$otherCa,$installed,$unrelated,$foreign)) {
-        if (-not (Test-Path ('Cert:\CurrentUser\My\' + $kept.Thumbprint))) { throw 'Certificate cleanup removed the active or an unrelated identity.' }
-    }
-    if (-not (Get-Item ('Cert:\CurrentUser\My\' + $installed.Thumbprint)).HasPrivateKey) { throw 'The current terminal lost its private key.' }
+    # Use a fresh native store handle, as a newly opened browser would.
+    $store = New-Object Security.Cryptography.X509Certificates.X509Store('My','CurrentUser')
+    try {
+        $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+        $remaining = @($store.Certificates)
+        foreach ($certificate in $remaining) { Write-Host ('Remaining certificate: ' + $certificate.Subject + '; issuer: ' + $certificate.Issuer + '; thumbprint: ' + $certificate.Thumbprint) }
+        foreach ($removed in @($oldPc1,$oldPc2)) {
+            if ($remaining.Thumbprint -contains $removed.Thumbprint) { throw ('An obsolete terminal certificate still appears: ' + $removed.Subject) }
+        }
+        foreach ($kept in @($ca,$otherCa,$installed,$unrelated,$foreign)) {
+            if ($remaining.Thumbprint -notcontains $kept.Thumbprint) { throw 'Certificate cleanup removed the active or an unrelated identity.' }
+        }
+        if (-not ($remaining | Where-Object { $_.Thumbprint -eq $installed.Thumbprint }).HasPrivateKey) { throw 'The current terminal lost its private key.' }
+    } finally { $store.Close() }
     Write-Host 'PASS PC 2 enrollment removes old local PC 1 and duplicate PC 2 certificates while preserving active and unrelated keys'
 } finally {
     foreach ($certificate in $fixtureCertificates) {
