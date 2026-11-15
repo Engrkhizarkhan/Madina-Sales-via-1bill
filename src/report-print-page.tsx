@@ -12,6 +12,7 @@ function element(node:ReportNode):Node{
 export function ReportPrintPage(){
  const [request]=useState(()=>window.location.hash.slice(1));const [job,setJob]=useState<PrintJob|null>(null);const [error,setError]=useState('');const [done,setDone]=useState(false);const [busy,setBusy]=useState(false);
  const source=useRef<HTMLDivElement>(null),started=useRef(false);
+ useEffect(()=>{const next=()=>{if(window.location.hash)window.location.reload();};window.addEventListener('hashchange',next);return()=>window.removeEventListener('hashchange',next);},[]);
  useEffect(()=>{
   let active=true;
   window.history.replaceState(null,'',window.location.pathname);

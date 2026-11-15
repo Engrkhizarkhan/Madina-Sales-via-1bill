@@ -92,7 +92,7 @@ if ($name -in @('chrome.exe','msedge.exe')) {
     $arguments = "-no-remote -profile `"$profile`" `"$url`""
     $reportsProfile = Join-Path $directory 'ReportsFirefox'
     New-Item -ItemType Directory -Force $reportsProfile | Out-Null
-    $reportSettings = @('user_pref("print.always_print_silent", false);','user_pref("security.enterprise_roots.enabled", true);','user_pref("security.osclientcerts.autoload", true);',
+    $reportSettings = @('user_pref("dom.allow_scripts_to_close_windows", true);','user_pref("print.always_print_silent", false);','user_pref("security.enterprise_roots.enabled", true);','user_pref("security.osclientcerts.autoload", true);',
         'user_pref("network.protocol-handler.external.madina-report", true);',
         'user_pref("network.protocol-handler.warn-external.madina-report", false);')
     foreach ($position in @('headerleft','headercenter','headerright','footerleft','footercenter','footerright')) { $reportSettings += ('user_pref("print.print_' + $position + '", "");') }
@@ -137,10 +137,16 @@ if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
     foreach ($policy in @('HKCU:\Software\Policies\Google\Chrome','HKCU:\Software\Policies\Microsoft\Edge')) {
         New-Item -Path $policy -Force | Out-Null
         $saved = (Get-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
-        $rules = @()
-        if ($saved) { foreach ($rule in ($saved | ConvertFrom-Json)) { if ($rule.protocol -ne 'madina-report') { $rules += $rule } } }
-        $rules += @{protocol='madina-report';allowed_origins=@($Origin,'https://staff.madinaexpress.duckdns.org')}
-        New-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -PropertyType String -Value (ConvertTo-Json -InputObject $rules -Depth 8 -Compress) -Force | Out-Null
+        $rules = New-Object 'System.Collections.Generic.List[object]'
+        if ($saved) {
+            $parsedRules = ConvertFrom-Json -InputObject $saved
+            for ($index = 0; $index -lt $parsedRules.Count; $index++) {
+                $entry = $parsedRules[$index]
+                if ($entry.protocol -ne 'madina-report') { $rules.Add($entry) }
+            }
+        }
+        $rules.Add(@{protocol='madina-report';allowed_origins=@($Origin,'https://staff.madinaexpress.duckdns.org')})
+        New-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -PropertyType String -Value (ConvertTo-Json -InputObject ($rules.ToArray()) -Depth 8 -Compress) -Force | Out-Null
         $identities = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -match '^CN=Madina Express Terminal [1-9][0-9]?$' -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.NotBefore -le (Get-Date) -and $_.NotAfter -gt (Get-Date) })
         if ($identities.Count -eq 1) {
             $selection = $policy + '\AutoSelectCertificateForUrls'

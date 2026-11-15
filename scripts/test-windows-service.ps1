@@ -45,7 +45,9 @@ try {
         if (-not $rejected) { throw 'The report launcher accepted an invalid or untrusted request.' }
     }
     if (-not (Test-Path 'HKCU:\Software\Classes\madina-report\shell\open\command')) { throw 'A4 report protocol is not registered.' }
-    $rules = (Get-ItemProperty $legacyPolicy).AutoLaunchProtocolsFromOrigins | ConvertFrom-Json
+    $rawRules = (Get-ItemProperty $legacyPolicy).AutoLaunchProtocolsFromOrigins
+    Write-Host ('Fixture protocol rules: ' + $rawRules)
+    $rules = ConvertFrom-Json -InputObject $rawRules
     if (@($rules | Where-Object { $_.protocol -eq 'company-tool' }).Count -ne 1 -or @($rules | Where-Object { $_.protocol -eq 'madina-report' }).Count -ne 1) { throw 'Printing setup replaced or duplicated protocol rules.' }
     if (-not ($rules | Where-Object { $_.protocol -eq 'madina-report' -and $_.allowed_origins -contains 'https://192.168.50.2:8443' })) { throw 'A4 launching is not scoped to the configured server.' }
     Write-Host 'PASS existing browser, unchanged silent thermal mode, one-click A4 dialog handoff, strict launcher origin/ID validation and scoped protocol registration'
