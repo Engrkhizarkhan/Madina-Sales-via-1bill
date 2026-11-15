@@ -92,6 +92,12 @@ try {
   const login = await request('/auth/login', { method: 'POST', body: credentials, device });
   check(login.status === 200, 'staff signs in with the enrolled TLS device');
   check((await request('/auth/me', { cookie: login.cookie, device })).status === 200, 'approved staff session stays valid');
+  const launcher=await request('/terminal/counter-launcher',{cookie:login.cookie,device});
+  check(launcher.status===200,'enrolled staff can download Counter and A4 setup without a server error');
+  const launcherFiles=unzipSync(launcher.bytes),launcherSetup=JSON.parse(strFromU8(launcherFiles['setup.json']));
+  check(['Setup-Counter-Shortcut.ps1','Setup-Counter-Shortcut.cmd','Open-A4-Report.ps1'].every(name=>launcherFiles[name]?.length>0),'printing setup contains the Counter shortcut and A4 launcher');
+  check(launcherSetup.localOrigin===config.terminal.localOrigin&&/^[a-f0-9]{64}$/.test(launcherSetup.terminalFingerprint),'download uses the local server and the requesting enrolled PC identity');
+  check((await request('/terminal/counter-launcher')).status===401,'printing setup download requires authentication');
   check((await request('/auth/me', { cookie: login.cookie })).status === 401, 'copied staff cookie is rejected on another PC');
   check((await request('/terminal/devices/1/package', { cookie: login.cookie, csrf: login.payload.csrfToken, device, method: 'POST', body: { currentPassword: password } })).status === 403,
     'staff cannot generate device enrollment packages');

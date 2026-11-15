@@ -4,3 +4,9 @@ function fixture(){const children=[],timers=new Set();const spawn=()=>{const chi
 test('tunnel limits failed handshakes and stale-link detection while preserving key and loopback restrictions',()=>{const args=tunnelOptions('C:/ProgramData/MadinaExpress/data',43101,3310);for(const value of ['ConnectTimeout=5','ConnectionAttempts=1','ServerAliveInterval=5','ServerAliveCountMax=2','StrictHostKeyChecking=yes','127.0.0.1:3201:127.0.0.1:43101','127.0.0.1:13306:127.0.0.1:3310'])assert.ok(args.includes(value));});
 test('failed tunnels retry in one second; recovered internet replaces a stale connection without parallel tunnels',()=>{const f=fixture();f.tunnel.start();f.tunnel.start();assert.equal(f.children.length,1);f.children[0].emit('close');f.tick(1000);assert.equal(f.children.length,2);f.tunnel.restart();f.tunnel.restart();assert.equal(f.children.length,2);assert.deepEqual(f.children[1].kills,['SIGTERM']);f.tick(1000);assert.deepEqual(f.children[1].kills,['SIGTERM','SIGKILL']);f.children[1].emit('close');f.tick(1000);assert.equal(f.children.length,3);f.tunnel.stop();f.children[2].emit('close');f.tick(1000);assert.equal(f.children.length,3);});
 test('shutdown cancels a pending retry',()=>{const f=fixture();f.tunnel.start();f.children[0].emit('close');f.tunnel.stop();f.tick(1000);assert.equal(f.children.length,1);assert.equal(f.timers.size,0);});
+test('terminal runtime shutdown is safe before startup and on repeated calls',async()=>{
+ for(const key of ['DB_NAME','DB_USER','DB_PASSWORD'])process.env[key]||='terminal_runtime_qa';
+ const {stopTerminalRuntime}=await import('../terminal/runtime.js');
+ assert.doesNotThrow(()=>stopTerminalRuntime());
+ assert.doesNotThrow(()=>stopTerminalRuntime());
+});

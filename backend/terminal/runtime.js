@@ -163,7 +163,6 @@ export function startTerminalRuntime() {
 export function stopTerminalRuntime() {
   stopped = true;
   clearTimeout(statusTimer);
-  clearTimeout(reconnectTimer);
   clearInterval(backupTimer);
-  tunnel?.kill();
+  tunnel?.stop();
 }

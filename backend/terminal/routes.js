@@ -136,7 +136,7 @@ terminalEnrollmentRouter.post("/enroll", route(async (req, res) => {
 }));
 
 export const terminalAdminRouter = Router();
-terminalAdminRouter.get("/counter-launcher", route(async (_req,res) => {
+terminalAdminRouter.get("/counter-launcher", route(async (req,res) => {
   const origin = config.terminal.local ? config.terminal.localOrigin : "https://staff.madinaexpress.duckdns.org";
   const device=req.verifiedTerminal?.match(/^terminal-[1-9][0-9]?:([a-f0-9]{64})$/);
   const archive = zipSync({
