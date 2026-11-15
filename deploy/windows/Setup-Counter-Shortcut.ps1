@@ -139,7 +139,7 @@ if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
         $saved = (Get-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
         $rules = New-Object 'System.Collections.Generic.List[object]'
         if ($saved) {
-            $parsedRules = ConvertFrom-Json -InputObject $saved
+            $parsedRules = @(ConvertFrom-Json -InputObject $saved)
             for ($index = 0; $index -lt $parsedRules.Count; $index++) {
                 $entry = $parsedRules[$index]
                 if ($entry.protocol -ne 'madina-report') { $rules.Add($entry) }
