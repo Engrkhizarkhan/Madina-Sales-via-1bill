@@ -135,7 +135,7 @@ if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
     $handler = Join-Path $directory 'Open-A4-Report.ps1'
     Set-Item -Path ($protocol + '\shell\open\command') -Value ('"' + $powershell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $handler + '" "%1"')
     foreach ($policy in @('HKCU:\Software\Policies\Google\Chrome','HKCU:\Software\Policies\Microsoft\Edge')) {
-        New-Item -Path $policy -Force | Out-Null
+        if (-not (Test-Path $policy)) { New-Item -Path $policy -Force | Out-Null }
         $saved = (Get-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
         $rules = New-Object 'System.Collections.Generic.List[object]'
         if ($saved) {
@@ -150,7 +150,7 @@ if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
         $identities = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -match '^CN=Madina Express Terminal [1-9][0-9]?$' -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.NotBefore -le (Get-Date) -and $_.NotAfter -gt (Get-Date) })
         if ($identities.Count -eq 1) {
             $selection = $policy + '\AutoSelectCertificateForUrls'
-            New-Item -Path $selection -Force | Out-Null
+            if (-not (Test-Path $selection)) { New-Item -Path $selection -Force | Out-Null }
             $number = 9000
             foreach ($server in @($Origin,'https://staff.madinaexpress.duckdns.org')) {
                 $rule = @{pattern=$server;filter=@{ISSUER=@{CN='Madina Express Local Terminal CA'};SUBJECT=@{CN=$identities[0].GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false)}}}
