@@ -11,6 +11,9 @@ install -d -m 0755 -o root -g root /usr/local/libexec
 # Other JSON routes retain their 128 KB application limit; bounded report trees allow 512 KB.
 sed -i 's/client_max_body_size 128k;/client_max_body_size 512k;/' /etc/nginx/snippets/madina-common.conf
 DEBIAN_FRONTEND=noninteractive apt-get install -y zip >/dev/null
+# Persist relay events before acknowledging them and recover from the recorded
+# executed GTIDs after an unexpected cloud restart. No database restart here.
+mysql -e 'SET PERSIST sync_relay_log=1; SET PERSIST_ONLY relay_log_recovery=ON'
 install -m 0755 -o root -g root "$PROJECT_DIR/deploy/terminal-control.py" /usr/local/libexec/madina-terminal-control
 install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-terminal.conf.template" "$STATE_DIR/nginx-terminal.conf.template"
 install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-production.conf.template" "$STATE_DIR/nginx-production.conf.template"
