@@ -51,6 +51,35 @@ try {
     if (@($rules | Where-Object { $_.protocol -eq 'company-tool' }).Count -ne 1 -or @($rules | Where-Object { $_.protocol -eq 'madina-report' }).Count -ne 1) { throw 'Printing setup replaced or duplicated protocol rules.' }
     if (-not ($rules | Where-Object { $_.protocol -eq 'madina-report' -and $_.allowed_origins -contains 'https://192.168.50.2:8443' })) { throw 'A4 launching is not scoped to the configured server.' }
     Write-Host 'PASS existing browser, unchanged silent thermal mode, one-click A4 dialog handoff, strict launcher origin/ID validation and scoped protocol registration'
+    # Real Windows ACLs reproduce a managed policy key. Setup must neither
+    # broaden its permissions nor abandon the working per-user shortcuts.
+    foreach ($lockedPolicy in @('HKCU:\Software\Policies\Google\Chrome',$legacyPolicy)) {
+        if (-not (Test-Path $lockedPolicy)) { New-Item -Path $lockedPolicy -Force | Out-Null }
+        $originalAcl = Get-Acl -LiteralPath $lockedPolicy
+        $beforeRules = (Get-ItemProperty $lockedPolicy -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
+        $restrictedAcl = New-Object Security.AccessControl.RegistrySecurity
+        $restrictedAcl.SetSecurityDescriptorBinaryForm($originalAcl.GetSecurityDescriptorBinaryForm())
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $deny = New-Object Security.AccessControl.RegistryAccessRule($sid, ([Security.AccessControl.RegistryRights]::SetValue -bor [Security.AccessControl.RegistryRights]::CreateSubKey), [Security.AccessControl.InheritanceFlags]::ContainerInherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Deny)
+        $restrictedAcl.AddAccessRule($deny)
+        try {
+            Set-Acl -LiteralPath $lockedPolicy -AclObject $restrictedAcl
+            $blocked = $false
+            try { New-ItemProperty $lockedPolicy -Name MadinaFixtureWrite -Value 1 -Force -ErrorAction Stop | Out-Null } catch { $blocked = $true }
+            if (-not $blocked) { throw 'The registry fixture did not deny policy writes.' }
+            $lockedSddl = (Get-Acl -LiteralPath $lockedPolicy).Sddl
+            & (Join-Path $project 'deploy\windows\Setup-Counter-Shortcut.ps1') -Origin 'https://192.168.50.2:8443' -BrowserPath $edge
+            if ((Get-Acl -LiteralPath $lockedPolicy).Sddl -ne $lockedSddl) { throw 'Printing setup changed a managed registry ACL.' }
+            $afterRules = (Get-ItemProperty $lockedPolicy -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
+            if ($beforeRules -cne $afterRules) { throw 'Printing setup changed a locked or unrelated policy.' }
+            $counter = $shell.CreateShortcut((Join-Path $desktop 'Madina Express Counter.lnk'))
+            $reports = $shell.CreateShortcut((Join-Path $desktop 'Madina Express Reports.lnk'))
+            if ($counter.TargetPath -ne $edge -or $counter.Arguments -notmatch '--kiosk-printing') { throw 'A locked policy prevented silent Counter setup.' }
+            if ($reports.TargetPath -ne $edge -or $reports.Arguments -match 'kiosk-printing') { throw 'A locked policy prevented normal A4 Reports setup.' }
+            if (-not (Test-Path 'HKCU:\Software\Classes\madina-report\shell\open\command')) { throw 'A locked policy prevented the per-user A4 launcher registration.' }
+            Write-Host ('PASS managed policy remains protected and printing shortcuts complete: ' + $lockedPolicy)
+        } finally { Set-Acl -LiteralPath $lockedPolicy -AclObject $originalAcl }
+    }
 } finally {
     if (Test-Path $counterProfile) { Remove-Item $counterProfile -Recurse -Force }
     Remove-Item 'HKCU:\Software\Classes\madina-report' -Recurse -Force -ErrorAction SilentlyContinue

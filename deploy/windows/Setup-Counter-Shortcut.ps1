@@ -5,11 +5,6 @@ if (Test-Path (Join-Path $PSScriptRoot 'setup.json')) { $setup = Get-Content (Jo
 $uri = [Uri]$Origin
 if ($uri.Scheme -ne 'https' -or $uri.AbsolutePath -ne '/' -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw 'Use the HTTPS server origin, without a path.' }
 $Origin = $Origin.TrimEnd('/')
-# Older Madina setup enabled silent printing for every profile. Remove that
-# per-user override so the normal Reports browser can show its A4 dialog.
-foreach ($policy in @('HKCU:\Software\Policies\Google\Chrome','HKCU:\Software\Policies\Microsoft\Edge')) {
-    if (Test-Path $policy) { Remove-ItemProperty -Path $policy -Name SilentPrintingEnabled -ErrorAction SilentlyContinue }
-}
 # Printing an A4 report must not make Windows silently switch the ticket default.
 try {
     $printingKey='HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Windows'
@@ -34,6 +29,23 @@ if ($progId -like 'MSEdge*' -and (-not $browser -or -not (Test-Path $browser))) 
     $browser = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
 $name = if ($browser) { [IO.Path]::GetFileName($browser).ToLowerInvariant() } else { '' }
+$browserPolicy = switch ($name) {
+    'chrome.exe' { 'HKCU:\Software\Policies\Google\Chrome' }
+    'msedge.exe' { 'HKCU:\Software\Policies\Microsoft\Edge' }
+    default { $null }
+}
+# Only configure the selected browser. Policy keys can be managed by Windows;
+# optional policy changes must not prevent the per-user shortcuts being saved.
+if ($browserPolicy) {
+    try {
+        if (Test-Path $browserPolicy) {
+            $legacy = (Get-ItemProperty -Path $browserPolicy -Name SilentPrintingEnabled -ErrorAction SilentlyContinue).SilentPrintingEnabled
+            if ($null -ne $legacy) { Remove-ItemProperty -Path $browserPolicy -Name SilentPrintingEnabled -ErrorAction Stop }
+        }
+    } catch {
+        Write-Warning 'The browser silent-print policy is managed by Windows. Ask the Windows administrator to remove the global SilentPrintingEnabled override if A4 reports print without a dialog.'
+    }
+}
 $reportsBrowser = "$env:WINDIR\System32\cmd.exe"
 $reportsArguments = "/c start `"`" `"$Origin/manage?view=reports`""
 $url = "$Origin/manage?counterPrint=silent&a4Bridge=1"
@@ -134,7 +146,9 @@ if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
     $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $handler = Join-Path $directory 'Open-A4-Report.ps1'
     Set-Item -Path ($protocol + '\shell\open\command') -Value ('"' + $powershell + '" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $handler + '" "%1"')
-    foreach ($policy in @('HKCU:\Software\Policies\Google\Chrome','HKCU:\Software\Policies\Microsoft\Edge')) {
+    if ($browserPolicy) {
+      try {
+        $policy = $browserPolicy
         if (-not (Test-Path $policy)) { New-Item -Path $policy -Force | Out-Null }
         $saved = (Get-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
         $rules = New-Object 'System.Collections.Generic.List[object]'
@@ -165,6 +179,9 @@ if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
             }
         }
 
+      } catch {
+        Write-Warning 'Automatic browser permissions could not be saved because browser policies are managed or unavailable. Shortcuts will still be created. Allow Madina Express A4 printing and select your terminal certificate if the browser asks.'
+      }
     }
 }
 
