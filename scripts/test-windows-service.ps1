@@ -55,7 +55,7 @@ try {
     # broaden its permissions nor abandon the working per-user shortcuts.
     foreach ($lockedPolicy in @('HKCU:\Software\Policies\Google\Chrome',$legacyPolicy)) {
         if (-not (Test-Path $lockedPolicy)) { New-Item -Path $lockedPolicy -Force | Out-Null }
-        $originalAcl = Get-Acl -LiteralPath $lockedPolicy
+        $originalAcl = Get-Acl -Path $lockedPolicy
         $beforeRules = (Get-ItemProperty $lockedPolicy -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
         $restrictedAcl = New-Object Security.AccessControl.RegistrySecurity
         $restrictedAcl.SetSecurityDescriptorBinaryForm($originalAcl.GetSecurityDescriptorBinaryForm())
@@ -63,13 +63,13 @@ try {
         $deny = New-Object Security.AccessControl.RegistryAccessRule($sid, ([Security.AccessControl.RegistryRights]::SetValue -bor [Security.AccessControl.RegistryRights]::CreateSubKey), [Security.AccessControl.InheritanceFlags]::ContainerInherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Deny)
         $restrictedAcl.AddAccessRule($deny)
         try {
-            Set-Acl -LiteralPath $lockedPolicy -AclObject $restrictedAcl
+            Set-Acl -Path $lockedPolicy -AclObject $restrictedAcl
             $blocked = $false
             try { New-ItemProperty $lockedPolicy -Name MadinaFixtureWrite -Value 1 -Force -ErrorAction Stop | Out-Null } catch { $blocked = $true }
             if (-not $blocked) { throw 'The registry fixture did not deny policy writes.' }
-            $lockedSddl = (Get-Acl -LiteralPath $lockedPolicy).Sddl
+            $lockedSddl = (Get-Acl -Path $lockedPolicy).Sddl
             & (Join-Path $project 'deploy\windows\Setup-Counter-Shortcut.ps1') -Origin 'https://192.168.50.2:8443' -BrowserPath $edge
-            if ((Get-Acl -LiteralPath $lockedPolicy).Sddl -ne $lockedSddl) { throw 'Printing setup changed a managed registry ACL.' }
+            if ((Get-Acl -Path $lockedPolicy).Sddl -ne $lockedSddl) { throw 'Printing setup changed a managed registry ACL.' }
             $afterRules = (Get-ItemProperty $lockedPolicy -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
             if ($beforeRules -cne $afterRules) { throw 'Printing setup changed a locked or unrelated policy.' }
             $counter = $shell.CreateShortcut((Join-Path $desktop 'Madina Express Counter.lnk'))
@@ -78,7 +78,7 @@ try {
             if ($reports.TargetPath -ne $edge -or $reports.Arguments -match 'kiosk-printing') { throw 'A locked policy prevented normal A4 Reports setup.' }
             if (-not (Test-Path 'HKCU:\Software\Classes\madina-report\shell\open\command')) { throw 'A locked policy prevented the per-user A4 launcher registration.' }
             Write-Host ('PASS managed policy remains protected and printing shortcuts complete: ' + $lockedPolicy)
-        } finally { Set-Acl -LiteralPath $lockedPolicy -AclObject $originalAcl }
+        } finally { Set-Acl -Path $lockedPolicy -AclObject $originalAcl }
     }
 } finally {
     if (Test-Path $counterProfile) { Remove-Item $counterProfile -Recurse -Force }
