@@ -58,12 +58,18 @@ try {
         $originalAcl = Get-Acl -Path $lockedPolicy
         $beforeRules = (Get-ItemProperty $lockedPolicy -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
         $restrictedAcl = New-Object Security.AccessControl.RegistrySecurity
-        $restrictedAcl.SetSecurityDescriptorBinaryForm($originalAcl.GetSecurityDescriptorBinaryForm())
+        $restrictedAcl.SetSecurityDescriptorBinaryForm($originalAcl.GetSecurityDescriptorBinaryForm(),[Security.AccessControl.AccessControlSections]::Access)
+        $restoreAcl = New-Object Security.AccessControl.RegistrySecurity
+        $restoreAcl.SetSecurityDescriptorBinaryForm($originalAcl.GetSecurityDescriptorBinaryForm(),[Security.AccessControl.AccessControlSections]::Access)
+        # Keep a narrowly scoped DACL handle open before denying new policy
+        # writes. Set-Acl opens a broader write handle and cannot restore a key
+        # after this fixture has deliberately denied SetValue/CreateSubKey.
+        $policyHandle = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($lockedPolicy.Substring(6),[Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree,([Security.AccessControl.RegistryRights]::ReadKey -bor [Security.AccessControl.RegistryRights]::ChangePermissions))
         $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
         $deny = New-Object Security.AccessControl.RegistryAccessRule($sid, ([Security.AccessControl.RegistryRights]::SetValue -bor [Security.AccessControl.RegistryRights]::CreateSubKey), [Security.AccessControl.InheritanceFlags]::ContainerInherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Deny)
         $restrictedAcl.AddAccessRule($deny)
         try {
-            Set-Acl -Path $lockedPolicy -AclObject $restrictedAcl
+            $policyHandle.SetAccessControl($restrictedAcl)
             $blocked = $false
             try { New-ItemProperty $lockedPolicy -Name MadinaFixtureWrite -Value 1 -Force -ErrorAction Stop | Out-Null } catch { $blocked = $true }
             if (-not $blocked) { throw 'The registry fixture did not deny policy writes.' }
@@ -78,7 +84,9 @@ try {
             if ($reports.TargetPath -ne $edge -or $reports.Arguments -match 'kiosk-printing') { throw 'A locked policy prevented normal A4 Reports setup.' }
             if (-not (Test-Path 'HKCU:\Software\Classes\madina-report\shell\open\command')) { throw 'A locked policy prevented the per-user A4 launcher registration.' }
             Write-Host ('PASS managed policy remains protected and printing shortcuts complete: ' + $lockedPolicy)
-        } finally { Set-Acl -Path $lockedPolicy -AclObject $originalAcl }
+        } finally {
+            try { $policyHandle.SetAccessControl($restoreAcl) } finally { $policyHandle.Dispose() }
+        }
     }
 } finally {
     if (Test-Path $counterProfile) { Remove-Item $counterProfile -Recurse -Force }
