@@ -133,18 +133,17 @@ if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
     New-ItemProperty -Path $protocol -Name 'URL Protocol' -Value '' -Force | Out-Null
     $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $handler = Join-Path $directory 'Open-A4-Report.ps1'
-    Set-Item -Path ($protocol + '\shell\open\command') -Value ('"' + $powershell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $handler + '" "%1"')
+    Set-Item -Path ($protocol + '\shell\open\command') -Value ('"' + $powershell + '" -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $handler + '" "%1"')
     foreach ($policy in @('HKCU:\Software\Policies\Google\Chrome','HKCU:\Software\Policies\Microsoft\Edge')) {
         if (-not (Test-Path $policy)) { New-Item -Path $policy -Force | Out-Null }
         $saved = (Get-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
         $rules = New-Object 'System.Collections.Generic.List[object]'
-        if ($saved) {
-            $parsedRules = @(ConvertFrom-Json -InputObject $saved)
-            for ($index = 0; $index -lt $parsedRules.Count; $index++) {
-                $entry = $parsedRules[$index]
-                if ($entry.protocol -ne 'madina-report') { $rules.Add($entry) }
-            }
+        function Add-PreservedProtocol($Entry) {
+            if ($Entry -is [System.Collections.IList]) {
+                for ($itemIndex = 0; $itemIndex -lt $Entry.Count; $itemIndex++) { Add-PreservedProtocol $Entry[$itemIndex] }
+            } elseif ($null -ne $Entry -and $Entry.protocol -ne 'madina-report') { $rules.Add($Entry) }
         }
+        if ($saved) { Add-PreservedProtocol (ConvertFrom-Json -InputObject $saved) }
         $rules.Add(@{protocol='madina-report';allowed_origins=@($Origin,'https://staff.madinaexpress.duckdns.org')})
         New-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -PropertyType String -Value (ConvertTo-Json -InputObject ($rules.ToArray()) -Depth 8 -Compress) -Force | Out-Null
         $identities = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -match '^CN=Madina Express Terminal [1-9][0-9]?$' -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.NotBefore -le (Get-Date) -and $_.NotAfter -gt (Get-Date) })
