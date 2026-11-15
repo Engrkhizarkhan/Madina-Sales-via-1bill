@@ -85,7 +85,7 @@ jobs:
         run: ./scripts/test-windows-service.ps1
       - name: Signed updater transactions on Windows
         shell: powershell
-        run: node --test backend/tests/updater.js
+        run: node --test backend/tests/updater.js backend/tests/windows-updater.js
       - name: Trusted HTTPS certificate repair on Windows
         shell: powershell
         run: |

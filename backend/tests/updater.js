@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync,sign,createHash } from 'node:crypto';
-import { mkdtemp,mkdir,rm,writeFile } from 'node:fs/promises';
+import { mkdtemp,mkdir,rm,writeFile,readFile,readdir,stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyRelease,verifyPackage,zipEntries } from '../../deploy/updater/release.mjs';
@@ -9,6 +9,31 @@ import { activate,recover,atomicJson,jsonFile } from '../../deploy/updater/engin
 const keys=generateKeyPairSync('ed25519'),key=keys.publicKey.export({type:'spki',format:'pem'});
 const release={project:'madina-express',releaseId:'r-'+('ab'.repeat(6)),commit:'ab'.repeat(20),version:'3.0.0',sequence:10,createdAt:new Date(Date.now()-1000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString(),schemaBackwardsCompatible:true,migrations:[],file:'r-'+('ab'.repeat(6))+'.zip',bytes:3,sha256:createHash('sha256').update('zip').digest('hex')};
 const envelope=value=>{const payload=JSON.stringify(value);return {payload,signature:sign(null,Buffer.from(payload),keys.privateKey).toString('base64')};};
+test('damaged updater JSON names the file and never resets release history silently',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'madina-state-qa-')),file=join(root,'update-state.json');
+ try{
+  assert.deepEqual(await jsonFile(file,{}),{});
+  for(const bytes of [Buffer.alloc(128),Buffer.from('{"highestSequence":39,')]){
+   await writeFile(file,bytes);
+   await assert.rejects(jsonFile(file,{}),error=>error.code==='INVALID_UPDATER_JSON'&&error.file===file&&error.message.includes('update-state.json')&&!error.message.includes('highestSequence'));
+   assert.deepEqual(await readFile(file),bytes);
+  }
+ }finally{await rm(root,{recursive:true,force:true});}
+});
+test('state replacement keeps restrictive permissions and failed serialization leaves the previous state intact',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'madina-state-qa-')),file=join(root,'update-state.json');
+ try{
+  await atomicJson(file,{highestSequence:39});
+  if(process.platform!=='win32')assert.equal((await stat(file)).mode&0o777,0o600);
+  const cycle={};cycle.self=cycle;
+  await assert.rejects(atomicJson(file,cycle),/circular/i);
+  assert.deepEqual(await jsonFile(file),{highestSequence:39});
+  assert.deepEqual(await readdir(root),['update-state.json']);
+  await atomicJson(file,{highestSequence:40});
+  assert.deepEqual(await jsonFile(file),{highestSequence:40});
+  assert.deepEqual(await readdir(root),['update-state.json']);
+ }finally{await rm(root,{recursive:true,force:true});}
+});
 test('signed updates reject tampering, downgrade, expiry and unsafe metadata',()=>{
  assert.equal(verifyRelease(envelope(release),key).releaseId,release.releaseId);
  assert.throws(()=>verifyRelease({...envelope(release),payload:JSON.stringify({...release,sequence:99})},key),/signature/);

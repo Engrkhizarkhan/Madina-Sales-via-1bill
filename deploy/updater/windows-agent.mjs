@@ -31,6 +31,7 @@ export async function run(base){
   await atomicJson(join(data,'update-status.json'),value);
   try{await fetch(origin+'/api/terminal-sync/update-status',{method:'POST',headers:{'Content-Type':'application/json','X-Terminal-Token':env.TERMINAL_INSTALL_TOKEN},body:JSON.stringify({...value,installationId:env.TERMINAL_INSTALLATION_ID}),signal:AbortSignal.timeout(10000)});}catch{/* operation remains local */}
  };
+ try{
  const local=async(path,method='GET')=>{
   const response=await fetch('http://127.0.0.1:'+(env.NODE_API_PORT||43101)+path,{method,headers:{'X-Madina-Relay-Key':env.TERMINAL_RELAY_KEY,'X-Madina-Updater-Key':env.UPDATE_CONTROL_KEY},signal:AbortSignal.timeout(10000)});
   if(!response.ok)throw new Error(`The local updater request returned ${response.status}`);return response.json();
@@ -102,6 +103,12 @@ try{if((await operations.activity()).draining)await operations.resume();}catch{/
   const candidates=[];for(const name of await readdir(releases)){if(/^r-[a-f0-9]{12,40}$/.test(name))candidates.push({name,time:(await stat(join(releases,name))).mtimeMs});}
   candidates.sort((a,b)=>b.time-a.time);
   for(const item of candidates.slice(3)){if(join(releases,item.name)!==target&&join(releases,item.name)!==current.application){await rm(join(releases,item.name),{recursive:true,force:true});await rm(join(releases,item.name+'.zip'),{force:true});}}
+ }
+ }catch(error){
+  // Send failures too: the owner must not see an old "up-to-date" report while
+  // the Windows task is failing before it reaches the normal ready report.
+  await report({stage:'deferred',message:error.message}).catch(()=>undefined);
+  throw error;
  }
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){

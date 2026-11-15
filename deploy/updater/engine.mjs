@@ -1,8 +1,35 @@
-import { readFile,writeFile,rename,mkdir,unlink } from 'node:fs/promises';
+import { readFile,open,rename,mkdir,unlink } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
-import { join } from 'node:path';
-export async function jsonFile(file,fallback=null){try{return JSON.parse(await readFile(file,'utf8'));}catch(error){if(error.code==='ENOENT')return fallback;throw error;}}
-export async function atomicJson(file,value,mode=0o600){const temp=file+'.'+randomBytes(6).toString('hex');await writeFile(temp,JSON.stringify(value),{mode});await rename(temp,file);}
+import { join,dirname,basename } from 'node:path';
+export async function jsonFile(file,fallback=null){
+ try{return JSON.parse(await readFile(file,'utf8'));}
+ catch(error){
+  if(error.code==='ENOENT')return fallback;
+  // Name the damaged file without exposing configuration contents in logs.
+  if(error instanceof SyntaxError){const invalid=new Error(`Invalid JSON in updater file ${basename(file)}; repair is required`);invalid.code='INVALID_UPDATER_JSON';invalid.file=file;throw invalid;}
+  throw error;
+ }
+}
+export async function atomicJson(file,value,mode=0o600){
+ const temp=file+'.'+randomBytes(6).toString('hex');let handle;
+ try{
+  handle=await open(temp,'wx',mode);
+  await handle.writeFile(JSON.stringify(value),'utf8');
+  // Flush contents before publishing the filename. A rename alone can leave a
+  // zero-filled state file after abrupt power loss on a Windows counter PC.
+  await handle.sync();await handle.close();handle=null;
+  await rename(temp,file);
+  // POSIX also permits flushing the directory entry; Windows does not expose
+  // directory handles through fs.open, so its completed file flush is retained.
+  if(process.platform!=='win32'){
+   const directory=await open(dirname(file),'r');
+   try{await directory.sync();}finally{await directory.close();}
+  }
+ }finally{
+  if(handle)await handle.close();
+  await unlink(temp).catch(error=>{if(error.code!=='ENOENT')throw error;});
+ }
+}
 export async function activate({host,target,release,operations}){
  const pointer=join(host,'current.json'),journalFile=join(host,'transaction.json'),stateFile=join(host,'update-state.json');
  const previous=await jsonFile(pointer);
