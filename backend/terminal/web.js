@@ -26,7 +26,7 @@ export async function startTerminalWeb(app) {
   });
   web.use("/assets",express.static(resolve(process.env.TERMINAL_ASSET_DIRECTORY || "dist/assets"),{dotfiles:"deny",index:false}));
   web.use(express.static(resolve("dist"), { dotfiles: "deny", index: false }));
-  web.get(["/login", "/manage"], (_req, res) => res.sendFile(resolve("dist/index.html")));
+  web.get(["/login", "/manage", "/print/report"], (_req, res) => res.sendFile(resolve("dist/index.html")));
   web.use((_req, res) => res.sendStatus(404));
   const tlsDirectory = join(config.terminal.directory, "tls");
   const options = {

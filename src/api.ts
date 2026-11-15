@@ -40,7 +40,7 @@ async function request<T>(
     ...options,
     method,
     headers,
-    credentials: "include",
+    credentials: options.credentials ?? "include",
     signal: controller.signal,
   });
   const payload = await response.json().catch(() => ({}));
@@ -112,6 +112,8 @@ function rememberCsrf<T extends { csrfToken?: string }>(payload: T): T {
 }
 
 export const api = {
+  createPrintJob: <T>(body:unknown,signal:AbortSignal)=>request<T>('/printing/jobs',{method:'POST',body:JSON.stringify(body),signal}),
+  claimPrintJob: <T>(id:string,key:string)=>request<T>('/printing/jobs/'+id,{headers:{'X-Print-Token':key},credentials:'omit'}),
   counterLauncherUrl: `${API_BASE}/terminal/counter-launcher`,
   terminalConnection: () => request<{ local: boolean; connected: boolean; replicated: boolean; readOnly?: boolean; secondsBehind?:number|null; replicationError?:boolean; cloudLatencyMs?:number|null }>("/terminal/connection"),
   terminalStatus: () => request<TerminalStatus>("/terminal/status"),

@@ -137,12 +137,12 @@ def connection_status(payload, config):
     previous = dict(config)
     failures = 0 if healthy else int(config.get("tunnelHealthFailures", 0)) + 1
     config["tunnelHealthFailures"] = min(failures, 2)
-    if not healthy and failures >= 2 and now - int(config.get("lastTunnelRecovery", 0)) >= 30:
+    if not healthy and failures >= 2 and now - int(config.get("lastTunnelRecovery", 0)) >= 10:
         # Close only the dedicated tunnel account, never the app, its database,
         # an administrative SSH session or another hosted backend.
         subprocess.run(["pkill", "-TERM", "-u", "madina-terminal"], check=False, capture_output=True, timeout=5)
         config["lastTunnelRecovery"] = now
-    if healthy and status.get("configured") and not status.get("ioRunning") and status.get("sqlRunning") and now - int(config.get("lastReceiverRecovery", 0)) >= 30:
+    if healthy and status.get("configured") and not status.get("ioRunning") and status.get("sqlRunning") and now - int(config.get("lastReceiverRecovery", 0)) >= 10:
         config["lastReceiverRecovery"] = now
         try:
             run(["mysql", "--batch", "-e", "STOP REPLICA IO_THREAD FOR CHANNEL 'madina_terminal'; START REPLICA IO_THREAD FOR CHANNEL 'madina_terminal'"], timeout=6)
@@ -173,7 +173,7 @@ def configure_replication(config):
         sql("STOP REPLICA FOR CHANNEL 'madina_terminal'")
     sql("CHANGE REPLICATION SOURCE TO SOURCE_HOST='127.0.0.1', SOURCE_PORT=13306, "
         "SOURCE_USER='madina_repl', SOURCE_PASSWORD='" + config["replicationPassword"] + "', "
-        "SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1, SOURCE_CONNECT_RETRY=3 "
+        "SOURCE_AUTO_POSITION=1, GET_SOURCE_PUBLIC_KEY=1, SOURCE_CONNECT_RETRY=1, SOURCE_HEARTBEAT_PERIOD=2 "
         "FOR CHANNEL 'madina_terminal'")
     sql("CHANGE REPLICATION FILTER REPLICATE_WILD_DO_TABLE = ('madina_express.%') FOR CHANNEL 'madina_terminal'")
     sql("START REPLICA FOR CHANNEL 'madina_terminal'")

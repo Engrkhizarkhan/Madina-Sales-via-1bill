@@ -28,6 +28,17 @@ try {
   const login=await request("/auth/login",{method:"POST",body:{identity:owner.username,password}});
   check(login.status===200,"owner can sign in for settings checks");cookie=login.cookie;csrf=login.body.csrfToken;
   check((await request("/settings/receipt",{authenticated:false})).status===401,"receipt administration requires authentication");
+  const report={title:'Passenger CNIC Sheet',orientation:'landscape',document:{tag:'article',attrs:{class:'print-document operations-document report-a4'},children:['مدینہ ایکسپریس']}};
+  check((await request('/printing/jobs',{method:'POST',body:report,authenticated:false})).status===401,'A4 snapshots require a staff session');
+  const blocked=await fetch(origin+'/printing/jobs',{method:'POST',headers:{Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify(report)});
+  check(blocked.status===403,'A4 snapshot preparation requires CSRF protection');
+  const snapshot=await request('/printing/jobs',{method:'POST',body:report});
+  check(snapshot.status===201,'Counter can prepare a bounded A4 snapshot');
+  const claimed=await fetch(origin+'/printing/jobs/'+snapshot.body.id,{headers:{'X-Print-Token':snapshot.body.key}});
+  check(claimed.status===200&&(await claimed.json()).document.children[0]==='مدینہ ایکسپریس','Reports profile can claim only its print snapshot without a staff login');
+  check((await fetch(origin+'/printing/jobs/'+snapshot.body.id,{headers:{'X-Print-Token':snapshot.body.key}})).status===410,'A4 snapshot link cannot be replayed');
+  check((await request('/printing/jobs',{method:'POST',body:{...report,document:{...report.document,attrs:{onclick:'alert(1)'}}}})).status===422,'Report handoff rejects executable markup');
+
   const layout={...receiptDefaults,businessName:"MADINA EXPRESS QA",fontSize:12,paddingY:0,font:"Georgia"};
   check((await request("/settings/receipt",{method:"PUT",body:layout})).status===200,"owner can edit receipt names, fonts, sizes and margins");
   assert.deepEqual((await request("/settings/receipt")).body.layout,layout);passed++;

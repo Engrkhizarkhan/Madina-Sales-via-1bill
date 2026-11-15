@@ -1,3 +1,4 @@
+import {printJobClaimRouter,createPrintJob} from './print-jobs.js';
 import {publicBus,publicRoute,publicTrip} from "./public-data.js";
 import {adminSnapshot,adminChanges} from './admin-data.js';
 import {clearOperationalData} from "./production-reset.js";
@@ -62,6 +63,7 @@ app.use((req, res, next) => {
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
+app.use("/printing/jobs",express.json({limit:"512kb",strict:true,inflate:false}));
 app.use(express.json({ limit: "128kb", strict: true, inflate: false }));
 app.use((req, _res, next) => {
   if (req.url === "/index.php") req.url = "/";
@@ -73,6 +75,7 @@ app.use(maintenance.route);
 app.use(maintenance.middleware);
 app.use("/terminal-sync", terminalSyncRouter);
 app.use("/terminal", terminalEnrollmentRouter);
+app.use("/printing",printJobClaimRouter);
 app.use(cloudAuthorityGuard);
 app.use((req, res, next) => {
   if (!config.terminal.local || req.path === "/health") return next();
@@ -313,6 +316,11 @@ app.post("/auth/change-password", asyncRoute(async (req, res) => {
     await audit("auth.password_changed", "user", req.user.id, null, { success: true }, req.user.id, req, connection);
   });
   res.json({ ok: true, csrfToken });
+}));
+
+app.post('/printing/jobs',asyncRoute(async(req,res)=>{
+  limitAttempts('report-print',req,120,10*60000);
+  res.status(201).json(await createPrintJob(req.body,req.user.id));
 }));
 
 app.get("/admin/bootstrap", asyncRoute(async (req, res) => {

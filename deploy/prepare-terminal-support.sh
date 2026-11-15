@@ -8,6 +8,8 @@ install -d -m 0750 -o root -g madina-express "$STATE_DIR"
 install -d -m 2750 -o madina-express -g www-data /var/cache/madina-express/installers
 install -d -m 0700 -o madina-express -g madina-express /var/lib/madina-express/admin-sessions
 install -d -m 0755 -o root -g root /usr/local/libexec
+# Other JSON routes retain their 128 KB application limit; bounded report trees allow 512 KB.
+sed -i 's/client_max_body_size 128k;/client_max_body_size 512k;/' /etc/nginx/snippets/madina-common.conf
 DEBIAN_FRONTEND=noninteractive apt-get install -y zip >/dev/null
 install -m 0755 -o root -g root "$PROJECT_DIR/deploy/terminal-control.py" /usr/local/libexec/madina-terminal-control
 install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-terminal.conf.template" "$STATE_DIR/nginx-terminal.conf.template"
@@ -64,6 +66,8 @@ Match User madina-terminal
     X11Forwarding no
     AllowAgentForwarding no
     PermitTTY no
+    ClientAliveInterval 5
+    ClientAliveCountMax 2
     MaxSessions 0
 Match all
 SSH

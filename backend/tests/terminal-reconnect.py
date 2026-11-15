@@ -48,7 +48,7 @@ class ReconnectTests(unittest.TestCase):
         self.assertEqual(statement,"STOP REPLICA IO_THREAD FOR CHANNEL 'madina_terminal'; START REPLICA IO_THREAD FOR CHANNEL 'madina_terminal'")
         self.assertEqual(sql.call_args.kwargs['timeout'],6)
         terminate.assert_not_called()
-        self.invoke(config,True,status,now=1010)[4].assert_not_called()
+        self.invoke(config,True,status,now=1005)[4].assert_not_called()
 
     def test_applier_errors_are_reported_and_never_skipped(self):
         status={'configured':True,'ioRunning':True,'sqlRunning':False,'error':True}

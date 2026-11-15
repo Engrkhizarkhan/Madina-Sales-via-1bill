@@ -6,7 +6,7 @@ ssl_session_cache shared:MadinaTLS:10m;
 ssl_session_tickets off;
 root /var/www/madina-express;
 index index.html;
-client_max_body_size 128k;
+client_max_body_size 512k;
 gzip on;
 gzip_min_length 1024;
 gzip_vary on;

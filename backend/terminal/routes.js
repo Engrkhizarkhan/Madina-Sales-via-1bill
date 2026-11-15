@@ -141,6 +141,7 @@ terminalAdminRouter.get("/counter-launcher", route(async (_req,res) => {
   const archive = zipSync({
     "Setup-Counter-Shortcut.ps1":bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.ps1"))),
     "Setup-Counter-Shortcut.cmd":bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.cmd"))),
+    "Open-A4-Report.ps1":bytes(await readFile(resolve("deploy/windows/Open-A4-Report.ps1"))),
     "setup.json":bytes(JSON.stringify({localOrigin:origin})),
   });
   res.type("application/zip").attachment("Madina-Express-Counter-Shortcuts.zip").send(Buffer.from(archive));
@@ -237,6 +238,7 @@ terminalAdminRouter.post("/devices/:slot/package", route(async (req, res) => {
     "Install-Terminal-PC.ps1": bytes(await readFile(resolve("deploy/windows/Install-Terminal-PC.ps1"))),
     "Setup-Counter-Shortcut.ps1": bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.ps1"))),
     "Setup-Counter-Shortcut.cmd": bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.cmd"))),
+    "Open-A4-Report.ps1": bytes(await readFile(resolve("deploy/windows/Open-A4-Report.ps1"))),
     "Install-Terminal-PC.cmd": bytes(await readFile(resolve("deploy/windows/Install-Terminal-PC.cmd"))),
     "terminal-ca.cer": new Uint8Array(ca),
     "Change-Terminal-PC-Address.cmd": bytes(await readFile(resolve("deploy/windows/Change-Terminal-PC-Address.cmd"))),

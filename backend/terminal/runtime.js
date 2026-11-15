@@ -16,7 +16,8 @@ let stopped = false;
 let tunnel;
 let statusTimer;
 let backupTimer;
-let reconnectTimer;
+let cloudWasUnavailable = false;
+import {TerminalTunnel,tunnelOptions} from './tunnel.js';
 
 export async function terminalPaired() {
   if (!config.terminal.local) return true;
@@ -49,7 +50,7 @@ async function callCloud(action) {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Terminal-Token": process.env.TERMINAL_INSTALL_TOKEN },
     body: JSON.stringify({ installationId: process.env.TERMINAL_INSTALLATION_ID,maintenanceResult }),
-    signal: AbortSignal.timeout(action === "activate" ? 90000 : 15000),
+    signal: AbortSignal.timeout(action === "activate" ? 90000 : 6500),
   });
   if (!response.ok) throw new Error(`The cloud ${action} check returned ${response.status}.`);
   return response.json();
@@ -62,6 +63,8 @@ async function refreshStatus() {
     const checkStarted = performance.now();
     const status = await callCloud(ready ? "status" : "activate");
     const cloudLatencyMs = Math.round(performance.now() - checkStarted);
+    if (cloudWasUnavailable && status.tunnelHealthy === false) tunnel?.restart();
+    cloudWasUnavailable = false;
     if (!handingOver && Array.isArray(status.revokedSessions)) {
       const hashes = status.revokedSessions.filter(hash => typeof hash === "string" && /^[a-f0-9]{64}$/.test(hash));
       for (let index = 0; index < hashes.length; index += 100) {
@@ -104,28 +107,18 @@ async function refreshStatus() {
       cloudLatencyMs,
     });
   } catch (error) {
+    cloudWasUnavailable = true;
     await publishConnection({ connected: false, replicated: false, message: error.message }).catch(() => undefined);
   } finally {
-    if (!stopped) statusTimer = setTimeout(refreshStatus, 10000).unref();
+    if (!stopped) statusTimer = setTimeout(refreshStatus, cloudWasUnavailable ? 2000 : 4000).unref();
   }
 }
 
 function startTunnel() {
-  if (stopped) return;
-  tunnel = spawn(process.env.TERMINAL_SSH_PATH || "ssh", [
-    "-N", "-T", "-i", join(config.terminal.directory, "tunnel-key"),
-    "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
-    "-o", `UserKnownHostsFile=${join(config.terminal.directory, "known_hosts")}`,
-    "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
-    "-R", "127.0.0.1:3201:127.0.0.1:" + config.port,
-    "-R", "127.0.0.1:13306:127.0.0.1:" + config.db.port,
-    "madina-terminal@62.171.173.11",
-  ], { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
-  tunnel.stderr.on("data", data => console.error("Terminal tunnel:", data.toString().trim()));
-  tunnel.on("error", error => console.error("Terminal tunnel could not start:", error.message));
-  tunnel.on("close", () => {
-    if (!stopped) reconnectTimer = setTimeout(startTunnel, 3000).unref();
-  });
+  tunnel = new TerminalTunnel({command:process.env.TERMINAL_SSH_PATH||'ssh',
+    args:tunnelOptions(config.terminal.directory,config.port,config.db.port),
+    onError:message=>console.error('Terminal tunnel:',message)});
+  tunnel.start();
 }
 
 let backingUp = false;

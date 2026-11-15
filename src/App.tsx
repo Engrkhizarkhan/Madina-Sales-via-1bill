@@ -1,3 +1,5 @@
+import {ReportPrintPage} from './report-print-page';
+import {openA4Report,reportBridgeConfigured} from './report-transfer';
 import {mergeLiveRecords} from "../shared/live-records.mjs";
 import { receiptDefaults, receiptFonts, receiptNumberBounds, type ReceiptLayout } from "../shared/receipt-layout.mjs";
 import { ReceiptSettingsContext, useReceiptSettings } from "./receipt-settings";
@@ -649,7 +651,7 @@ const localPath = () => {
 function App() {
   const [receiptLayout,setReceiptLayout] = useState<ReceiptLayout>({...receiptDefaults});
   const [path, setPath] = useState(localPath);
-  useEffect(()=>{silentCounterPrinting();},[]);
+  useEffect(()=>{silentCounterPrinting();reportBridgeConfigured();},[]);
   useEffect(() => {
     if (!path.startsWith("/manage")) return;
     let active=true;
@@ -672,6 +674,7 @@ function App() {
     setPath(nextPath);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
+  if (path.split(/[?#]/)[0] === "/print/report") return <ReportPrintPage/>;
   if (path.startsWith("/manage")) {
     return <ReceiptSettingsContext.Provider value={receiptSettings}><ManagementGate onNavigate={navigate} /></ReceiptSettingsContext.Provider>;
   }
@@ -796,7 +799,7 @@ function PublicHome({ onNavigate }: { onNavigate: (path: string) => void }) {
       .then((result) => { if (active) { setTerminalAvailable(result.terminalAvailable !== false);setCheckingAvailability(false); setTripRuns(result.runs); setOccupancy(result.occupancy as PublicOccupancy[]); setPublicFleet(result.fleet as BusRecord[]); setPublicTrips(result.trips as TripRecord[]); setPublicRoutes(result.routes as RouteRecord[]); setLoadError(""); } })
       .catch(() => { if (active) {setTerminalAvailable(false);setCheckingAvailability(false);setLoadError("Connection to the booking server could not be refreshed.");} });
     void refresh();
-    const timer = window.setInterval(refresh, 15000);
+    const timer = window.setInterval(refresh, 5000);
     return () => { active = false; window.clearInterval(timer); };
   }, [date,refreshAvailability]);
   const [checkoutTrip, setCheckoutTrip] = useState<{
@@ -1696,8 +1699,8 @@ function ManagementApp({
   useEffect(()=>{
     const refresh=()=>{if(!document.hidden)void refreshData();};
     const timer=window.setInterval(refresh,5000);
-    window.addEventListener("focus",refresh);
-    return()=>{window.clearInterval(timer);window.removeEventListener("focus",refresh);};
+    window.addEventListener("focus",refresh);window.addEventListener("online",refresh);
+    return()=>{window.clearInterval(timer);window.removeEventListener("focus",refresh);window.removeEventListener("online",refresh);};
   },[refreshData]);
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -3832,7 +3835,6 @@ function ReportModal({
   const thermal = report.kind === "terminal-thermal";
   const printReport = async () => {
     if (!documentRef.current || printRun.current) return;
-    if (!thermal && silentCounterPrinting()) {setPrintError("For A4 printer selection, open Madina Express Reports from the desktop and choose this departure. The Counter session is configured for silent thermal printing.");return;}
     const run = new AbortController();
     printRun.current = run;
     setPrinting(true);
@@ -3841,6 +3843,10 @@ function ReportModal({
       flushSync(() => setPrintedAt(new Date()));
       const source = documentRef.current;
       if (!source) return;
+      if (!thermal && silentCounterPrinting()) {
+        await openA4Report(source,title,voucher?"portrait":"landscape",run.signal);
+        return;
+      }
       await printDocument(source.cloneNode(true) as HTMLElement, {
         title,
         width: thermal ? "80mm" : voucher ? "210mm" : "297mm",
@@ -3850,8 +3856,8 @@ function ReportModal({
         signal: run.signal,
         silent: thermal && silentCounterPrinting(),
       });
-    } catch {
-      if (!run.signal.aborted) setPrintError("The browser could not open this report for printing. Try again.");
+    } catch (error) {
+      if (!run.signal.aborted) setPrintError(error instanceof Error?error.message:"The browser could not open this report for printing. Try again.");
     } finally {
       printRun.current = null;
       if (!run.signal.aborted) setPrinting(false);
@@ -3892,7 +3898,7 @@ function ReportModal({
           </div>
         </div>
         {voucherStale && <p className="form-error">Save the current voucher summary on the ticketing page before printing. Collections may have changed.</p>}
-        {printError && <p className="form-error" role="alert">{printError}</p>}
+        {printError && <p className="form-error" role="alert">{printError} <a href="/api/terminal/counter-launcher">Download printing setup</a></p>}
         <article ref={documentRef}
           className={`print-document operations-document document-${report.kind} ${rows.length>50||(report.kind==="cnic"&&rows.length>35)?"document-dense":""} ${thermal ? "report-thermal" : voucher ? "report-a4" : "report-a4 report-landscape"}`}
         >
@@ -5250,7 +5256,7 @@ function SettingsView({
             </a>
           </div>
           <p className="receipt-print-help">
-            On Windows, set the 80 mm printer as the default. Extract this ZIP and run Setup-Counter-Shortcut.cmd. It uses your existing default Edge, Chrome or Firefox. Counter prints thermal slips silently; Reports opens your normal browser for A4 printer selection. Close the Counter window before updating its shortcut.
+            On Windows, set the 80 mm printer as the default. Extract this ZIP and run Setup-Counter-Shortcut.cmd. It uses your existing default Edge, Chrome or Firefox. Counter prints thermal slips silently. A4 Print opens printer selection directly using the Reports profile; the separate Reports shortcut remains available. Close the Counter window before updating its shortcut.
           </p>
         </section>
         <section className="surface settings-card">

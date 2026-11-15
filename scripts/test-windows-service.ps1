@@ -17,6 +17,7 @@ try {
     $legacyPolicy='HKCU:\Software\Policies\Microsoft\Edge'
     if (-not (Test-Path $legacyPolicy)) { New-Item -Path $legacyPolicy -Force | Out-Null }
     New-ItemProperty -Path $legacyPolicy -Name SilentPrintingEnabled -Value 1 -PropertyType DWord -Force | Out-Null
+    New-ItemProperty -Path $legacyPolicy -Name AutoLaunchProtocolsFromOrigins -Value '[{"protocol":"company-tool","allowed_origins":["https://company.example"]}]' -PropertyType String -Force | Out-Null
     & (Join-Path $project 'deploy\windows\Setup-Counter-Shortcut.ps1') -Origin 'https://192.168.50.1:8443' -BrowserPath $edge
     if ((Get-ItemProperty $legacyPolicy -ErrorAction SilentlyContinue).SilentPrintingEnabled -eq 1) { throw 'The old global silent-print override still affects A4 reports.' }
 
@@ -32,9 +33,26 @@ try {
     if ($printing.isHeaderFooterEnabled -ne $false -or $printing.marginsType -ne 1) { throw 'Thermal profile still enables browser headers/footers or margins.' }
     & (Join-Path $project 'deploy\windows\Setup-Counter-Shortcut.ps1') -Origin 'https://192.168.50.2:8443' -BrowserPath $edge
     if ($shell.CreateShortcut((Join-Path $desktop 'Madina Express Counter.lnk')).Arguments -notmatch '192.168.50.2:8443') { throw 'Moving the counter address does not update its shortcut.' }
-    Write-Host 'PASS existing Edge browser, silent thermal profile, separate normal A4 profile, ME icon and address changes'
+    . (Join-Path $project 'deploy\windows\Open-A4-Report.ps1')
+    $configuration = Get-Content (Join-Path $counterProfile 'report-launcher.json') -Raw | ConvertFrom-Json
+    $id = 'a' * 64; $key = 'b' * 64
+    $request = 'madina-report://print/?origin=' + [Uri]::EscapeDataString('https://192.168.50.2:8443') + '&job=' + $id + '&key=' + $key
+    $launch = Get-MadinaReportLaunch $request $configuration
+    if ($launch.FilePath -ne $edge -or $launch.ArgumentList -match 'kiosk-printing' -or $launch.ArgumentList -notmatch '/print/report#') { throw 'A4 handoff does not use the normal dialog profile.' }
+    foreach ($bad in @($request.Replace('192.168.50.2','evil.example'),$request.Replace($id,'bad'),$request + '&unexpected=1',$request.Replace('madina-report:','powershell:'))) {
+        $rejected = $false
+        try { Get-MadinaReportLaunch $bad $configuration | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw 'The report launcher accepted an invalid or untrusted request.' }
+    }
+    if (-not (Test-Path 'HKCU:\Software\Classes\madina-report\shell\open\command')) { throw 'A4 report protocol is not registered.' }
+    $rules = (Get-ItemProperty $legacyPolicy).AutoLaunchProtocolsFromOrigins | ConvertFrom-Json
+    if (@($rules | Where-Object { $_.protocol -eq 'company-tool' }).Count -ne 1 -or @($rules | Where-Object { $_.protocol -eq 'madina-report' }).Count -ne 1) { throw 'Printing setup replaced or duplicated protocol rules.' }
+    if (-not ($rules | Where-Object { $_.protocol -eq 'madina-report' -and $_.allowed_origins -contains 'https://192.168.50.2:8443' })) { throw 'A4 launching is not scoped to the configured server.' }
+    Write-Host 'PASS existing browser, unchanged silent thermal mode, one-click A4 dialog handoff, strict launcher origin/ID validation and scoped protocol registration'
 } finally {
     if (Test-Path $counterProfile) { Remove-Item $counterProfile -Recurse -Force }
+    Remove-Item 'HKCU:\Software\Classes\madina-report' -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($policy in @('HKCU:\Software\Policies\Google\Chrome','HKCU:\Software\Policies\Microsoft\Edge')) { Remove-ItemProperty $policy -Name AutoLaunchProtocolsFromOrigins -ErrorAction SilentlyContinue }
     foreach ($name in @('Madina Express Counter.lnk','Madina Express Reports.lnk')) {
         $path = Join-Path ([Environment]::GetFolderPath('Desktop')) $name
         if (Test-Path $path) { Remove-Item $path -Force }

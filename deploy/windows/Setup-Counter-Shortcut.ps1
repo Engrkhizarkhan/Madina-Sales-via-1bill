@@ -36,7 +36,7 @@ if ($progId -like 'MSEdge*' -and (-not $browser -or -not (Test-Path $browser))) 
 $name = if ($browser) { [IO.Path]::GetFileName($browser).ToLowerInvariant() } else { '' }
 $reportsBrowser = "$env:WINDIR\System32\cmd.exe"
 $reportsArguments = "/c start `"`" `"$Origin/manage?view=reports`""
-$url = "$Origin/manage?counterPrint=silent"
+$url = "$Origin/manage?counterPrint=silent&a4Bridge=1"
 if ($name -in @('chrome.exe','msedge.exe')) {
     $profile = Join-Path $directory $(if ($name -eq 'chrome.exe') { 'CounterChrome' } else { 'CounterEdge' })
     $running = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like ('*--user-data-dir=*' + $profile + '*') }
@@ -82,7 +82,9 @@ if ($name -in @('chrome.exe','msedge.exe')) {
         'user_pref("print.always_print_silent", true);',
         'user_pref("print.show_print_progress", false);',
         'user_pref("security.enterprise_roots.enabled", true);',
-        'user_pref("security.osclientcerts.autoload", true);'
+        'user_pref("security.osclientcerts.autoload", true);',
+        'user_pref("network.protocol-handler.external.madina-report", true);',
+        'user_pref("network.protocol-handler.warn-external.madina-report", false);'
     )
     foreach ($position in @('headerleft','headercenter','headerright','footerleft','footercenter','footerright')) { $settings += ('user_pref("print.print_' + $position + '", "");') }
     foreach ($side in @('top','bottom','left','right')) { $settings += ('user_pref("print.print_margin_' + $side + '", "0");') }
@@ -90,7 +92,9 @@ if ($name -in @('chrome.exe','msedge.exe')) {
     $arguments = "-no-remote -profile `"$profile`" `"$url`""
     $reportsProfile = Join-Path $directory 'ReportsFirefox'
     New-Item -ItemType Directory -Force $reportsProfile | Out-Null
-    $reportSettings = @('user_pref("print.always_print_silent", false);','user_pref("security.enterprise_roots.enabled", true);','user_pref("security.osclientcerts.autoload", true);')
+    $reportSettings = @('user_pref("print.always_print_silent", false);','user_pref("security.enterprise_roots.enabled", true);','user_pref("security.osclientcerts.autoload", true);',
+        'user_pref("network.protocol-handler.external.madina-report", true);',
+        'user_pref("network.protocol-handler.warn-external.madina-report", false);')
     foreach ($position in @('headerleft','headercenter','headerright','footerleft','footercenter','footerright')) { $reportSettings += ('user_pref("print.print_' + $position + '", "");') }
     $reportSettings | Set-Content (Join-Path $reportsProfile 'user.js') -Encoding ASCII
     $reportsBrowser = $browser
@@ -100,6 +104,48 @@ if ($name -in @('chrome.exe','msedge.exe')) {
     $browser = "$env:WINDIR\System32\cmd.exe"
     $arguments = "/c start `"`" `"$Origin/manage`""
     Write-Warning 'This default browser has no supported silent-print mode. It will use its normal print dialog. Edge, Chrome and Firefox are supported.'
+}
+
+# One report click launches only the A4 dialog profile; thermal Counter flags
+# and the Windows default thermal printer remain as configured above.
+if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
+    $reportHelper = Join-Path $PSScriptRoot 'Open-A4-Report.ps1'
+    if ($reportHelper -ne (Join-Path $directory 'Open-A4-Report.ps1')) { Copy-Item $reportHelper (Join-Path $directory 'Open-A4-Report.ps1') -Force }
+    @{origin=$Origin;browser=$browser;profile=$reportsProfile} | ConvertTo-Json | Set-Content (Join-Path $directory 'report-launcher.json') -Encoding UTF8
+    $protocol = 'HKCU:\Software\Classes\madina-report'
+    New-Item -Path ($protocol + '\shell\open\command') -Force | Out-Null
+    Set-Item -Path $protocol -Value 'URL:Madina Express A4 printing'
+    New-ItemProperty -Path $protocol -Name 'URL Protocol' -Value '' -Force | Out-Null
+    $powershell = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $handler = Join-Path $directory 'Open-A4-Report.ps1'
+    Set-Item -Path ($protocol + '\shell\open\command') -Value ('"' + $powershell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $handler + '" "%1"')
+    foreach ($policy in @('HKCU:\Software\Policies\Google\Chrome','HKCU:\Software\Policies\Microsoft\Edge')) {
+        New-Item -Path $policy -Force | Out-Null
+        $saved = (Get-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -ErrorAction SilentlyContinue).AutoLaunchProtocolsFromOrigins
+        $rules = @()
+        if ($saved) { foreach ($rule in ($saved | ConvertFrom-Json)) { if ($rule.protocol -ne 'madina-report') { $rules += $rule } } }
+        $rules += @{protocol='madina-report';allowed_origins=@($Origin,'https://staff.madinaexpress.duckdns.org')}
+        New-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -PropertyType String -Value (ConvertTo-Json -InputObject $rules -Depth 8 -Compress) -Force | Out-Null
+        $identities = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -match '^CN=Madina Express Terminal [1-9][0-9]?$' -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.NotBefore -le (Get-Date) -and $_.NotAfter -gt (Get-Date) })
+        if ($identities.Count -eq 1) {
+            $selection = $policy + '\AutoSelectCertificateForUrls'
+            New-Item -Path $selection -Force | Out-Null
+            $number = 9000
+            foreach ($server in @($Origin,'https://staff.madinaexpress.duckdns.org')) {
+                $rule = @{pattern=$server;filter=@{ISSUER=@{CN='Madina Express Local Terminal CA'};SUBJECT=@{CN=$identities[0].GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false)}}}
+                while ($true) {
+                    $existing = (Get-ItemProperty -Path $selection -Name ([string]$number) -ErrorAction SilentlyContinue).([string]$number)
+                    if (-not $existing) { break }
+                    try { $savedRule = $existing | ConvertFrom-Json } catch { $savedRule = $null }
+                    if ($savedRule.filter.ISSUER.CN -eq 'Madina Express Local Terminal CA' -and $savedRule.filter.SUBJECT.CN -match '^Madina Express Terminal [1-9][0-9]?$') { break }
+                    $number++
+                }
+                New-ItemProperty -Path $selection -Name ([string]$number) -PropertyType String -Value ($rule | ConvertTo-Json -Depth 8 -Compress) -Force | Out-Null
+                $number++
+            }
+        }
+
+    }
 }
 
 Add-Type -AssemblyName System.Drawing
