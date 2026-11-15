@@ -39,7 +39,7 @@ try {
     $request = 'madina-report://print/?origin=' + [Uri]::EscapeDataString('https://192.168.50.2:8443') + '&job=' + $id + '&key=' + $key
     $launch = Get-MadinaReportLaunch $request $configuration
     if ($launch.FilePath -ne $edge -or $launch.ArgumentList -match 'kiosk-printing' -or $launch.ArgumentList -notmatch '/print/report#') { throw 'A4 handoff does not use the normal dialog profile.' }
-    foreach ($bad in @($request.Replace('192.168.50.2','evil.example'),$request.Replace($id,'bad'),$request + '&unexpected=1',$request.Replace('madina-report:','powershell:'))) {
+    foreach ($bad in @($request.Replace('192.168.50.2','evil.example'),$request.Replace($id,'bad'),($request + '&unexpected=1'),$request.Replace('madina-report:','powershell:'))) {
         $rejected = $false
         try { Get-MadinaReportLaunch $bad $configuration | Out-Null } catch { $rejected = $true }
         if (-not $rejected) { throw 'The report launcher accepted an invalid or untrusted request.' }
@@ -92,8 +92,21 @@ try {
         }
         if (-not ($remaining | Where-Object { $_.Thumbprint -eq $installed.Thumbprint }).HasPrivateKey) { throw 'The current terminal lost its private key.' }
     } finally { $store.Close() }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $fingerprint = [BitConverter]::ToString($sha.ComputeHash($installed.RawData)).Replace('-','').ToLowerInvariant() } finally { $sha.Dispose() }
+    & (Join-Path $project 'deploy\windows\Setup-Counter-Shortcut.ps1') -Origin 'https://192.168.50.2:8443' -BrowserPath $edge -TerminalFingerprint $fingerprint
+    $selection = Get-ItemProperty 'HKCU:\Software\Policies\Microsoft\Edge\AutoSelectCertificateForUrls'
+    $rule = $selection.'9000' | ConvertFrom-Json
+    if ($rule.filter.SUBJECT.CN -ne 'Madina Express Terminal 2' -or $rule.filter.ISSUER.CN -ne 'Madina Express Local Terminal CA') { throw 'A4 profile may prompt for or select the wrong terminal identity.' }
+    if (-not (Test-Path ('Cert:\CurrentUser\My\' + $installed.Thumbprint))) { throw 'Updating printing shortcuts removed the active terminal certificate.' }
     Write-Host 'PASS PC 2 enrollment removes old local PC 1 and duplicate PC 2 certificates while preserving active and unrelated keys'
 } finally {
+    if (Test-Path $counterProfile) { Remove-Item $counterProfile -Recurse -Force }
+    Remove-Item 'HKCU:\Software\Classes\madina-report' -Recurse -Force -ErrorAction SilentlyContinue
+    foreach ($policy in @('HKCU:\Software\Policies\Google\Chrome','HKCU:\Software\Policies\Microsoft\Edge')) {
+        Remove-ItemProperty $policy -Name AutoLaunchProtocolsFromOrigins -ErrorAction SilentlyContinue
+        Remove-Item ($policy + '\AutoSelectCertificateForUrls') -Recurse -Force -ErrorAction SilentlyContinue
+    }
     foreach ($certificate in $fixtureCertificates) {
         $path = 'Cert:\CurrentUser\My\' + $certificate.Thumbprint
         if (Test-Path $path) { Remove-Item -LiteralPath $path -DeleteKey -Force }

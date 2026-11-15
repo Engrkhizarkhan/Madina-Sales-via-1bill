@@ -138,11 +138,12 @@ terminalEnrollmentRouter.post("/enroll", route(async (req, res) => {
 export const terminalAdminRouter = Router();
 terminalAdminRouter.get("/counter-launcher", route(async (_req,res) => {
   const origin = config.terminal.local ? config.terminal.localOrigin : "https://staff.madinaexpress.duckdns.org";
+  const device=req.verifiedTerminal?.match(/^terminal-[1-9][0-9]?:([a-f0-9]{64})$/);
   const archive = zipSync({
     "Setup-Counter-Shortcut.ps1":bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.ps1"))),
     "Setup-Counter-Shortcut.cmd":bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.cmd"))),
     "Open-A4-Report.ps1":bytes(await readFile(resolve("deploy/windows/Open-A4-Report.ps1"))),
-    "setup.json":bytes(JSON.stringify({localOrigin:origin})),
+    "setup.json":bytes(JSON.stringify({localOrigin:origin,terminalFingerprint:device?.[1]||null})),
   });
   res.type("application/zip").attachment("Madina-Express-Counter-Shortcuts.zip").send(Buffer.from(archive));
 }));

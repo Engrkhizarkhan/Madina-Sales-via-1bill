@@ -90,7 +90,9 @@ foreach ($previous in $oldCertificates) {
     else { Remove-Item -LiteralPath $previous.PSPath -DeleteKey -Force }
 }
 
-& (Join-Path $PSScriptRoot 'Setup-Counter-Shortcut.ps1') -Origin $setup.localOrigin
+$hash = [Security.Cryptography.SHA256]::Create()
+try { $fingerprint = [BitConverter]::ToString($hash.ComputeHash($installed.RawData)).Replace('-','').ToLowerInvariant() } finally { $hash.Dispose() }
+& (Join-Path $PSScriptRoot 'Setup-Counter-Shortcut.ps1') -Origin $setup.localOrigin -TerminalFingerprint $fingerprint
 Write-Host 'Terminal enrollment is complete. Open Madina Express Counter from the desktop.'
 Write-Host 'Use the enrolled Windows profile. Select its terminal certificate when the browser asks.'
 Write-Host 'Use the Madina Express Reports desktop shortcut for A4 printer selection.'

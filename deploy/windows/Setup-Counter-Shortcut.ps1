@@ -1,7 +1,7 @@
 # Uses the existing default browser. It never downloads or installs a browser.
-param([string]$Origin,[string]$BrowserPath)
+param([string]$Origin,[string]$BrowserPath,[string]$TerminalFingerprint)
 $ErrorActionPreference = 'Stop'
-if (-not $Origin) { $Origin = (Get-Content (Join-Path $PSScriptRoot 'setup.json') -Raw | ConvertFrom-Json).localOrigin }
+if (Test-Path (Join-Path $PSScriptRoot 'setup.json')) { $setup = Get-Content (Join-Path $PSScriptRoot 'setup.json') -Raw | ConvertFrom-Json; if (-not $Origin) { $Origin = $setup.localOrigin }; if (-not $TerminalFingerprint) { $TerminalFingerprint = $setup.terminalFingerprint } }
 $uri = [Uri]$Origin
 if ($uri.Scheme -ne 'https' -or $uri.AbsolutePath -ne '/' -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw 'Use the HTTPS server origin, without a path.' }
 $Origin = $Origin.TrimEnd('/')
@@ -109,6 +109,21 @@ if ($name -in @('chrome.exe','msedge.exe')) {
 # One report click launches only the A4 dialog profile; thermal Counter flags
 # and the Windows default thermal printer remain as configured above.
 if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
+    # A setup downloaded on this enrolled PC can identify its current certificate
+    # precisely. Drop stale local entries only after that fingerprint is found.
+    if ($TerminalFingerprint -cmatch '^[a-f0-9]{64}$') {
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            $current = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and ([BitConverter]::ToString($sha.ComputeHash($_.RawData)).Replace('-','').ToLowerInvariant() -ceq $TerminalFingerprint) })
+        } finally { $sha.Dispose() }
+        if ($current.Count -eq 1 -and $current[0].Issuer -eq 'CN=Madina Express Local Terminal CA' -and $current[0].Subject -match '^CN=Madina Express Terminal [1-9][0-9]?$') {
+            $obsolete = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.Subject -match '^CN=Madina Express Terminal [1-9][0-9]?$' -and $_.Thumbprint -ne $current[0].Thumbprint })
+            foreach ($old in $obsolete) {
+                if ($old.GetPublicKeyString() -eq $current[0].GetPublicKeyString()) { Remove-Item -LiteralPath $old.PSPath -Force }
+                else { Remove-Item -LiteralPath $old.PSPath -DeleteKey -Force }
+            }
+        }
+    }
     $reportHelper = Join-Path $PSScriptRoot 'Open-A4-Report.ps1'
     if ($reportHelper -ne (Join-Path $directory 'Open-A4-Report.ps1')) { Copy-Item $reportHelper (Join-Path $directory 'Open-A4-Report.ps1') -Force }
     @{origin=$Origin;browser=$browser;profile=$reportsProfile} | ConvertTo-Json | Set-Content (Join-Path $directory 'report-launcher.json') -Encoding UTF8
