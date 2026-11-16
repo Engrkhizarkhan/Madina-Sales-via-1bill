@@ -1,3 +1,4 @@
+import {saleIdentity} from './sale-identity.js';
 import {sameBookingCustomer} from '../../shared/booking-workspace.mjs';
 import {seatFare,routeDestinations,commissionPolicy} from '../../shared/service-pricing.mjs';
 import {recordAuditedChange,recordLiveEntries} from './change-log.js';
@@ -127,6 +128,7 @@ export async function createBooking(data, user, isPublic, req) {
     let discountCents = Math.round(batchDiscount * 100);
     let fareCents=fares.reduce((sum,fare)=>sum+Math.round(fare*100),0);
     const createdBookings = [];
+    const seller = reserved ? null : saleIdentity(user,req);
     // One transaction for the whole selection: a conflict rolls back every seat.
     for (const [index, seat] of seats.entries()) {
       const fare=fares[index];
@@ -145,15 +147,15 @@ export async function createBooking(data, user, isPublic, req) {
          (id, ticket_no, source, passenger, phone, cnic, gender, route_label, destination, boarding_point,
           bus_registration, service, fare, discount, total, paid, balance, payment_method, payment_reference,
           payment_status, booking_status, travel_date, travel_time, driver, attendant, trip_id, trip_run_id,
-          expires_at, seat_printed_at, issued_by, terminal, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          expires_at, seat_printed_at, issued_by, terminal, created_by, sold_by_user_id, sold_terminal_slot, sold_from)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [id, ticketNo, isPublic ? "Public web" : "Counter", details.passenger, details.phone,
           details.cnic, details.gender,
           `${route.from} → ${route.to}`, destination, String(data.boardingPoint || run.snapshot.route.boarding).trim(),
           (run.snapshot.bus.isTemplate ? "To be assigned" : run.snapshot.bus.registration), run.snapshot.bus.service, fare, discount, total, paid, reserved ? total : 0, paymentMethod, paymentReference,
           reserved ? "Unpaid" : "Paid", reserved ? "Reserved" : "Confirmed", travelDate, run.snapshot.departure, run.driver,
           run.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Public website",
-          "Madina Terminal, Peshawar", user?.id || null]);
+          "Madina Terminal, Peshawar", user?.id || null, seller?.userId??null, seller?.terminalSlot??null, seller?.origin??null]);
       await query(connection, "INSERT INTO booking_seats (booking_id, trip_run_id, seat_number, active) VALUES (?, ?, ?, 1)", [id, tripRunId, seat]);
       if (!reserved) {
         await query(connection,
@@ -286,6 +288,7 @@ export async function confirmReservations(anchor, values, data, user, req) {
     staffCollectionPolicy(await getPolicies(connection),user,baseFares,fares,batchDiscount);
     let discountCents = Math.round(batchDiscount*100), remainingFare = Math.round(fareTotal*100);
     const bookings = [];
+    const seller = saleIdentity(user,req);
     for (const row of rows.sort((a,b)=>seats.find(s=>s.booking_id===a.id).seat_number-seats.find(s=>s.booking_id===b.id).seat_number)) {
       const indices = seats.flatMap((seat,index)=>seat.booking_id===row.id?[index]:[]);
       const cents = indices.reduce((sum,index)=>sum+Math.round(fares[index]*100),0);
@@ -296,8 +299,8 @@ export async function confirmReservations(anchor, values, data, user, req) {
       const before = await fetchBooking(row.id,connection);
       const ticketNo = await nextTicketNumber(connection);
       await query(connection,
-        "UPDATE bookings SET reservation_no=COALESCE(reservation_no,ticket_no),ticket_no=?,passenger=?,phone=?,cnic=?,gender=?,destination=?,boarding_point=?,fare=?,discount=?,total=?,paid=?,balance=0,payment_method=?,payment_reference=?,payment_status='Paid',booking_status='Confirmed',expires_at=NULL,seat_printed_at=NOW(),issued_by=? WHERE id=?",
-        [ticketNo,details.passenger,details.phone,details.cnic,details.gender,destination,String(data.boardingPoint||row.boarding_point||route.boarding),fare,discount,total,total,method,reference,user.name,row.id]);
+        "UPDATE bookings SET reservation_no=COALESCE(reservation_no,ticket_no),ticket_no=?,passenger=?,phone=?,cnic=?,gender=?,destination=?,boarding_point=?,fare=?,discount=?,total=?,paid=?,balance=0,payment_method=?,payment_reference=?,payment_status='Paid',booking_status='Confirmed',expires_at=NULL,seat_printed_at=NOW(),issued_by=?,sold_by_user_id=?,sold_terminal_slot=?,sold_from=? WHERE id=?",
+        [ticketNo,details.passenger,details.phone,details.cnic,details.gender,destination,String(data.boardingPoint||row.boarding_point||route.boarding),fare,discount,total,total,method,reference,seller.name,seller.userId,seller.terminalSlot,seller.origin,row.id]);
       await query(connection,"INSERT INTO financial_transactions (booking_id,transaction_type,amount,payment_method,reference,description,created_by) VALUES (?,'sale',?,?,?,?,?)",
         [row.id,total,method,reference,`Confirmed reservation ${ticketNo}`,user.id]);
       const after = await fetchBooking(row.id,connection);

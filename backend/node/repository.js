@@ -109,6 +109,8 @@ function mapBooking(row, seats, refunds) {
     driver: row.driver, attendant: row.attendant, createdAt: isoDateTime(row.created_at),
     expiresAt: isoDateTime(row.expires_at), tripId: row.trip_id, tripRunId: row.trip_run_id,
     seatPrintedAt: isoDateTime(row.seat_printed_at), issuedBy: row.issued_by, terminal: row.terminal,
+    soldByUserId: row.sold_by_user_id == null ? null : Number(row.sold_by_user_id),
+    soldTerminalSlot: row.sold_terminal_slot == null ? null : Number(row.sold_terminal_slot), soldFrom: row.sold_from,
     refunds: refunds.map((refund) => ({
       id: refund.id, amount: Number(refund.amount), method: refund.method, reason: refund.reason,
       reference: refund.reference, notes: refund.notes, processedAt: isoDateTime(refund.processed_at),

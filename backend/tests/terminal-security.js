@@ -19,6 +19,7 @@ const { createTerminalCertificates, renewTerminalServerCertificate, signTerminal
 const { terminalReady } = await import('../terminal/runtime.js');
 const { pool } = await import('../node/db.js');
 const { terminalDevice, sessionHash } = await import('../node/access.js');
+const {saleIdentity} = await import('../node/sale-identity.js');
 let approvedFingerprint;
 const originalExecute = pool.execute.bind(pool);
 pool.execute = async (_sql, parameters) => [[...(parameters[0] === approvedFingerprint ? [{ slot: 2 }] : [])]];
@@ -73,6 +74,18 @@ test('certificate, relay and staff device boundaries', async t => {
       assert.equal(await guard(direct), undefined); assert.equal(await guard(relayed), undefined);
       assert.equal(terminalDevice(direct), 'terminal-2:' + client.fingerprint);
       assert.equal(terminalDevice(relayed), terminalDevice(direct));
+      assert.deepEqual(saleIdentity({id:42,name:'Full Counter Name'},direct),{userId:42,name:'Full Counter Name',terminalSlot:2,origin:'Terminal 2'});
+      assert.equal(saleIdentity({id:42,name:'Full Counter Name'},relayed).terminalSlot,2);
+    });
+    await t.test('sale origin ignores forged terminal headers and distinguishes main PC from remote admin',async()=>{
+      const direct=request({encrypted:true,header:encodeURIComponent(client.pem)});
+      await guard(direct);
+      assert.equal(saleIdentity({id:1,name:'Main Administrator'},direct).origin,'Main PC');
+      assert.equal(saleIdentity({id:1,name:'Main Administrator'},direct).terminalSlot,null);
+      const remote=request({relay:process.env.TERMINAL_RELAY_KEY});
+      await guard(remote);
+      assert.equal(saleIdentity({id:1,name:'Main Administrator'},remote).origin,'Remote admin');
+      assert.equal(saleIdentity({id:1,name:'Main Administrator'},remote).terminalSlot,null);
     });
     await t.test('staff sessions are bound to their certificate fingerprint', () => {
       assert.notEqual(sessionHash('cookie', 'counter', 'terminal-2:old'), sessionHash('cookie', 'counter', 'terminal-2:new'));

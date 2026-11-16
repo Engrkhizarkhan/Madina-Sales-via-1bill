@@ -197,3 +197,4 @@
 .operations-document.document-cnic.document-dense .document-footer { font-size:8px;margin-top:6px;padding-top:3px; }
 .operations-document.document-cnic.document-dense .document-meta { grid-template-columns:repeat(6,minmax(0,1fr)); }
 .operations-document.document-cnic.document-dense .document-empty { font-size:9px;margin:4px 0; }
+.thermal-ticket .ticket-sale-attribution { margin:5px 0; font-size:var(--receipt-font-size,11px); line-height:1.3; overflow-wrap:anywhere; white-space:normal; }

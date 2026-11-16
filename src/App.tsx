@@ -225,6 +225,9 @@ type Booking = {
   tripRunId?: string;
   seatPrintedAt?: string;
   issuedBy?: string;
+  soldByUserId?: number | null;
+  soldTerminalSlot?: number | null;
+  soldFrom?: string | null;
   terminal?: string;
   refunds?: RefundTransaction[];
 };
@@ -561,6 +564,9 @@ void crewRecords;
 
 const money = (value: number) =>
   `${value < 0 ? "− " : ""}PKR ${Math.abs(value).toLocaleString("en-PK")}`;
+const wasSold = (booking:Booking) => Boolean(booking.soldByUserId || booking.seatPrintedAt || booking.paid > 0);
+const sellerName = (booking:Booking) => wasSold(booking) ? booking.issuedBy || "Seller not recorded" : "Not sold";
+const saleLocation = (booking:Booking) => wasSold(booking) ? booking.soldFrom || (booking.soldTerminalSlot ? `Terminal ${booking.soldTerminalSlot}` : "PC not recorded") : "";
 const routeLabel = (route: RouteRecord) => `${route.from} → ${route.to}`;
 const tripRunKey = (
   trip: TripRecord,
@@ -2293,14 +2299,15 @@ function DashboardView({bookings,trips,fleet,routes,onNavigate,userName}:{bookin
 function PassengersView({bookings,onManage}:{bookings:Booking[];onManage?: (id:string,date:string)=>void}) {
   const [range,setRange]=useState<DateRange>({from:"",to:""});
   const [search,setSearch]=useState(""),[status,setStatus]=useState("All");
-  const visible=bookings.filter(b=>inDateRange(b.date,range)&&(status==="All"||b.bookingStatus===status)&&`${b.passenger} ${b.phone} ${b.cnic} ${b.ticketNo} ${b.route} ${b.bus}`.toLowerCase().includes(search.toLowerCase()));
-  return <div className="admin-view"><ViewHeading eyebrow="PASSENGER DIRECTORY" title="Passengers" text="Contact details and journey history, including reservations, cancelled tickets and refunds." action={<button className="secondary-button" onClick={()=>downloadCsv("madina-passengers.csv",[["Passenger","Mobile","CNIC / Passport","Gender","Ticket","Travel date","Time","Route","Boarding","Bus","Type","Seats","Source","Status","Paid","Refunded","Balance"],...visible.map(b=>[b.passenger,b.phone,b.cnic,b.gender,b.ticketNo,b.date,b.time,b.route,b.boardingPoint,b.bus,b.service,seatList(b.seats,b.service),b.source,b.bookingStatus,b.paid,refundedTotal(b),["Reserved","Confirmed"].includes(b.bookingStatus)?b.balance:0])])}><FileBarChart size={16}/> Export filtered records</button>}/>
-    <section className="surface data-surface"><DateRangeFilter value={range} onChange={setRange}/><DataToolbar tabs={["All","Confirmed","Reserved","Cancelled","Refunded"]} active={status} onTab={setStatus} search={search} onSearch={setSearch} placeholder="Name, phone, CNIC, ticket or route"/>
-      <p className="directory-count">{visible.length} records · One row per ticket or reservation</p><div className="table-wrap"><table><thead><tr><th>Passenger</th><th>Contact / ID</th><th>Journey</th><th>Ticket / seat</th><th>Payment</th>{onManage&&<th>Action</th>}</tr></thead><tbody>{visible.map(b=><tr key={b.id}>
+  const visible=bookings.filter(b=>inDateRange(b.date,range)&&(status==="All"||b.bookingStatus===status)&&`${b.passenger} ${b.phone} ${b.cnic} ${b.ticketNo} ${b.route} ${b.bus} ${sellerName(b)} ${saleLocation(b)}`.toLowerCase().includes(search.toLowerCase()));
+  return <div className="admin-view"><ViewHeading eyebrow="PASSENGER DIRECTORY" title="Passengers" text="Contact details and journey history, including reservations, cancelled tickets and refunds." action={<button className="secondary-button" onClick={()=>downloadCsv("madina-passengers.csv",[["Passenger","Mobile","CNIC / Passport","Gender","Ticket","Travel date","Time","Route","Boarding","Bus","Type","Seats","Source","Status","Paid","Refunded","Balance","Sold by","Sale terminal"],...visible.map(b=>[b.passenger,b.phone,b.cnic,b.gender,b.ticketNo,b.date,b.time,b.route,b.boardingPoint,b.bus,b.service,seatList(b.seats,b.service),b.source,b.bookingStatus,b.paid,refundedTotal(b),["Reserved","Confirmed"].includes(b.bookingStatus)?b.balance:0,sellerName(b),saleLocation(b)])])}><FileBarChart size={16}/> Export filtered records</button>}/>
+    <section className="surface data-surface"><DateRangeFilter value={range} onChange={setRange}/><DataToolbar tabs={["All","Confirmed","Reserved","Cancelled","Refunded"]} active={status} onTab={setStatus} search={search} onSearch={setSearch} placeholder="Name, phone, ticket, seller or terminal"/>
+      <p className="directory-count">{visible.length} records · One row per ticket or reservation</p><div className="table-wrap"><table><thead><tr><th>Passenger</th><th>Contact / ID</th><th>Journey</th><th>Ticket / seat</th><th>Payment</th><th>Sold by</th>{onManage&&<th>Action</th>}</tr></thead><tbody>{visible.map(b=><tr key={b.id}>
         <td><strong>{b.passenger}</strong><small>{b.gender}</small></td><td><strong>{b.phone}</strong><small>{b.cnic}</small></td>
         <td><strong>{b.route}</strong><small>{b.date} · {b.time} · {b.bus}</small><small>{b.service} · {b.boardingPoint}</small></td>
         <td><strong>{b.ticketNo}</strong><small>Seat {seatList(b.seats,b.service)} · {b.source}</small><span className="status-pill">{b.bookingStatus}</span></td>
         <td><strong>{money(netCollected(b))} net</strong><small>{b.paymentMethod} · {b.paymentStatus}</small><small>Refunded {money(refundedTotal(b))} · Due {money(["Reserved","Confirmed"].includes(b.bookingStatus)?b.balance:0)}</small></td>
+        <td><strong>{sellerName(b)}</strong><small>{saleLocation(b)}</small></td>
         {onManage&&<td>{b.tripId&&<button className="text-button" onClick={()=>onManage(b.tripId!,b.date)}>Open departure</button>}</td>}
       </tr>)}</tbody></table>{!visible.length&&<EmptyState title="No matching passengers" text="Change the dates or search to find a passenger."/>}</div>
     </section></div>;
@@ -2486,7 +2493,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
       <div className="counter-passenger-column"><section className="surface counter-passenger">
         {focused ? <div className="seat-inspector">
           <div className="panel-heading"><h2>Seat {seatList(focused.seats,focused.service)}</h2><button type="button" className="secondary-button" onClick={()=>{setFocusedId(null);setGroupSelection(null);setAction(null);}}>New passenger</button></div>
-          <span className="status-pill">{focused.bookingStatus} · {focused.source} · {focused.gender}</span><h3>{focused.passenger}</h3><p>{focused.phone} · {focused.cnic}</p><p>{focused.ticketNo}</p>
+          <span className="status-pill">{focused.bookingStatus} · {focused.source} · {focused.gender}</span><h3>{focused.passenger}</h3><p>{focused.phone} · {focused.cnic}</p><p>{focused.ticketNo}</p>{wasSold(focused)&&<p>Sold by <strong>{sellerName(focused)}</strong> · {saleLocation(focused)}</p>}
           {customerBookings.length>1&&<div className="customer-seat-group">
             <strong>This customer · Seats {seatList(customerBookings.flatMap(booking=>booking.seats),bus.service)}</strong>
             {focused.bookingStatus==='Reserved'&&customerReservations.length>1&&<>
@@ -2537,7 +2544,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
       </section>
     </div>
     <VoucherEditor readOnly={readOnly} key={`voucher-${runId}-${bus.id}-${bus.registration}-${trip.departure}`} trip={trip} bus={bus} route={route} net={net} records={records} onSave={changes=>onCounterSave(trip.id,date,changes)} onReport={kind=>onReport(kind,trip.id,trip.runNumber,date)}/>
-    <section className="surface counter-history"><div className="panel-heading"><h2>Passenger & ticket history</h2><input aria-label="Find passenger or ticket" placeholder="Name, phone, ticket…" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="table-wrap"><table><thead><tr><th>Seat</th><th>Passenger</th><th>Status</th><th>Collected</th><th>Action</th></tr></thead><tbody>{records.filter(b=>`${b.passenger} ${b.phone} ${b.ticketNo}`.toLowerCase().includes(search.toLowerCase())).map(b=><tr key={b.id}><td>{seatList(b.seats,b.service)}</td><td><strong>{b.passenger}</strong><small>{b.ticketNo}</small></td><td><span className="status-pill">{b.bookingStatus}</span></td><td>{money(netCollected(b))}</td><td><button type="button" className="text-button" onClick={()=>{setFocusedId(b.id);setGroupSelection(null);document.querySelector(".counter-main")?.scrollIntoView({behavior:"smooth",block:"start"});}}>Manage</button></td></tr>)}</tbody></table></div></section>
+    <section className="surface counter-history"><div className="panel-heading"><h2>Passenger & ticket history</h2><input aria-label="Find passenger or ticket" placeholder="Name, phone, ticket or seller…" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="table-wrap"><table><thead><tr><th>Seat</th><th>Passenger</th><th>Status</th><th>Collected</th><th>Sold by</th><th>Action</th></tr></thead><tbody>{records.filter(b=>`${b.passenger} ${b.phone} ${b.ticketNo} ${sellerName(b)} ${saleLocation(b)}`.toLowerCase().includes(search.toLowerCase())).map(b=><tr key={b.id}><td>{seatList(b.seats,b.service)}</td><td><strong>{b.passenger}</strong><small>{b.ticketNo}</small></td><td><span className="status-pill">{b.bookingStatus}</span></td><td>{money(netCollected(b))}</td><td><strong>{sellerName(b)}</strong><small>{saleLocation(b)}</small></td><td><button type="button" className="text-button" onClick={()=>{setFocusedId(b.id);setGroupSelection(null);document.querySelector(".counter-main")?.scrollIntoView({behavior:"smooth",block:"start"});}}>Manage</button></td></tr>)}</tbody></table></div></section>
     {paymentGroup&&<CollectPaymentModal reservations={paymentGroup} booking={{...paymentGroup[0],seats:paymentGroup.flatMap(booking=>booking.seats).sort((a,b)=>a-b),balance:paymentGroup.reduce((sum,booking)=>sum+booking.balance,0)}} route={route} bus={bus} paymentMode={paymentMode} onClose={()=>setPaymentGroup(null)} onConfirm={async(method,reference,details)=>{await onConfirmReservations(paymentGroup.map(booking=>booking.id),method,reference,details);setPaymentGroup(null);setGroupSelection(null);}}/>}
     {reservationsToCancel&&<ConfirmationDialog title={`Remove ${reservationsToCancel.length} reservation${reservationsToCancel.length===1?'':'s'}?`} confirmLabel="Remove reservations" onClose={()=>setReservationsToCancel(null)} onConfirm={async()=>{await onCancelReservations(reservationsToCancel.map(booking=>booking.id));setFocusedId(null);setGroupSelection(null);}}><p>{reservationsToCancel[0].passenger} · Seats {seatList(reservationsToCancel.flatMap(booking=>booking.seats),bus.service)}. These seats will become available again.</p></ConfirmationDialog>}
     {focused&&action==="refund"&&<RefundModal booking={focused} onClose={()=>setAction(null)} onRefund={onRefund}/>}
@@ -2965,7 +2972,7 @@ function BookingsView({
       inDateRange(b.date,range) && b.paid > 0 &&
       b.bookingStatus !== "Reserved" &&
       (filter === "All" || b.source === filter) &&
-      `${b.ticketNo} ${b.passenger} ${b.phone} ${b.cnic} ${b.route} ${(b.refunds ?? [])
+      `${b.ticketNo} ${b.passenger} ${b.phone} ${b.cnic} ${b.route} ${sellerName(b)} ${saleLocation(b)} ${(b.refunds ?? [])
         .map((refund) => `${presentationText(refund.reference)} ${refund.reason}`)
         .join(" ")}`
         .toLowerCase()
@@ -2998,6 +3005,8 @@ function BookingsView({
                   "Payment status",
                   "Date",
                   "Time",
+                  "Sold by",
+                  "Sale terminal",
                 ],
                 ...visible.map((booking) => [
                   booking.ticketNo,
@@ -3014,6 +3023,8 @@ function BookingsView({
                   booking.paymentStatus,
                   booking.date,
                   booking.time,
+                  sellerName(booking),
+                  saleLocation(booking),
                 ]),
               ])
             }
@@ -3030,7 +3041,7 @@ function BookingsView({
           onTab={(x) => setFilter(x as "All" | BookingSource)}
           search={search}
           onSearch={setSearch}
-          placeholder="Search ticket, passenger or CNIC"
+          placeholder="Ticket, passenger, seller or terminal"
         />
         <BookingTable
           bookings={visible}
@@ -4567,6 +4578,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
                     "Date",
                     "Time",
                     "Processed by",
+                    "Sale terminal",
                   ],
                   ...settled.map((booking) => [
                     "Sale",
@@ -4578,9 +4590,10 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
                     "",
                     booking.date,
                     booking.time,
-                    booking.issuedBy ?? "Online",
+                    sellerName(booking),
+                    saleLocation(booking),
                   ]),
-                  ...visibleExpenses.map(e=>["Expense","",e.description,e.paymentMethod,e.reference,-e.amount,e.category,e.date,"",e.createdBy]),
+                  ...visibleExpenses.map(e=>["Expense","",e.description,e.paymentMethod,e.reference,-e.amount,e.category,e.date,"",e.createdBy,""]),
                   ...refunds.map(({ booking, refund }) => [
                     "Refund",
                     booking.ticketNo,
@@ -4595,6 +4608,7 @@ function FinanceView({ bookings }: { bookings: Booking[] }) {
                       minute: "2-digit",
                     }),
                     refund.processedBy,
+                    "",
                   ]),
                 ])
               }
@@ -5629,6 +5643,7 @@ function BookingTable({
             <th>Journey</th>
             <th>Seats</th>
             <th>Channel</th>
+            {!compact&&<th>Sold by</th>}
             <th>Amount</th>
             <th>Status</th>
             {!compact && <th />}
@@ -5671,6 +5686,7 @@ function BookingTable({
                     {b.paymentReference && <span title={b.paymentReference}> · {shortPaymentReference(b.paymentReference)}</span>}
                   </small>
                 </td>
+                {!compact&&<td><strong>{sellerName(b)}</strong><small>{saleLocation(b)}</small></td>}
                 <td>
                   <strong>{money(b.paid || b.total)}</strong>
                   <small>
@@ -5745,7 +5761,7 @@ function BookingTable({
             ))
           ) : (
             <tr>
-              <td colSpan={compact ? 7 : 8}>
+              <td colSpan={compact ? 7 : 9}>
                 <EmptyState
                   title="No records found"
                   text="Try changing your search or filter."
@@ -6000,6 +6016,7 @@ function TicketSlips({booking,printedAt,layout:preview}:{booking:Booking;printed
         {refundedTotal(booking)>0&&<tr><th>Refunded</th><td>{money(refundedTotal(booking))}</td></tr>}
         <tr><th>Ticket No.</th><td className="ticket-identifier">{booking.ticketNo}</td></tr><tr><th>Bus No.</th><td>{booking.bus}</td></tr><tr><th>Printed</th><td>{ticketTime(printedAt)} · {ticketDate(dateInPakistan(printedAt))}</td></tr>
       </tbody></table>
+      {wasSold(booking)&&<p className="ticket-sale-attribution">Sold by <strong>{sellerName(booking)}</strong> · {saleLocation(booking)}</p>}
       {!ticket.canBoard&&<div className="thermal-payment-status"><strong>{ticket.status}</strong></div>}
       <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>{layout.urduTerms}</p></div>
       {layout.showWebsite&&layout.website&&<p className="ticket-booking-promo" style={{fontSize:layout.websiteSize,fontWeight:layout.websiteBold?700:400,textAlign:layout.websiteAlign}}>{layout.websiteLabel} <strong>{layout.website}</strong></p>}
@@ -6007,6 +6024,7 @@ function TicketSlips({booking,printedAt,layout:preview}:{booking:Booking;printed
     {ticket.canBoard && <article style={style} className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
       <header><strong>{layout.businessName}</strong><span>{layout.tokenTitle}</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
       <table className="token-table"><tbody><tr><th>Bus No.</th><th>Destination</th></tr><tr><td>{booking.bus}</td><td>{booking.destination}</td></tr><tr><th>Travel date</th><th>Departure</th></tr><tr><td>{ticketDate(booking.date)}</td><td className="token-time">{booking.time}</td></tr><tr><th>Ticket No.</th><th>Paid</th></tr><tr><td>{booking.ticketNo}</td><td>{money(netCollected(booking))}</td></tr></tbody></table>
+      {wasSold(booking)&&<p className="ticket-sale-attribution">Sold by <strong>{sellerName(booking)}</strong> · {saleLocation(booking)}</p>}
       <p className="ticket-urdu" lang="ur" dir="rtl">{layout.tokenNote}</p>
     </article>}
   </>;

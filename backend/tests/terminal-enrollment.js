@@ -19,12 +19,14 @@ Object.assign(process.env, {
 const { config } = await import('../node/config.js');
 if (!/test|qa/i.test(config.db.database)) throw new Error('Use an isolated test database.');
 const { pool } = await import('../node/db.js');
+const {pakistanDate} = await import('../node/helpers.js');
 const { createTerminalCertificates } = await import('../terminal/certificates.js');
 const { app } = await import('../node/app.js');
 const { startTerminalWeb } = await import('../terminal/web.js');
 let server;
 const userIds = [];
 const suffix = randomBytes(5).toString('hex');
+const saleFixture={route:'seller-route-'+suffix,bus:'seller-bus-'+suffix,trip:'seller-trip-'+suffix};
 const password = 'Terminal-QA!-' + suffix;
 let passed = 0;
 const check = (value, label) => { assert.ok(value, label); passed++; console.log('PASS', label); };
@@ -60,7 +62,7 @@ try {
   server = await startTerminalWeb(app);
   for (const role of ['admin', 'counter']) {
     const [user] = await pool.execute('INSERT INTO users (name, username, password_hash, role, force_password_change,is_owner,remote_allowed) VALUES (?, ?, ?, ?, 0,?,?)',
-      ['Enrollment QA', 'enroll-' + role + '-' + suffix, await bcrypt.hash(password, 10), role, role === 'admin' ? 1 : 0, role === 'admin' ? 1 : 0]);
+      [role==='counter'?'Counter Agent Full Name':'Main Admin Full Name', 'enroll-' + role + '-' + suffix, await bcrypt.hash(password, 10), role, role === 'admin' ? 1 : 0, role === 'admin' ? 1 : 0]);
     userIds.push(user.insertId);
   }
   const otpCounter = Buffer.alloc(8); otpCounter.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));
@@ -92,6 +94,37 @@ try {
   const login = await request('/auth/login', { method: 'POST', body: credentials, device });
   check(login.status === 200, 'staff signs in with the enrolled TLS device');
   check((await request('/auth/me', { cookie: login.cookie, device })).status === 200, 'approved staff session stays valid');
+  const date=pakistanDate(new Date(Date.now()+86400000));
+  await pool.execute("INSERT INTO routes(id,origin,destination,distance,duration,fare,boarding_point,status) VALUES (?,'Peshawar','Test destination','','',500,'Terminal','Active')",[saleFixture.route]);
+  await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,'Standard Plus',49,'Seller test',2026,'Ready','Not scheduled')",[saleFixture.bus,'SELLER-'+suffix]);
+  await pool.execute("INSERT INTO trips(id,route_id,bus_id,departure,arrival,driver,attendant,platform,status,service_days,active) VALUES (?,?,?,'23:00','23:59','','','','Scheduled',?,1)",[saleFixture.trip,saleFixture.route,saleFixture.bus,JSON.stringify(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])]);
+  const staff={cookie:login.cookie,csrf:login.payload.csrfToken,device};
+  const draft={tripId:saleFixture.trip,date,passenger:'Seller tracking passenger',phone:'03001234567',cnic:'17301-1234567-1',gender:'Male',paymentMethod:'Cash',seats:[1],issuedBy:'Forged name',soldByUserId:userIds[0],soldTerminalSlot:99,soldFrom:'Terminal 99'};
+  const sold=await request('/bookings',{...staff,method:'POST',body:draft,extraHeaders:{'X-Madina-Device':'terminal-99'}});
+  check(sold.status===201&&sold.payload.booking.issuedBy==='Counter Agent Full Name'&&sold.payload.booking.soldByUserId===userIds[1]&&sold.payload.booking.soldTerminalSlot===2&&sold.payload.booking.soldFrom==='Terminal 2','sale saves the authenticated full name and real TLS terminal, ignoring forged fields');
+  const held=await request('/bookings',{...admin,method:'POST',body:{...draft,seats:[2,3],bookingStatus:'Reserved'}});
+  check(held.status===201&&held.payload.bookings.every(b=>b.soldByUserId===null&&b.soldTerminalSlot===null&&b.soldFrom===null),'reservation creator is not recorded as the seller');
+  const ids=held.payload.bookings.map(b=>b.id);
+  const collected=await request(`/bookings/${ids[0]}/reservations/confirm`,{...staff,method:'POST',body:{...draft,ids}});
+  check(collected.status===200&&collected.payload.bookings.every(b=>b.issuedBy==='Counter Agent Full Name'&&b.soldByUserId===userIds[1]&&b.soldTerminalSlot===2),'group collection records the collector on every individual ticket');
+  const [creators]=await pool.query('SELECT created_by,sold_by_user_id FROM bookings WHERE id IN (?,?)',ids);
+  check(creators.every(b=>Number(b.created_by)===userIds[0]&&Number(b.sold_by_user_id)===userIds[1]),'reservation maker and actual payment collector remain independently traceable');
+  const edited=await request('/bookings/'+sold.payload.booking.id,{...staff,method:'PUT',body:{...sold.payload.booking,passenger:'Edited passenger',issuedBy:'Forged editor',soldByUserId:userIds[0],soldTerminalSlot:99,soldFrom:'Terminal 99'}});
+  check(edited.status===200&&edited.payload.booking.issuedBy==='Counter Agent Full Name'&&edited.payload.booking.soldTerminalSlot===2,'passenger editing cannot rewrite the seller or selling PC');
+  const refunded=await request('/bookings/'+sold.payload.booking.id+'/refunds',{...staff,method:'POST',body:{amount:500,method:'Cash',reason:'Passenger request'}});
+  check(refunded.status===201&&refunded.payload.booking.soldByUserId===userIds[1]&&refunded.payload.booking.soldTerminalSlot===2,'refund preserves the original selling account and terminal');
+  await pool.execute("UPDATE users SET name='Renamed counter account' WHERE id=?",[userIds[1]]);
+  const refreshed=await request('/admin/bootstrap',staff);
+  check(refreshed.payload.bookings.find(b=>b.id===ids[0]).issuedBy==='Counter Agent Full Name','reprint data retains the full name from the original sale after an account rename');
+  await pool.execute("UPDATE users SET name='Counter Agent Full Name' WHERE id=?",[userIds[1]]);
+  const mainSale=await request('/bookings',{...admin,method:'POST',body:{...draft,seats:[5]}});
+  check(mainSale.status===201&&mainSale.payload.booking.issuedBy==='Main Admin Full Name'&&mainSale.payload.booking.soldTerminalSlot===null&&mainSale.payload.booking.soldFrom==='Main PC','unenrolled local main-PC admin access does not invent a numbered terminal');
+  await pool.execute("UPDATE bookings SET sold_by_user_id=NULL,sold_terminal_slot=NULL,sold_from=NULL,issued_by='Original historical seller' WHERE id=?",[ids[0]]);
+  const migration=await readFile(new URL('../database/migrations/016_ticket_seller.sql',import.meta.url),'utf8');
+  const connection=await pool.getConnection();
+  try{for(const statement of migration.split(';').map(s=>s.trim()).filter(Boolean))await connection.query(statement);}finally{connection.release();}
+  const [[historical]]=await pool.query('SELECT * FROM bookings WHERE id=?',[ids[0]]);
+  check(Number(historical.sold_by_user_id)===userIds[1]&&historical.issued_by==='Original historical seller'&&historical.sold_terminal_slot===null&&historical.sold_from===null,'historical migration recovers the payment actor from the ledger without inventing a PC or changing the name snapshot');
   const launcher=await request('/terminal/counter-launcher',{cookie:login.cookie,device});
   check(launcher.status===200,'enrolled staff can download Counter and A4 setup without a server error');
   const launcherFiles=unzipSync(launcher.bytes),launcherSetup=JSON.parse(strFromU8(launcherFiles['setup.json']));
@@ -135,12 +168,23 @@ try {
   check(enrolled4.status===200,'PC 4 enrolls with its approved key');
   await pool.execute('UPDATE users SET terminal_slots=? WHERE id=?',[JSON.stringify([4]),userIds[1]]);
   const device4={key:keys.key,cert:enrolled4.payload.certificate};
-  check((await request('/auth/login',{method:'POST',body:credentials,device:device4})).status===200,'staff assigned to PC 4 can sign in there');
+  const login4=await request('/auth/login',{method:'POST',body:credentials,device:device4});
+  check(login4.status===200,'staff assigned to PC 4 can sign in there');
+  const sale4=await request('/bookings',{method:'POST',cookie:login4.cookie,csrf:login4.payload.csrfToken,device:device4,body:{...draft,seats:[4]}});
+  check(sale4.status===201&&sale4.payload.booking.soldByUserId===userIds[1]&&sale4.payload.booking.soldTerminalSlot===4,'the same account selling on another enrolled PC records that PC separately');
   check((await request('/auth/login',{method:'POST',body:credentials,device:compatibleDevice})).status===403,'PC 4 staff cannot use a different enrolled PC');
   check((await request('/terminal/devices/99/package',{...admin,method:'POST',body:{currentPassword:password}})).status===404,'PC must be added before setup can be generated');
   console.log(`Passed ${passed} terminal enrollment checks.`);
 } finally {
   if (server) await new Promise(resolve => server.close(resolve));
+  await pool.execute('DELETE f FROM financial_transactions f JOIN bookings b ON b.id=f.booking_id WHERE b.trip_id=?',[saleFixture.trip]);
+  await pool.execute('DELETE r FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.trip_id=?',[saleFixture.trip]);
+  await pool.execute('DELETE s FROM booking_seats s JOIN bookings b ON b.id=s.booking_id WHERE b.trip_id=?',[saleFixture.trip]);
+  await pool.execute('DELETE FROM bookings WHERE trip_id=?',[saleFixture.trip]);
+  await pool.execute('DELETE FROM trip_runs WHERE trip_id=?',[saleFixture.trip]);
+  await pool.execute('DELETE FROM trips WHERE id=?',[saleFixture.trip]);
+  await pool.execute('DELETE FROM buses WHERE id=?',[saleFixture.bus]);
+  await pool.execute('DELETE FROM routes WHERE id=?',[saleFixture.route]);
   await pool.execute('DELETE FROM terminal_enrollments WHERE slot IN (2,4)');
   await pool.execute('DELETE FROM terminal_devices WHERE slot IN (2,4)');
   await pool.execute('DELETE FROM terminal_slots WHERE slot=4');
