@@ -7,6 +7,7 @@ STATE_DIR=/var/lib/madina-express/terminal
 install -d -m 0750 -o root -g madina-express "$STATE_DIR"
 install -d -m 2750 -o madina-express -g www-data /var/cache/madina-express/installers
 install -d -m 0700 -o madina-express -g madina-express /var/lib/madina-express/admin-sessions
+install -d -m 0755 -o root -g root /var/lib/madina-express/updates
 # Allow only the acknowledgement file to be written by the API. Signed release
 # packages and their parent directory remain owned by root.
 python3 - <<'ACK'
