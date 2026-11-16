@@ -176,6 +176,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify(booking),
     }),
+  confirmReservations: <T>(anchor: string, ids: string[], paymentMethod: string, paymentReference: string, details?: unknown) =>
+    request<{bookings:T[]}>(`/bookings/${encodeURIComponent(anchor)}/reservations/confirm`, {
+      method:'POST',body:JSON.stringify({...details as object,ids,paymentMethod,paymentReference}),
+    }),
+  cancelReservations: <T>(anchor: string, ids: string[]) =>
+    request<{bookings:T[]}>(`/bookings/${encodeURIComponent(anchor)}/reservations/cancel`, {
+      method:'POST',body:JSON.stringify({ids}),
+    }),
   updateBooking: <T>(id: string, booking: unknown) =>
     request<{ booking: T }>(`/bookings/${encodeURIComponent(id)}`, {
       method: "PUT",

@@ -1,0 +1,83 @@
+import assert from 'node:assert/strict';
+import bcrypt from 'bcryptjs';
+import {config} from '../node/config.js';
+import {pool,closePool} from '../node/db.js';
+import {pakistanDate} from '../node/helpers.js';
+if(!/test|qa/i.test(config.db.database))throw Error('Use an isolated test database.');
+const base=process.env.TEST_API_URL||'http://127.0.0.1:43190',suffix=Date.now();
+const route=`group-route-${suffix}`,bus=`group-bus-${suffix}`,trip=`group-trip-${suffix}`,username=`group-${suffix}`;
+const date=pakistanDate(new Date(Date.now()+86400000));
+let cookie='',csrf='',userId,checks=0;
+const [[oldPolicy]]=await pool.query("SELECT * FROM settings WHERE setting_key='booking_policies'");
+const check=(condition,label)=>{assert.ok(condition,label);checks++;console.log('PASS '+label);};
+async function request(path,body,includeCsrf=true){
+ const r=await fetch(base+path,{method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie,...(includeCsrf?{'X-CSRF-Token':csrf}:{})},body:JSON.stringify(body)});
+ if(r.headers.get('set-cookie'))cookie=r.headers.get('set-cookie').split(';')[0];
+ return {status:r.status,...await r.json()};
+}
+const draft={passenger:'Family contact',phone:'03001234567',date,tripId:trip,bookingStatus:'Reserved',seats:[3,4,8,9]};
+const details={passenger:draft.passenger,phone:draft.phone,cnic:'17301-1234567-1',gender:'Male',paymentMethod:'Cash'};
+try{
+ const [u]=await pool.execute("INSERT INTO users(name,email,username,password_hash,role,force_password_change) VALUES (?,?,?,?,'counter',0)",['Group QA',username+'@example.invalid',username,await bcrypt.hash('GroupTest!2026',10)]);userId=u.insertId;
+ await pool.execute("INSERT INTO routes(id,origin,destination,distance,duration,fare,boarding_point,status) VALUES (?,'Peshawar','Group destination','','',500,'Main terminal','Active')",[route]);
+ await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,'Standard Plus',49,'Group bus',2026,'Ready','Not scheduled')",[bus,'GROUP-'+suffix]);
+ await pool.execute("INSERT INTO trips(id,route_id,bus_id,departure,arrival,driver,attendant,platform,status,service_days,active) VALUES (?,?,?,'19:00','20:00','','','','Scheduled',?,1)",[trip,route,bus,JSON.stringify(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])]);
+ const login=await request('/auth/login',{identity:username,password:'GroupTest!2026'});csrf=login.csrfToken;check(login.status===200,'counter signs in');
+ let result=await request('/bookings',draft);check(result.status===201&&result.bookings.length===4,'one name and mobile reserve four separate seats');
+ const holds=result.bookings,ids=holds.map(b=>b.id),confirm=`/bookings/${ids[0]}/reservations/confirm`,cancel=`/bookings/${ids[0]}/reservations/cancel`;
+ check((await request(confirm,{ids,...details},false)).status===403,'group payment requires CSRF protection');
+ check((await request(confirm,{ids:[ids[0],ids[0]],...details})).status===422,'duplicate selection is rejected');
+ check((await request(confirm,{ids,paymentMethod:'Cash'})).status===422,'missing paid-ticket details reject the whole group');
+ const other=(await request('/bookings',{...draft,passenger:'Different customer',seats:[10]})).booking;
+ check((await request(confirm,{ids:[...ids,other.id],...details})).status===409,'unrelated customer cannot be included in a group payment');
+ check((await request(cancel,{ids:[...ids,other.id]})).status===409,'unrelated customer cannot be included in a group cancellation');
+ check((await request(confirm,{ids,...details,quotedFares:[550,550,550,550]})).status===409,'a stale fare quote blocks all selected payments');
+ await pool.execute("INSERT INTO settings(setting_key,setting_value) VALUES ('booking_policies',?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value)",[JSON.stringify({staffMaxCollection:1500})]);
+ check((await request(confirm,{ids,...details})).status===403,'staff collection limit applies to the combined amount');
+ let [[row]]=await pool.query('SELECT SUM(paid) paid FROM bookings WHERE trip_id=?',[trip]);check(Number(row.paid)===0,'rejected group operations record no partial payment');
+ await pool.execute("UPDATE settings SET setting_value=JSON_OBJECT() WHERE setting_key='booking_policies'");
+ result=await request(confirm,{ids,...details,quotedFares:[500,500,500,500],fareOverrides:[550,550,550,550],discount:.01});
+ check(result.status===200&&result.bookings.length===4,'one collection confirms all four selected reservations');
+ check(new Set(result.bookings.map(b=>b.ticketNo)).size===4&&result.bookings.every(b=>b.seats.length===1&&b.ticketNo.startsWith('ME-')&&b.bookingStatus==='Confirmed'),'each selected seat keeps a separate paid ticket');
+ check(Math.round(result.bookings.reduce((sum,b)=>sum+b.paid,0)*100)===219999,'combined fare and discount preserve every cent');
+ [[row]]=await pool.query("SELECT COUNT(*) count,SUM(amount) amount FROM financial_transactions WHERE booking_id IN (?,?,?,?)",ids);
+ check(Number(row.count)===4&&Math.round(Number(row.amount)*100)===219999,'one sale ledger entry is recorded per seat');
+ check((await request(confirm,{ids,...details})).status===409,'repeated group payment cannot charge the same seats twice');
+ let r=await request('/bookings',{...draft,seats:[11,12,13,14]});const remaining=r.bookings;
+ result=await request(`/bookings/${remaining[0].id}/reservations/cancel`,{ids:remaining.slice(0,2).map(b=>b.id)});
+ check(result.status===200&&result.bookings.every(b=>b.bookingStatus==='Cancelled'),'staff can cancel only selected seats of a customer');
+ [[row]]=await pool.query("SELECT COUNT(*) count FROM booking_seats WHERE booking_id IN (?,?) AND active=1",remaining.slice(2).map(b=>b.id));check(Number(row.count)===2,'the customer’s unselected seats stay reserved');
+ check((await request(`/bookings/${remaining[2].id}/reservations/cancel`,{ids:[remaining[2].id,ids[0]]})).status===409,'a changed or paid seat prevents a partial group cancellation');
+ const raceIds=remaining.slice(2).map(b=>b.id),raceAnchor=raceIds[0];
+ const race=await Promise.all([request(`/bookings/${raceAnchor}/reservations/confirm`,{ids:raceIds,...details}),request(`/bookings/${raceAnchor}/reservations/cancel`,{ids:raceIds})]);
+ check(race.filter(r=>r.status===200).length===1&&race.filter(r=>r.status===409).length===1,'simultaneous collect and cancel have one winner for the whole selection');
+  await pool.execute('UPDATE routes SET destinations=? WHERE id=?',[JSON.stringify([{name:'Midway',fare:300},{name:'Group destination',fare:500}]),route]);
+  const midway=(await request('/bookings',{...draft,seats:[21],destination:'Midway'})).booking;
+  const final=(await request('/bookings',{...draft,seats:[22],destination:'Group destination'})).booking;
+  result=await request(`/bookings/${midway.id}/reservations/confirm`,{ids:[midway.id,final.id],...details,destination:'',quotedFares:[300,500]});
+  check(result.status===200&&result.bookings[0].destination==='Midway'&&result.bookings[0].paid===300&&result.bookings[1].destination==='Group destination'&&result.bookings[1].paid===500,'group collection preserves individual destinations and fares');
+  const expiring=(await request('/bookings',{...draft,seats:[23,24]})).bookings;
+  await pool.execute('UPDATE bookings SET expires_at=DATE_SUB(NOW(),INTERVAL 1 MINUTE) WHERE id=?',[expiring[0].id]);
+  result=await request(`/bookings/${expiring[0].id}/reservations/confirm`,{ids:expiring.map(b=>b.id),...details});
+  check(result.status===409,'one expired reservation prevents payment for the entire selection');
+  [[row]]=await pool.query('SELECT SUM(paid) paid FROM bookings WHERE id IN (?,?)',expiring.map(b=>b.id));check(Number(row.paid)===0,'an expired group leaves every seat unpaid');
+ await pool.execute("UPDATE users SET role='dispatcher' WHERE id=?",[userId]);
+ check((await request(cancel,{ids})).status===403,'dispatcher cannot cancel customer reservations');
+ console.log(`${checks} customer reservation checks passed.`);
+}finally{
+ if(oldPolicy)await pool.execute("INSERT INTO settings(setting_key,setting_value,updated_by,updated_at) VALUES ('booking_policies',?,?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),updated_by=VALUES(updated_by),updated_at=VALUES(updated_at)",[JSON.stringify(oldPolicy.setting_value),oldPolicy.updated_by,oldPolicy.updated_at]);
+ else await pool.execute("DELETE FROM settings WHERE setting_key='booking_policies'");
+ if(userId){
+  await pool.execute('DELETE FROM audit_logs WHERE user_id=?',[userId]);
+  await pool.execute('DELETE f FROM financial_transactions f JOIN bookings b ON b.id=f.booking_id WHERE b.trip_id=?',[trip]);
+  await pool.execute('DELETE s FROM booking_seats s JOIN bookings b ON b.id=s.booking_id WHERE b.trip_id=?',[trip]);
+  await pool.execute('DELETE FROM bookings WHERE trip_id=?',[trip]);
+  await pool.execute('DELETE FROM trip_runs WHERE trip_id=?',[trip]);
+  await pool.execute('DELETE FROM trips WHERE id=?',[trip]);
+  await pool.execute('DELETE FROM buses WHERE id=?',[bus]);
+  await pool.execute('DELETE FROM routes WHERE id=?',[route]);
+  await pool.execute('DELETE FROM api_sessions WHERE user_id=?',[userId]);
+  await pool.execute('DELETE FROM users WHERE id=?',[userId]);
+ }
+ await closePool();
+}

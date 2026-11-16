@@ -26,7 +26,7 @@ import {
   fetchExpenses, fetchRoutes, fetchTripRuns, fetchTrips, fetchUsers, lookupJourney, normalizeBookingPhone, publicOccupancy,
 } from "./repository.js";
 import {
-  audit, cancelBooking, confirmReservation, createBooking, createExpense,
+  audit, cancelBooking, confirmReservation, confirmReservations, cancelReservations, createBooking, createExpense,
   createStaffUser, deleteBus, deleteCrew, deleteRoute, deleteTrip, refundBooking, saveBus, saveCrew, saveRoute, saveTrip,
   transitionTrip, updateBooking, assignDeparture, saveCounterDeparture, updateStaffUser, removeStaffUser,
 } from "./operations.js";
@@ -437,6 +437,15 @@ app.post("/bookings/:id/cancel", asyncRoute(async (req, res) => {
 app.post("/bookings/:id/confirm", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter"]);
   res.json({ booking: await confirmReservation(req.params.id, req.body, req.user, req) });
+}));
+app.post("/bookings/:id/reservations/confirm", asyncRoute(async (req, res) => {
+  requireRole(req.user, ["admin", "manager", "counter"]);
+  const bookings = await confirmReservations(req.params.id, req.body.ids, req.body, req.user, req);
+  res.json({bookings});
+}));
+app.post("/bookings/:id/reservations/cancel", asyncRoute(async (req, res) => {
+  requireRole(req.user, ["admin", "manager", "counter"]);
+  res.json({bookings:await cancelReservations(req.params.id, req.body.ids, req.user, req)});
 }));
 app.post("/bookings/:id/refunds", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter", "finance"]);

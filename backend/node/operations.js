@@ -1,3 +1,4 @@
+import {sameBookingCustomer} from '../../shared/booking-workspace.mjs';
 import {seatFare,routeDestinations,commissionPolicy} from '../../shared/service-pricing.mjs';
 import {recordAuditedChange,recordLiveEntries} from './change-log.js';
 import {validateClasses,validateRouteConfig} from './service-config.js';
@@ -186,6 +187,8 @@ export async function updateBooking(id, data, user, req) {
 
 export async function cancelBooking(id, user, req) {
   return transaction(async (connection) => {
+    const [lookup] = await query(connection, 'SELECT trip_id FROM bookings WHERE id=?', [id]);
+    if (lookup) await query(connection, 'SELECT id FROM trips WHERE id=? FOR UPDATE', [lookup.trip_id]);
     await query(connection, 'SELECT id FROM bookings WHERE id = ? FOR UPDATE', [id]);
     const before = await fetchBooking(id, connection);
     if (!before) fail("Booking not found.", 404, "not_found");
@@ -198,52 +201,110 @@ export async function cancelBooking(id, user, req) {
   });
 }
 
+function reservationIds(anchor, values) {
+  if (!Array.isArray(values) || !values.length || values.length > 100 ||
+      values.some(id => typeof id !== 'string' || !/^[a-zA-Z0-9-]{1,64}$/.test(id)) ||
+      new Set(values).size !== values.length || !values.includes(anchor)) {
+    fail('Choose the reserved seats to manage.', 422, 'validation_error');
+  }
+  return [...values].sort();
+}
+async function lockedReservations(connection, anchor, ids) {
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = await query(connection, `SELECT * FROM bookings WHERE id IN (${placeholders}) ORDER BY id FOR UPDATE`, ids);
+  const first = rows.find(row => row.id === anchor);
+  const customer = row => ({tripRunId:row.trip_run_id,passenger:row.passenger,phone:row.phone});
+  if (!first || rows.length !== ids.length) fail('A reservation was not found. Refresh seats and try again.', 409, 'reservation_changed');
+  if (rows.some(row => row.booking_status !== 'Reserved' || Number(row.paid) !== 0 || !sameBookingCustomer(customer(first),customer(row)))) {
+    fail('Select only this customer’s unpaid reservations on the same departure. Refresh if they changed.', 409, 'reservation_changed');
+  }
+  return rows;
+}
+
+export async function cancelReservations(anchor, values, user, req) {
+  const ids = reservationIds(anchor, values);
+  return transaction(async connection => {
+    const [lookup] = await query(connection, 'SELECT trip_id FROM bookings WHERE id=?', [anchor]);
+    if (!lookup) fail('Reservation not found.', 404, 'not_found');
+    await query(connection, 'SELECT id FROM trips WHERE id=? FOR UPDATE', [lookup.trip_id]);
+    const rows = await lockedReservations(connection, anchor, ids);
+    const bookings = [];
+    for (const row of rows) {
+      const before = await fetchBooking(row.id, connection);
+      await query(connection, "UPDATE bookings SET booking_status='Cancelled' WHERE id=?", [row.id]);
+      await query(connection, 'UPDATE booking_seats SET active=0 WHERE booking_id=?', [row.id]);
+      const after = await fetchBooking(row.id, connection);
+      await audit('booking.cancelled','booking',row.id,before,after,user.id,req,connection);
+      bookings.push(after);
+    }
+    return bookings;
+  });
+}
+
 export async function confirmReservation(id, data, user, req) {
-  return transaction(async (connection) => {
-    const lookup = await query(connection, 'SELECT trip_id, travel_date FROM bookings WHERE id = ?', [id]);
-    if (!lookup.length) fail('Reservation not found.', 404, 'not_found');
-    const [trip] = await query(connection, 'SELECT * FROM trips WHERE id = ? FOR UPDATE', [lookup[0].trip_id]);
-    const run = await ensureRun(connection, trip, lookup[0].travel_date);
-    await assertSaleOpen(connection, run, lookup[0].travel_date);
-    const records = await query(
-      connection,
-      "SELECT * FROM bookings WHERE id = ? FOR UPDATE",
-      [id],
-    );
-    const row = records[0];
-    if (!row || row.booking_status !== "Reserved" || (row.expires_at && Date.parse(isoDateTime(row.expires_at)) <= Date.now())) fail("Active reservation not found.", 404, "not_found");
-    const method = allowed(String(data.paymentMethod || "Cash"), ["Cash", "Bank transfer", "1Bill"], "paymentMethod");
-    if (method === "1Bill" && config.paymentMode === "disabled") fail("1Bill is not active yet. Choose cash or bank transfer.", 409, "payment_unavailable");
-    let reference = String(data.paymentReference || "").trim();
-    if (method !== "Cash" && !reference) fail("A verified payment reference is required.", 422, "validation_error");
+  return (await confirmReservations(id, [id], data, user, req))[0];
+}
+
+export async function confirmReservations(anchor, values, data, user, req) {
+  const ids = reservationIds(anchor, values);
+  return transaction(async connection => {
+    const [lookup] = await query(connection, 'SELECT trip_id,travel_date FROM bookings WHERE id=?', [anchor]);
+    if (!lookup) fail('Reservation not found.', 404, 'not_found');
+    const [trip] = await query(connection, 'SELECT * FROM trips WHERE id=? FOR UPDATE', [lookup.trip_id]);
+    const run = await ensureRun(connection, trip, lookup.travel_date);
+    await assertSaleOpen(connection, run, lookup.travel_date);
+    const rows = await lockedReservations(connection, anchor, ids);
+    if (rows.some(row => row.expires_at && Date.parse(isoDateTime(row.expires_at)) <= Date.now())) {
+      fail('A reservation has expired. Refresh seats and try again.', 409, 'reservation_changed');
+    }
+    const method = allowed(String(data.paymentMethod || 'Cash'), ['Cash','Bank transfer','1Bill'], 'paymentMethod');
+    if (method === '1Bill' && config.paymentMode === 'disabled') fail('1Bill is not active yet. Choose cash or bank transfer.',409,'payment_unavailable');
+    let reference = String(data.paymentReference || '').trim();
+    if (method !== 'Cash' && !reference) fail('A verified payment reference is required.',422,'validation_error');
     reference ||= `CASH-${timeCode()}`;
-    const details=passengerDetails({...row,...data},false);
-    const route=(await fetchRoutes(false,connection)).find(r=>r.id===trip.route_id)||run.snapshot.route;
-    const destination=String(data.destination||row.destination||routeDestinations(route).at(-1).name);
-    const seats = await query(connection, 'SELECT seat_number FROM booking_seats WHERE booking_id=? ORDER BY seat_number', [id]);
-    if (!seats.length) fail('This reservation has no seats.', 409, 'reservation_empty');
-    const managed=(await fetchBuses(false,connection)).find(b=>b.id===(run.snapshot.bus.layoutId||run.snapshot.bus.id));
-    const pricingBus = { ...run.snapshot.bus, ...(managed ? { seatClasses: managed.seatClasses } : {}) };
-    const baseFares = seats.map(seat => seatFare(route, pricingBus, destination, Number(seat.seat_number)));
-    if (baseFares.some(fare => !Number.isFinite(fare))) fail('Choose a destination on this route.', 422, 'validation_error');
-    const fares = counterFares(baseFares, data.fareOverrides);
-    const fareTotal = decimal(fares.reduce((sum, fare) => sum + fare, 0), 'Fare');
-    if (fareTotal > 9999999999.99) fail('The total fare is too large.', 422, 'validation_error');
-    const fare = decimal(fareTotal / seats.length, 'Fare');
-    const discount = Math.min(decimal(data.discount ?? 0, 'discount'), fareTotal);
-    const total = decimal(fareTotal - discount, 'Total');
-    staffCollectionPolicy(await getPolicies(connection),user,baseFares,fares,discount);
-    const ticketNo = await nextTicketNumber(connection);
-    const before = await fetchBooking(id, connection);
-    await query(connection,
-      "UPDATE bookings SET reservation_no=COALESCE(reservation_no,ticket_no),ticket_no=?,passenger=?,phone=?,cnic=?,gender=?,destination=?,boarding_point=?,fare=?,discount=?,total=?,paid=?,balance=0,payment_method=?,payment_reference=?,payment_status='Paid',booking_status='Confirmed',expires_at=NULL,seat_printed_at=NOW(),issued_by=? WHERE id=?",
-      [ticketNo,details.passenger,details.phone,details.cnic,details.gender,destination,String(data.boardingPoint||row.boarding_point||route.boarding),fare,discount,total,total,method,reference,user.name,id]);
-    await query(connection,
-      "INSERT INTO financial_transactions (booking_id, transaction_type, amount, payment_method, reference, description, created_by) VALUES (?, 'sale', ?, ?, ?, ?, ?)",
-      [id, total, method, reference, `Confirmed reservation ${ticketNo}`, user.id]);
-    const after = await fetchBooking(id, connection);
-    await audit("reservation.confirmed", "booking", id, before, after, user.id, req, connection);
-    return after;
+    const first = rows.find(row => row.id === anchor);
+    const details = passengerDetails({...first,...data},false);
+    const route = (await fetchRoutes(false,connection)).find(r=>r.id===trip.route_id) || run.snapshot.route;
+    const destinationFor = row => String(data.destination || row.destination || routeDestinations(route).at(-1).name);
+    const placeholders = ids.map(() => '?').join(',');
+    const seats = await query(connection, `SELECT booking_id,seat_number,active FROM booking_seats WHERE booking_id IN (${placeholders}) ORDER BY seat_number FOR UPDATE`, ids);
+    if (!seats.length || rows.some(row=>!seats.some(seat=>seat.booking_id===row.id)) || seats.some(seat=>!seat.active)) {
+      fail('A reservation no longer holds its seats. Refresh seats and try again.',409,'reservation_changed');
+    }
+    const managed = (await fetchBuses(false,connection)).find(b=>b.id===(run.snapshot.bus.layoutId||run.snapshot.bus.id));
+    const pricingBus = {...run.snapshot.bus,...(managed?{seatClasses:managed.seatClasses}:{})};
+    const baseFares = seats.map(seat=>seatFare(route,pricingBus,destinationFor(rows.find(row=>row.id===seat.booking_id)),Number(seat.seat_number)));
+    if (baseFares.some(fare=>!Number.isFinite(fare))) fail('Choose a destination on this route.',422,'validation_error');
+    if (data.quotedFares !== undefined && (!Array.isArray(data.quotedFares) || data.quotedFares.length !== baseFares.length || baseFares.some((fare,index)=>fare!==data.quotedFares[index]))) {
+      fail('Fares changed while you were collecting payment. Reopen payment and review the current fares.',409,'fare_changed');
+    }
+    const fares = counterFares(baseFares,data.fareOverrides);
+    const fareTotal = decimal(fares.reduce((sum,fare)=>sum+fare,0),'Fare');
+    if (fareTotal > 9999999999.99) fail('The total fare is too large.',422,'validation_error');
+    const batchDiscount = Math.min(decimal(data.discount??0,'discount'),fareTotal);
+    // Check the whole payment against staff limits, rather than each ticket individually.
+    staffCollectionPolicy(await getPolicies(connection),user,baseFares,fares,batchDiscount);
+    let discountCents = Math.round(batchDiscount*100), remainingFare = Math.round(fareTotal*100);
+    const bookings = [];
+    for (const row of rows.sort((a,b)=>seats.find(s=>s.booking_id===a.id).seat_number-seats.find(s=>s.booking_id===b.id).seat_number)) {
+      const indices = seats.flatMap((seat,index)=>seat.booking_id===row.id?[index]:[]);
+      const cents = indices.reduce((sum,index)=>sum+Math.round(fares[index]*100),0);
+      const share = remainingFare?Math.round(discountCents*cents/remainingFare):0;
+      discountCents-=share;remainingFare-=cents;
+      const discount=share/100,total=(cents-share)/100,fare=decimal(cents/100/indices.length,'Fare');
+      const destination=destinationFor(row);
+      const before = await fetchBooking(row.id,connection);
+      const ticketNo = await nextTicketNumber(connection);
+      await query(connection,
+        "UPDATE bookings SET reservation_no=COALESCE(reservation_no,ticket_no),ticket_no=?,passenger=?,phone=?,cnic=?,gender=?,destination=?,boarding_point=?,fare=?,discount=?,total=?,paid=?,balance=0,payment_method=?,payment_reference=?,payment_status='Paid',booking_status='Confirmed',expires_at=NULL,seat_printed_at=NOW(),issued_by=? WHERE id=?",
+        [ticketNo,details.passenger,details.phone,details.cnic,details.gender,destination,String(data.boardingPoint||row.boarding_point||route.boarding),fare,discount,total,total,method,reference,user.name,row.id]);
+      await query(connection,"INSERT INTO financial_transactions (booking_id,transaction_type,amount,payment_method,reference,description,created_by) VALUES (?,'sale',?,?,?,?,?)",
+        [row.id,total,method,reference,`Confirmed reservation ${ticketNo}`,user.id]);
+      const after = await fetchBooking(row.id,connection);
+      await audit('reservation.confirmed','booking',row.id,before,after,user.id,req,connection);
+      bookings.push(after);
+    }
+    return bookings;
   });
 }
 

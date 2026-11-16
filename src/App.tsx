@@ -1,3 +1,4 @@
+import {sameBookingCustomer,departureSeatCounts,fareQuantities,paidVoucherBookings} from '../shared/booking-workspace.mjs';
 import {ReportPrintPage} from './report-print-page';
 import {openA4Report,reportBridgeConfigured} from './report-transfer';
 import {mergeLiveRecords} from "../shared/live-records.mjs";
@@ -8,7 +9,7 @@ import { ConfirmationDialog } from "./confirmation";
 import { StaffPolicyContext, useStaffPolicy, type OperatingPolicies } from "./operating-policies";
 import { runningBuild, type ReleaseInfo } from "./release";
 import { AccountAccessSettings, BookingPolicySettings, ApplicationUpdateSettings } from "./system-settings";
-import {currentRoutePricing,routeDestinations,seatFare,seatClass,departureTimes,commissionPolicy,type SeatClass,type RouteService} from "../shared/service-pricing.mjs";
+import {currentRoutePricing,routeDestinations,seatFare,departureTimes,commissionPolicy,type SeatClass,type RouteService} from "../shared/service-pricing.mjs";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
@@ -1793,6 +1794,21 @@ function ManagementApp({
       throw error;
     }
   };
+  const confirmCustomerReservations = async (ids:string[], method:PaymentMethod, reference:string, details?:Partial<Booking>) => {
+    const result = await api.confirmReservations<Booking>(ids[0],ids,method,reference,details);
+    dataVersion.current++;
+    const updated = new Map(result.bookings.map(booking=>[booking.id,booking]));
+    setBookings(current=>current.map(booking=>updated.get(booking.id)??booking));
+    openIssuedReceipt(result.bookings[0],result.bookings);
+    showToast(`${result.bookings.length} paid ticket(s) issued.`);
+  };
+  const cancelCustomerReservations = async (ids:string[]) => {
+    const result = await api.cancelReservations<Booking>(ids[0],ids);
+    dataVersion.current++;
+    const updated = new Map(result.bookings.map(booking=>[booking.id,booking]));
+    setBookings(current=>current.map(booking=>updated.get(booking.id)??booking));
+    showToast(`${result.bookings.length} reservation(s) removed. Seats released.`);
+  };
   const changeView = (view: AdminView) => {
     if (!roleViews[user.role].includes(view)) return;
     setActiveView(view);
@@ -2088,7 +2104,8 @@ function ManagementApp({
               onDeleteDeparture={canManageSchedules ? deleteTrip : undefined}
               onPrint={booking => {setReceiptBatch([]);setReceipt(booking);}}
               onCancel={cancelBooking}
-              onConfirm={confirmReservation}
+              onConfirmReservations={confirmCustomerReservations}
+              onCancelReservations={cancelCustomerReservations}
               onRefund={processRefund}
               onUpdate={updateBooking}
               onReport={openReport}
@@ -2342,7 +2359,7 @@ function SettlementNote({ title, text }: { title: string; text: string }) {
   );
 }
 
-function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onSave,showToast,paymentMode,onCounterSave,onAddDeparture,onDeleteDeparture,onPrint,onCancel,onConfirm,onRefund,onUpdate,onReport,onTransition,onRefresh,refreshing,refreshError,readOnly}: {
+function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onSave,showToast,paymentMode,onCounterSave,onAddDeparture,onDeleteDeparture,onPrint,onCancel,onConfirmReservations,onCancelReservations,onRefund,onUpdate,onReport,onTransition,onRefresh,refreshing,refreshError,readOnly}: {
   bookings: Booking[]; trips: TripRecord[]; fleet: BusRecord[]; routes: RouteRecord[]; runs: TripRun[];
   onTransition:(id:string,action:DepartureAction,date:string,notes?:string,options?:DepartureOptions)=>Promise<void>;
   readOnly:boolean;
@@ -2353,7 +2370,8 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   onAddDeparture?: (date: string, defaults: Partial<TripRecord>) => void;
   onDeleteDeparture?: (id: string) => Promise<void>;
   onPrint:(booking:Booking)=>void; onCancel:(id:string)=>Promise<void>;
-  onConfirm:(id:string,method:PaymentMethod,reference:string,details?:Partial<Booking>)=>Promise<void>;
+  onConfirmReservations:(ids:string[],method:PaymentMethod,reference:string,details?:Partial<Booking>)=>Promise<void>;
+  onCancelReservations:(ids:string[])=>Promise<void>;
   onRefund:(id:string,refund:RefundTransaction)=>Promise<void>; onUpdate:(booking:Booking)=>Promise<void>;
   onReport:(kind:ReportKind,id:string,run:number,date?:string)=>void;
 }) {
@@ -2369,8 +2387,11 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const [selected,setSelected] = useState<number[]>([]);
   const [busy,setBusy] = useState(false), [error,setError] = useState("");
   const [focusedId,setFocusedId] = useState<string|null>(null);
-  const [action,setAction] = useState<"payment"|"refund"|"edit"|null>(null);
+  const [action,setAction] = useState<"refund"|"edit"|null>(null);
   const [search,setSearch] = useState("");
+  const [groupSelection,setGroupSelection] = useState<{focusId:string;ids:string[]}|null>(null);
+  const [paymentGroup,setPaymentGroup] = useState<Booking[]|null>(null);
+  const [reservationsToCancel,setReservationsToCancel] = useState<Booking[]|null>(null);
   const [departureDirty,setDepartureDirty] = useState(false);
   const [departureToRemove, setDepartureToRemove] = useState<TripRecord | null>(null);
   const passengerForm = useRef<HTMLFormElement>(null);
@@ -2385,15 +2406,19 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const occupied = new Set(active.flatMap(b=>b.seats));
   const reserved = new Set(active.filter(b=>b.bookingStatus==="Reserved").flatMap(b=>b.seats));
   const focused = records.find(b=>b.id===focusedId);
+  const customerBookings = focused ? active.filter(booking=>sameBookingCustomer(focused,booking)).sort((a,b)=>a.seats[0]-b.seats[0]) : [];
+  const customerReservations = customerBookings.filter(booking=>booking.bookingStatus==='Reserved');
+  const selectedReservations = groupSelection?.focusId===focusedId ? customerReservations.filter(booking=>groupSelection.ids.includes(booking.id)) : customerReservations;
+  const beginPayment = () => { if(selectedReservations.length)setPaymentGroup(selectedReservations); };
   const unavailable = readOnly || date < today || trip.deleted || trip.salesPaused || (!trip.salesOverride && ["Departed","Returned","Cancelled"].includes(trip.status)) || !trip.active || !trip.days.includes(serviceDayFor(date)) || ["Maintenance","Retired"].includes(bus.status);
   const blank = ():PassengerForm=>({destination:routeDestinations(route).at(-1)!.name,passenger:"",phone:"",cnic:"",idType:"CNIC",gender:"Unspecified",boardingPoint:route.boarding,discount:0,paymentMethod:"Cash",paymentReference:""});
   const [passenger,setPassenger] = useState<PassengerForm>(blank);
   const update = <K extends keyof PassengerForm>(key:K,value:PassengerForm[K])=>setPassenger(p=>({...p,[key]:value}));
   const destinations=routeDestinations(route);
   const destination=destinations.some(d=>d.name===passenger.destination)?passenger.destination:destinations.at(-1)!.name;
-  const [fareEdits, setFareEdits] = useState<Partial<Record<number, number>>>({});
+  const [fareOverride, setFareOverride] = useState<number>();
   const baseFares = chosenSeats.map(seat => seatFare(route, bus, destination, seat));
-  const fareOverrides = mode === "Ticket" ? chosenSeats.map(seat => fareEdits[seat] ?? null) : [];
+  const fareOverrides = mode === "Ticket" ? chosenSeats.map(() => fareOverride ?? null) : [];
   const fares = baseFares.map((fare, index) => fareOverrides[index] ?? fare);
   const fareTotal = fares.reduce((sum, fare) => sum + fare, 0);
   const discount = mode === "Ticket" ? Math.min(passenger.discount, fareTotal) : 0;
@@ -2404,7 +2429,7 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
   const collectFromSeat = (seat: number) => {
     if (paymentBlocked || document.querySelector('[role="dialog"][aria-modal="true"]')) return false;
     if (focused?.bookingStatus === "Reserved" && focused.seats.includes(seat)) {
-      setAction("payment");
+      beginPayment();
       return true;
     }
     if (!focused && mode === "Ticket" && chosenSeats.includes(seat) && passengerForm.current) {
@@ -2414,13 +2439,13 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
     return false;
   };
   const choose = (id:string,newDate=date)=>{
-    setTripId(id);setDate(newDate);setDepartureDirty(false);setSelected([]);setFocusedId(null);setAction(null);setError("");
-    setFareEdits({});
+    setTripId(id);setDate(newDate);setDepartureDirty(false);setSelected([]);setFocusedId(null);setGroupSelection(null);setPaymentGroup(null);setReservationsToCancel(null);setAction(null);setError("");
+    setFareOverride(undefined);
     const next = trips.find(t=>t.id===id)!;
     setPassenger(p=>({...p,destination:routeDestinations(tripRoute(next,routes)).at(-1)!.name,boardingPoint:tripRoute(next,routes).boarding,discount:0}));
     const url = new URL(location.href);url.searchParams.set("trip",id);url.searchParams.set("date",newDate);history.replaceState(null,"",url);
   };
-  const reset = ()=>{setPassenger(blank());setSelected([]);setFareEdits({});setError("");};
+  const reset = ()=>{setPassenger(blank());setSelected([]);setFareOverride(undefined);setError("");};
   const submit = async (event:FormEvent)=>{
     event.preventDefault();
     if (paymentBlocked) return;
@@ -2445,22 +2470,35 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
         <label><span>Route</span><select value={routeId} onChange={e=>{const next=trips.find(t=>!t.deleted&&t.active&&t.routeId===e.target.value);setRouteId(e.target.value);if(next)choose(next.id);}}>{routes.filter(r=>trips.some(t=>!t.deleted&&t.active&&t.routeId===r.id)).map(r=><option value={r.id} key={r.id}>{routeLabel(r)}</option>)}</select></label>
         <label><span>Travel date</span><input type="date" value={date} onChange={e=>{if(e.target.value)choose(tripId,e.target.value);}}/></label>
       </div>
-      <div className="departure-times" aria-label="Departure times">{choices.map(t=><button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)}><strong>{t.departure} <span className="departure-booked-count" aria-label={`${bookings.filter(b=>b.tripRunId===tripRunKey(t,t.runNumber,date)&&b.bookingStatus==="Confirmed").reduce((n,b)=>n+b.seats.length,0)} booked seats`}>({bookings.filter(b=>b.tripRunId===tripRunKey(t,t.runNumber,date)&&b.bookingStatus==="Confirmed").reduce((n,b)=>n+b.seats.length,0)})</span></strong><small>{tripBus(t,fleet).model} · {t.status}</small></button>)}{!choices.length&&<p>No departures for this route and date.</p>}</div>
+      <div className="departure-times" aria-label="Departure times">{choices.map(t=>{
+        const counts=departureSeatCounts(bookings.filter(b=>b.tripRunId===tripRunKey(t,t.runNumber,date)));
+        const label=`${counts.booked} booked · ${counts.reserved} reserved · ${counts.total} occupied seats`;
+        return <button key={t.id} type="button" className={t.id===tripId?"active":""} onClick={()=>choose(t.id)} title={label}><strong>{t.departure} <span className="departure-booked-count" aria-label={label}>({counts.total})</span></strong><small>{tripBus(t,fleet).model} · {t.status}</small></button>;
+      })}{!choices.length&&<p>No departures for this route and date.</p>}</div>
       {(onAddDeparture || onDeleteDeparture) && <div className="departure-roster-actions">
         {onAddDeparture && <button type="button" className="secondary-button" disabled={busy} onClick={() => onAddDeparture(date, { routeId, busId: bus.layoutId || bus.id, arrival: trip.arrival, days: trip.days })}><Plus size={15}/> Add departure</button>}
         {onDeleteDeparture && selectedDeparture && <button type="button" className="danger-button" disabled={busy} onClick={() => setDepartureToRemove(selectedDeparture)}><Trash2 size={15}/> Remove {selectedDeparture.departure} departure</button>}
       </div>}
-      <CounterDeparture key={`${runId}-${bus.id}-${bus.layoutId}-${bus.registration}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} route={route} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setFareEdits({});setFocusedId(null);return saved;}}/>
+      <CounterDeparture key={`${runId}-${bus.id}-${bus.layoutId}-${bus.registration}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} route={route} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setFareOverride(undefined);setFocusedId(null);return saved;}}/>
     </section>
     <DepartureControls key={`departure-${runId}`} trip={trip} bus={bus} date={date} reservedCount={reserved.size} onTransition={(action,notes,options)=>onTransition(trip.id,action,date,notes,options)}/>
     <div className="counter-main">
       <div className="counter-passenger-column"><section className="surface counter-passenger">
         {focused ? <div className="seat-inspector">
-          <div className="panel-heading"><h2>Seat {seatList(focused.seats,focused.service)}</h2><button type="button" className="secondary-button" onClick={()=>{setFocusedId(null);setAction(null);}}>New passenger</button></div>
+          <div className="panel-heading"><h2>Seat {seatList(focused.seats,focused.service)}</h2><button type="button" className="secondary-button" onClick={()=>{setFocusedId(null);setGroupSelection(null);setAction(null);}}>New passenger</button></div>
           <span className="status-pill">{focused.bookingStatus} · {focused.source} · {focused.gender}</span><h3>{focused.passenger}</h3><p>{focused.phone} · {focused.cnic}</p><p>{focused.ticketNo}</p>
-          <div className="inspector-amount"><small>{focused.bookingStatus==="Reserved"?"To collect":"Net collected"}</small><strong>{money(focused.bookingStatus==="Reserved"?focused.balance:netCollected(focused))}</strong></div>
+          {customerBookings.length>1&&<div className="customer-seat-group">
+            <strong>This customer · Seats {seatList(customerBookings.flatMap(booking=>booking.seats),bus.service)}</strong>
+            {focused.bookingStatus==='Reserved'&&customerReservations.length>1&&<>
+              <label className="group-select-all"><input type="checkbox" checked={selectedReservations.length===customerReservations.length} onChange={event=>setGroupSelection({focusId:focused.id,ids:event.target.checked?customerReservations.map(booking=>booking.id):[]})}/> Select all reserved seats</label>
+              <div className="customer-seat-options">{customerReservations.map(booking=><label key={booking.id}><input type="checkbox" checked={selectedReservations.some(selected=>selected.id===booking.id)} onChange={event=>setGroupSelection({focusId:focused.id,ids:event.target.checked?[...selectedReservations.map(item=>item.id),booking.id]:selectedReservations.filter(item=>item.id!==booking.id).map(item=>item.id)})}/> Seat {seatList(booking.seats,bus.service)}</label>)}</div>
+              <small>{selectedReservations.reduce((sum,booking)=>sum+booking.seats.length,0)} reserved seats selected</small>
+            </>}
+            <div className="customer-linked-seats">{customerBookings.filter(booking=>booking.id!==focused.id&&(focused.bookingStatus!=='Reserved'||booking.bookingStatus!=='Reserved')).map(booking=><button type="button" key={booking.id} className="text-button" onClick={()=>{setFocusedId(booking.id);setGroupSelection(null);setAction(null);}}>Seat {seatList(booking.seats,bus.service)} · {booking.bookingStatus}</button>)}</div>
+          </div>}
+          <div className="inspector-amount"><small>{focused.bookingStatus==="Reserved"?"To collect":"Net collected"}</small><strong>{money(focused.bookingStatus==="Reserved"?selectedReservations.reduce((sum,booking)=>sum+booking.balance,0):netCollected(focused))}</strong></div>
           <div className="counter-actions">
-            {!readOnly&&focused.bookingStatus==="Reserved"&&<><button type="button" className="primary-button" disabled={paymentBlocked} aria-keyshortcuts="Enter" onClick={()=>setAction("payment")}>Collect payment & issue ticket</button><button type="button" className="danger-button" disabled={busy} onClick={async()=>{setBusy(true);try{await onCancel(focused.id);setFocusedId(null);}catch(e){showToast(e instanceof Error?e.message:"Could not remove reservation.");}finally{setBusy(false);}}}>Remove reservation</button><small>Reserved seats have no ticket or boarding token.</small></>}
+            {!readOnly&&focused.bookingStatus==="Reserved"&&<><button type="button" className="primary-button" disabled={paymentBlocked||!selectedReservations.length} aria-keyshortcuts="Enter" onClick={beginPayment}>Collect payment & issue {selectedReservations.length>1?`${selectedReservations.length} tickets`:'ticket'}</button><button type="button" className="danger-button" disabled={busy||!selectedReservations.length} onClick={()=>setReservationsToCancel(selectedReservations)}>Remove {selectedReservations.length>1?`${selectedReservations.length} reservations`:'reservation'}</button><small>Reserved seats have no ticket or boarding token.</small></>}
             {focused.bookingStatus!=="Reserved"&&<button type="button" className="primary-button" onClick={()=>onPrint(focused)}><Printer size={16}/> {focused.bookingStatus==="Confirmed"?"Print receipt & token":"Print refund record"}</button>}
             {!readOnly&&focused.bookingStatus==="Confirmed"&&focused.paid===0&&<button type="button" className="danger-button" disabled={busy} onClick={async()=>{setBusy(true);try{await onCancel(focused.id);setFocusedId(null);}catch(e){showToast(e instanceof Error?e.message:"Could not cancel ticket.");}finally{setBusy(false);}}}>Cancel ticket & release seat</button>}
             {!readOnly&&refundableBalance(focused)>0&&<button type="button" className="danger-button" onClick={()=>setAction("refund")}>Cancel / refund ticket</button>}
@@ -2474,18 +2512,13 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
             <label><span>CNIC / Passport{mode==="Ticket"?" *":" (optional)"}</span><input required={mode==="Ticket"} maxLength={50} value={passenger.cnic} onChange={e=>update("cnic",e.target.value)}/></label>
             <label><span>Gender{mode==="Ticket"?" *":" (optional)"}</span><select required={mode==="Ticket"} value={passenger.gender==="Unspecified"?"":passenger.gender} onChange={e=>update("gender",(e.target.value||"Unspecified") as PassengerForm["gender"])}><option value="">Select gender</option><option>Male</option><option>Female</option></select></label>
             <label><span>Boarding point</span><input value={passenger.boardingPoint} onChange={e=>update("boardingPoint",e.target.value)}/></label>
-            {destinations.length>1&&<label className="span-2"><span>Destination</span><select value={destination} onChange={e=>{update("destination",e.target.value);setFareEdits({});}}>{destinations.map(d=><option key={d.name}>{d.name}</option>)}</select></label>}
+            {destinations.length>1&&<label className="span-2"><span>Destination</span><select value={destination} onChange={e=>{update("destination",e.target.value);setFareOverride(undefined);}}>{destinations.map(d=><option key={d.name}>{d.name}</option>)}</select></label>}
             {mode === "Ticket" && <>
               {chosenSeats.length === 0 && <p className="span-2 fare-breakdown">Select seats to edit their fares.</p>}
-              {chosenSeats.map((seat, index) => (
-                <MoneyField
-                  key={seat}
-                  label={`Fare · Seat ${seatLabel(seat, bus.service)} · ${seatClass(bus, seat)}`}
-                  value={fares[index]}
-                  onChange={value => setFareEdits(current => ({ ...current, [seat]: value }))}
-                  onClear={() => setFareEdits(current => ({ ...current, [seat]: undefined }))}
-                />
-              ))}
+              {chosenSeats.length>0&&<div className="span-2 combined-fare">
+                <MoneyField label={`Fare per seat · ${chosenSeats.length} seat${chosenSeats.length===1?'':'s'}`} value={fareQuantities(fares).length===1?fares[0]:''} placeholder="Mixed fares" onChange={setFareOverride} onClear={()=>setFareOverride(undefined)}/>
+                <small>{fareQuantities(fares).map(({fare,count})=>`${money(fare)} × ${count}`).join(' + ')} = {money(fareTotal)}</small>
+              </div>}
               <MoneyField label="Total discount" value={discount} onChange={value => update("discount", Math.min(value, fareTotal))} />
             </>}
             {mode==="Ticket"&&<><label><span>Payment</span><select value={passenger.paymentMethod} onChange={e=>update("paymentMethod",e.target.value as PaymentMethod)}><option>Cash</option><option>Bank transfer</option>{paymentMode!=="disabled"&&<option>1Bill</option>}</select></label>{passenger.paymentMethod!=="Cash"&&<label><span>Payment reference *</span><input required value={passenger.paymentReference} onChange={e=>update("paymentReference",e.target.value)}/></label>}</>}
@@ -2498,14 +2531,15 @@ function BookingWorkspace({bookings,trips,fleet,routes,runs,initialSelection,onS
     <div className="seat-statistics" aria-label="Seat totals"><span className="booked"><small>Booked</small><strong>{occupied.size-reserved.size}</strong></span><span className="reserved"><small>Reserved</small><strong>{reserved.size}</strong></span><span><small>Available / {bus.seats} total</small><strong>{bus.seats-occupied.size}</strong></span></div>
       {destinations.length>1&&<div className="destination-statistics" aria-label="Passengers by destination">{destinations.map(d=><span key={d.name}>{d.name}<strong>{active.filter(b=>b.destination===d.name).reduce((sum,b)=>sum+b.seats.length,0)}</strong></span>)}</div>}
       </div><section className="surface counter-seats"><div className="panel-heading"><h2>{bus.model||bus.service}</h2><span>{vehicleLabel(bus)} · {trip.departure}</span></div>
-        <SeatMap seatClasses={bus.seatClasses} locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setAction(null);}} onEnter={collectFromSeat} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);if(selectionBasis!==selectionContext)setFareEdits({});setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
+        <SeatMap seatClasses={bus.seatClasses} locked={Boolean(unavailable||departureDirty)} seats={bus.seats} service={bus.service} selectedSeats={focused?.bookingStatus==='Reserved'?selectedReservations.flatMap(booking=>booking.seats):chosenSeats.filter(s=>!occupied.has(s))} occupied={occupied} reserved={reserved} female={new Set(active.filter(b=>b.gender==="Female").flatMap(b=>b.seats))} online={new Set(active.filter(b=>b.source==="Public web").flatMap(b=>b.seats))} onOccupied={seat=>{setFocusedId(active.find(b=>b.seats.includes(seat))!.id);setGroupSelection(null);setAction(null);}} onEnter={collectFromSeat} onSelect={seat=>{if(busy||unavailable||departureDirty)return;setFocusedId(null);if(selectionBasis!==selectionContext)setFareOverride(undefined);setSelectionBasis(selectionContext);setSelected(chosenSeats.includes(seat)?chosenSeats.filter(s=>s!==seat):[...chosenSeats,seat].sort((a,b)=>a-b));}} large/>
         <div className="seat-refresh"><button className="secondary-button" type="button" disabled={refreshing} onClick={()=>void onRefresh()}><RefreshCw size={15} className={refreshing?"spin":""}/> Refresh seats</button>{refreshError&&<small role="status">{refreshError}</small>}</div>
         <p className="counter-hint">Click any booked or reserved seat to edit, collect payment, remove a reservation or refund. W = online; R = reserved.</p>
       </section>
     </div>
     <VoucherEditor readOnly={readOnly} key={`voucher-${runId}-${bus.id}-${bus.registration}-${trip.departure}`} trip={trip} bus={bus} route={route} net={net} records={records} onSave={changes=>onCounterSave(trip.id,date,changes)} onReport={kind=>onReport(kind,trip.id,trip.runNumber,date)}/>
-    <section className="surface counter-history"><div className="panel-heading"><h2>Passenger & ticket history</h2><input aria-label="Find passenger or ticket" placeholder="Name, phone, ticket…" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="table-wrap"><table><thead><tr><th>Seat</th><th>Passenger</th><th>Status</th><th>Collected</th><th>Action</th></tr></thead><tbody>{records.filter(b=>`${b.passenger} ${b.phone} ${b.ticketNo}`.toLowerCase().includes(search.toLowerCase())).map(b=><tr key={b.id}><td>{seatList(b.seats,b.service)}</td><td><strong>{b.passenger}</strong><small>{b.ticketNo}</small></td><td><span className="status-pill">{b.bookingStatus}</span></td><td>{money(netCollected(b))}</td><td><button type="button" className="text-button" onClick={()=>{setFocusedId(b.id);document.querySelector(".counter-main")?.scrollIntoView({behavior:"smooth",block:"start"});}}>Manage</button></td></tr>)}</tbody></table></div></section>
-    {focused&&action==="payment"&&<CollectPaymentModal booking={focused} route={route} bus={bus} paymentMode={paymentMode} onClose={()=>setAction(null)} onConfirm={async(method,reference,details)=>{await onConfirm(focused.id,method,reference,details);setAction(null);}}/>}
+    <section className="surface counter-history"><div className="panel-heading"><h2>Passenger & ticket history</h2><input aria-label="Find passenger or ticket" placeholder="Name, phone, ticket…" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="table-wrap"><table><thead><tr><th>Seat</th><th>Passenger</th><th>Status</th><th>Collected</th><th>Action</th></tr></thead><tbody>{records.filter(b=>`${b.passenger} ${b.phone} ${b.ticketNo}`.toLowerCase().includes(search.toLowerCase())).map(b=><tr key={b.id}><td>{seatList(b.seats,b.service)}</td><td><strong>{b.passenger}</strong><small>{b.ticketNo}</small></td><td><span className="status-pill">{b.bookingStatus}</span></td><td>{money(netCollected(b))}</td><td><button type="button" className="text-button" onClick={()=>{setFocusedId(b.id);setGroupSelection(null);document.querySelector(".counter-main")?.scrollIntoView({behavior:"smooth",block:"start"});}}>Manage</button></td></tr>)}</tbody></table></div></section>
+    {paymentGroup&&<CollectPaymentModal reservations={paymentGroup} booking={{...paymentGroup[0],seats:paymentGroup.flatMap(booking=>booking.seats).sort((a,b)=>a-b),balance:paymentGroup.reduce((sum,booking)=>sum+booking.balance,0)}} route={route} bus={bus} paymentMode={paymentMode} onClose={()=>setPaymentGroup(null)} onConfirm={async(method,reference,details)=>{await onConfirmReservations(paymentGroup.map(booking=>booking.id),method,reference,details);setPaymentGroup(null);setGroupSelection(null);}}/>}
+    {reservationsToCancel&&<ConfirmationDialog title={`Remove ${reservationsToCancel.length} reservation${reservationsToCancel.length===1?'':'s'}?`} confirmLabel="Remove reservations" onClose={()=>setReservationsToCancel(null)} onConfirm={async()=>{await onCancelReservations(reservationsToCancel.map(booking=>booking.id));setFocusedId(null);setGroupSelection(null);}}><p>{reservationsToCancel[0].passenger} · Seats {seatList(reservationsToCancel.flatMap(booking=>booking.seats),bus.service)}. These seats will become available again.</p></ConfirmationDialog>}
     {focused&&action==="refund"&&<RefundModal booking={focused} onClose={()=>setAction(null)} onRefund={onRefund}/>}
     {focused&&action==="edit"&&<BookingEditModal booking={focused} onClose={()=>setAction(null)} onSave={async b=>{await onUpdate(b);setAction(null);}}/>}
     {departureToRemove && onDeleteDeparture && <ConfirmDeleteModal
@@ -2574,9 +2608,11 @@ function MoneyField({
   value,
   onChange,
   onClear,
+  placeholder,
 }: {
   label: string;
-  value: number;
+  value: number | "";
+  placeholder?: string;
   onChange?: (value: number) => void;
   onClear?: () => void;
 }) {
@@ -2593,6 +2629,7 @@ function MoneyField({
           min="0"
           step="0.01"
           value={value}
+          placeholder={placeholder}
           onChange={event => {
             if (event.target.value === "" && onClear) onClear();
             else onChange?.(Number(event.target.value));
@@ -3162,22 +3199,23 @@ function ReservationsView({
 
 function CollectPaymentModal({
   route, bus,
-  booking,
+  booking, reservations,
   paymentMode,
   onClose,
   onConfirm,
 }: {
   route?:RouteRecord; bus?:BusRecord;
-  booking: Booking;
+  booking: Booking; reservations?: Booking[];
   paymentMode: string;
   onClose: () => void;
   onConfirm: (method: PaymentMethod, reference: string, details?: Partial<Booking>) => Promise<void>;
 }) {
-  const [details,setDetails]=useState({...booking,discount:0});
+  const mixedDestinations=new Set(reservations?.map(item=>item.destination)).size>1;
+  const [details,setDetails]=useState({...booking,discount:0,destination:mixedDestinations?'':booking.destination});
   const [fareOverride, setFareOverride] = useState<number>();
   const stops=route?routeDestinations(route):[{name:booking.destination,fare:booking.fare}];
   const baseFares = booking.seats.map(seat =>
-    route && bus ? seatFare(route, bus, details.destination, seat) : booking.fare,
+    route && bus ? seatFare(route, bus, details.destination||reservations?.find(item=>item.seats.includes(seat))?.destination||booking.destination, seat) : booking.fare,
   );
   const fares = baseFares.map(fare => fareOverride ?? fare);
   const fareTotal = fares.reduce((sum, fare) => sum + fare, 0);
@@ -3208,6 +3246,7 @@ function CollectPaymentModal({
           await onConfirm(method, reference.trim(), {
             ...details,
             discount,
+            quotedFares: baseFares,
             fareOverrides: fareOverride === undefined ? undefined : booking.seats.map(() => fareOverride),
           });
         }
@@ -3217,7 +3256,7 @@ function CollectPaymentModal({
         <header>
           <div>
             <h2>Collect {money(total)}</h2>
-            <p>{booking.ticketNo} · {booking.passenger} · Seats {seatList(booking.seats, booking.service)}</p>
+            <p>{booking.passenger} · Seats {seatList(booking.seats, booking.service)}</p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose}><X size={19} /></button>
         </header>
@@ -3226,14 +3265,16 @@ function CollectPaymentModal({
           <label><span>Mobile *</span><input required maxLength={30} value={details.phone} onChange={e=>setDetails({...details,phone:e.target.value})}/></label>
           <label><span>CNIC / Passport *</span><input required maxLength={50} value={details.cnic} onChange={e=>setDetails({...details,cnic:e.target.value})}/></label>
           <label><span>Gender *</span><select required value={details.gender==='Unspecified'?'':details.gender} onChange={e=>setDetails({...details,gender:e.target.value as Booking['gender']})}><option value="">Select gender</option><option>Male</option><option>Female</option></select></label>
-          {stops.length>1&&<label><span>Destination</span><select value={details.destination} onChange={e=>{setDetails({...details,destination:e.target.value});setFareOverride(undefined);}}>{stops.map(stop=><option key={stop.name}>{stop.name}</option>)}</select></label>}
+          {stops.length>1&&<label><span>Destination</span><select value={details.destination} onChange={e=>{setDetails({...details,destination:e.target.value});setFareOverride(undefined);}}>{mixedDestinations&&<option value="">Keep individual destinations</option>}{stops.map(stop=><option key={stop.name}>{stop.name}</option>)}</select></label>}
           <label><span>Boarding point</span><input value={details.boardingPoint} onChange={e=>setDetails({...details,boardingPoint:e.target.value})}/></label>
           <MoneyField
-            label="Fare per seat"
-            value={Math.round(fareTotal * 100 / booking.seats.length) / 100}
+            label={`Fare per seat · ${booking.seats.length} seat${booking.seats.length===1?'':'s'}`}
+            value={fareQuantities(fares).length===1?fares[0]:''}
+            placeholder="Mixed fares"
             onChange={setFareOverride}
             onClear={() => setFareOverride(undefined)}
           />
+          <p className="span-2 fare-breakdown">{fareQuantities(fares).map(({fare,count})=>`${money(fare)} × ${count}`).join(' + ')} = {money(fareTotal)}</p>
           <MoneyField label="Discount" value={discount} onChange={value => setDetails({ ...details, discount: Math.min(value, fareTotal) })} />
 
           <label className="span-2">
@@ -3254,7 +3295,7 @@ function CollectPaymentModal({
         {error && <p className="form-error">{error}</p>}
         <footer>
           <button className="secondary-button" type="button" onClick={onClose}>Cancel</button>
-          <button className="primary-button" type="submit" disabled={busy} aria-keyshortcuts="Enter"><ReceiptText size={16} /> Issue paid ticket</button>
+          <button className="primary-button" type="submit" disabled={busy} aria-keyshortcuts="Enter"><ReceiptText size={16} /> Issue {booking.seats.length>1?`${booking.seats.length} paid tickets`:'paid ticket'}</button>
         </footer>
       </form>
     </div>
@@ -3730,7 +3771,7 @@ function ReportsView({bookings, trips, fleet, routes, runs, onReport, onSell, on
   const records = trip ? bookings.filter((booking) => booking.tripRunId === tripRunKey(trip, trip.runNumber, reportDate)) : [];
   const cards: {kind: ReportKind; title: string; format: string; text: string}[] = [
     {kind:"cnic",title:"CNIC sheet",format:"A4",text:"Confirmed passenger list for highway checks."},
-    {kind:"terminal-a4",title:"Terminal voucher",format:"A4",text:"Ticket sales, receipts, refunds and payment totals."},
+    {kind:"terminal-a4",title:"Terminal voucher",format:"A4",text:"Paid passenger tickets and collection totals."},
     {kind:"terminal-thermal",title:"Terminal voucher",format:"80mm",text:"The same voucher totals for a thermal printer."},
   ];
   const history = runs.filter((run) => ["Departed","Returned"].includes(run.status));
@@ -3805,7 +3846,7 @@ function ReportModal({
   const gross = records.reduce((sum, booking) => sum + booking.paid, 0);
   const refunds = records.reduce((sum, booking) => sum + refundedTotal(booking), 0);
   const methodTotal = (method: PaymentMethod) => records.reduce((sum, booking) => sum + (booking.paymentMethod === method ? booking.paid : 0) - (booking.refunds ?? []).filter((refund) => refund.method === method).reduce((amount, refund) => amount + refund.amount, 0), 0);
-  const ledgerRecords = records.filter(booking=>booking.paid>0||booking.bookingStatus==="Confirmed").sort((a,b)=>a.seats[0]-b.seats[0]);
+  const ledgerRecords = paidVoucherBookings(records);
   const printedBookings = voucher ? ledgerRecords : report.kind === "cnic" ? runBookings : [...runBookings, ...records.filter((booking) => booking.bookingStatus === "Reserved")];
   const rows = printedBookings.flatMap((booking) =>
     booking.seats.map((seat) => ({ booking, seat })),
@@ -3814,8 +3855,9 @@ function ReportModal({
   const savedVoucher = trip.snapshot?.voucher;
   const policy=commissionPolicy(route,bus);
   const voucherStale = voucher && (!savedVoucher || bus.isTemplate || (policy.fixed && (savedVoucher.commissionRate!==policy.rate||savedVoucher.manualCommission!==0)) || Math.abs((savedVoucher.basis ?? 0) - total) > .005);
-  const totals: (string | number)[][] = [["Tickets issued", ledgerRecords.length], ["Payments received",money(gross)]];
-  if (refunds) totals.push(["Refunds",money(refunds)]);
+  const totals: (string | number)[][] = [["Paid tickets", ledgerRecords.length]];
+  const otherCollections=total-ledgerRecords.reduce((sum,booking)=>sum+netCollected(booking),0);
+  if(Math.abs(otherCollections)>.005)totals.push(["Other net collections",money(otherCollections)]);
   totals.push(["Net collected",money(total)]);
   if (savedVoucher) {
     totals.push([`Commission (${savedVoucher.commissionRate}%)`,money(savedVoucher.commission ?? 0)]);
@@ -3951,7 +3993,7 @@ function ReportModal({
           {thermal ? (
             <>
               <h3 className="document-section-title">Seat · Passenger · Net PKR</h3>
-              {rows.map(({booking,seat})=><div className="thermal-passenger" key={`${booking.id}-${seat}`}><span><b>{seatLabel(seat,booking.service)}</b><strong>{booking.passenger}{routeDestinations(route).length>1&&<small> · {booking.destination}</small>}</strong><b>{Math.round(netCollected(booking)/booking.seats.length).toLocaleString('en-PK')}{refundedTotal(booking)>0?' R':''}</b></span></div>)}
+              {rows.map(({booking,seat})=><div className="thermal-passenger" key={`${booking.id}-${seat}`}><span><b>{seatLabel(seat,booking.service)}</b><strong>{booking.passenger}{routeDestinations(route).length>1&&<small> · {booking.destination}</small>}</strong><b>{Math.round(netCollected(booking)/booking.seats.length).toLocaleString('en-PK')}</b></span></div>)}
               {!rows.length && (
                 <p className="document-empty">No passengers in this run.</p>
               )}
@@ -3977,7 +4019,7 @@ function ReportModal({
                 <tbody>
                   {ledgerRecords.map((booking) => (
                     <tr key={booking.id}>
-                      <td>{booking.ticketNo}{refundedTotal(booking)>0&&<small>Refund</small>}</td>
+                      <td>{booking.ticketNo}</td>
                       <td>
                         {ticketTime(new Date(booking.seatPrintedAt ?? booking.createdAt))}
                       </td>
@@ -3985,7 +4027,7 @@ function ReportModal({
                       <td>{booking.destination}</td>
                       <td>{seatList(booking.seats, booking.service)}</td>
                       <td>{booking.paymentMethod}</td>
-                      <td>{money(netCollected(booking))}{refundedTotal(booking)>0&&<small>Refund {money(refundedTotal(booking))}</small>}</td>
+                      <td>{money(netCollected(booking))}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -5837,10 +5879,10 @@ function SeatButton({
     <button
       type="button"
       disabled={(occupied && !interactive)||(!occupied&&locked)}
-      className={`seat seat--${status}${female?" seat--female":""}${online?" seat--online":""}`}
+      className={`seat seat--${status}${selected&&occupied?" seat--inspected":""}${female?" seat--female":""}${online?" seat--online":""}`}
       title={className?`${className} · Seat ${label}`:undefined}
       aria-label={`Seat ${label}, ${status}${className?", "+className:""}${female?", female":""}${online?", online":""}`}
-      aria-pressed={selected && !occupied}
+      aria-pressed={selected}
       onKeyDown={event => {
         if (!onEnter || event.key !== "Enter" || event.nativeEvent.isComposing ||
           event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
