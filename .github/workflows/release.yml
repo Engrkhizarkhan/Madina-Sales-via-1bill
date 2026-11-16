@@ -91,6 +91,13 @@ jobs:
         run: |
           npm ci --omit=dev --ignore-scripts
           node --test backend/tests/updater.js backend/tests/windows-updater.js backend/tests/domain-migration.js backend/tests/domain-bridge.js
+      - name: Extract the complete accepted base with the real Windows bridge
+        shell: powershell
+        run: node --test backend/tests/domain-bridge-package.js
+        env:
+          DOMAIN_BRIDGE_BASE: r-687498ada923
+          RELEASE_COMMIT: ${{ github.sha }}
+          RELEASE_SEQUENCE: ${{ github.run_number }}
       - name: Trusted HTTPS certificate repair on Windows
         shell: powershell
         run: |

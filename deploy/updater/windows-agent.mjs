@@ -13,7 +13,7 @@ import {expiredBackup} from './backup-retention.mjs';
 import {withCloudOrigin} from './cloud-origin.mjs';
 const exec=promisify(execFile),sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const quote=value=>"'"+value.replaceAll("'","''")+"'";
-const ps=code=>exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop';"+code,'utf16le').toString('base64')],{windowsHide:true,timeout:180000,maxBuffer:1024*1024});
+const ps=code=>exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';"+code,'utf16le').toString('base64')],{windowsHide:true,timeout:180000,maxBuffer:1024*1024});
 export const releaseAclCommand=target=>`& icacls.exe ${quote(target)} /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' '*S-1-5-19:(OI)(CI)RX' | Out-Null; if($LASTEXITCODE -ne 0){throw 'Release directory permissions failed'}; & icacls.exe ${quote(join(target,'*'))} /reset /T /C /Q | Out-Null; if($LASTEXITCODE -ne 0){throw 'Release file permissions failed'}`;
 export async function run(base){
  if(process.platform!=='win32')throw new Error('This updater runs on Windows only');

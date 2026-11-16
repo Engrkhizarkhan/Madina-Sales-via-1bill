@@ -32,7 +32,8 @@ export async function materializeBridge(target,{archiveDirectory=dirname(target)
   if((await lstat(archive)).size>maxPackageBytes||hash(await readFile(archive))!==metadata.baseSha256)throw new Error('The previously signed base package is missing or corrupted.');
   zipEntries(await readFile(archive));
  }catch(error){if(error.code==='ENOENT')cached=false;else throw error;}
- const temporary=await mkdtemp(join(dirname(target),'.domain-base-'));
+ // Shorter than a normal release name for older Windows MAX_PATH limits.
+ const temporary=await mkdtemp(join(dirname(target),'.b-'));
  try{
   let directory=temporary;
   if(!cached){
@@ -50,8 +51,8 @@ export async function materializeBridge(target,{archiveDirectory=dirname(target)
    if(!/^[a-f0-9]{64}$/.test(metadata.baseTreeSha256||'')||releaseTreeHash(entries)!==metadata.baseTreeSha256)throw new Error('The installed base does not match the previously signed application.');
   }else if(process.platform==='win32'){
    const quote=value=>"'"+value.replaceAll("'","''")+"'";
-   const script="$ErrorActionPreference='Stop';Expand-Archive -LiteralPath "+quote(archive)+' -DestinationPath '+quote(temporary)+' -Force';
-   await exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:120000,maxBuffer:65536});
+   const script="$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue';Expand-Archive -LiteralPath "+quote(archive)+' -DestinationPath '+quote(temporary)+' -Force';
+   await exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:120000,maxBuffer:1024*1024});
   }else await exec('unzip',['-q',archive,'-d',temporary],{timeout:120000,maxBuffer:65536});
   const base=JSON.parse(await readFile(join(directory,'build-info.json'),'utf8'));
   if(base.releaseId!==metadata.baseReleaseId)throw new Error('The base package identity does not match.');
