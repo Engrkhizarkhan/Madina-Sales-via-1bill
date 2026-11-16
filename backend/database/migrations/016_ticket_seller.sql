@@ -1,3 +1,4 @@
+-- release: additive
 -- Nullable additions keep older applications compatible during an update/rollback.
 SET @ddl = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='bookings' AND COLUMN_NAME='sold_by_user_id')=0,
   'ALTER TABLE bookings ADD COLUMN sold_by_user_id BIGINT UNSIGNED NULL', 'SELECT 1');
