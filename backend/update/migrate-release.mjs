@@ -1,11 +1,13 @@
 // Deliberately separate from seeding/install scripts: updates never reset application data.
-import mysql from 'mysql2/promise';
-import { applyMigrations } from './migrations.js';
 import { readFile } from 'node:fs/promises';
-import {join} from 'node:path';
-import {migrateCloudDomain} from '../../deploy/updater/domain-migration.mjs';
+import {join,resolve} from 'node:path';
+import {materializeBridge} from '../../deploy/updater/materialize-bridge.mjs';
 const file=process.argv[2];
 if(!file)throw new Error('Pass the protected database administrator configuration');
+await materializeBridge(resolve('.'));
+const [{default:mysql},{applyMigrations},{migrateCloudDomain}]=await Promise.all([
+ import('mysql2/promise'),import('./migrations.js'),import('../../deploy/updater/domain-migration.mjs'),
+]);
 const source=await readFile(file,'utf8');
 const config=Object.fromEntries(source.split(/\r?\n/).map(line=>line.match(/^([a-zA-Z_]+)=(.*)$/)).filter(Boolean).map(([,key,value])=>[key,value]));
 const database=config.database||'madina_express';if(!/^[a-zA-Z0-9_]+$/.test(database))throw new Error('Invalid database');
