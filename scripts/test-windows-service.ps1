@@ -39,6 +39,10 @@ try {
     $request = 'madina-report://print/?origin=' + [Uri]::EscapeDataString('https://192.168.50.2:8443') + '&job=' + $id + '&key=' + $key
     $launch = Get-MadinaReportLaunch $request $configuration
     if ($launch.FilePath -ne $edge -or $launch.ArgumentList -match 'kiosk-printing' -or $launch.ArgumentList -notmatch '/print/report#') { throw 'A4 handoff does not use the normal dialog profile.' }
+    foreach ($cloudOrigin in @('https://staff.madinaexpress.pk','https://staff.madinaexpress.duckdns.org')) {
+        $cloudRequest = 'madina-report://print/?origin=' + [Uri]::EscapeDataString($cloudOrigin) + '&job=' + $id + '&key=' + $key
+        if ((Get-MadinaReportLaunch $cloudRequest $configuration).ArgumentList -notmatch [regex]::Escape($cloudOrigin)) { throw 'A4 handoff rejected an approved migration domain.' }
+    }
     foreach ($bad in @($request.Replace('192.168.50.2','evil.example'),$request.Replace($id,'bad'),($request + '&unexpected=1'),$request.Replace('madina-report:','powershell:'))) {
         $rejected = $false
         try { Get-MadinaReportLaunch $bad $configuration | Out-Null } catch { $rejected = $true }

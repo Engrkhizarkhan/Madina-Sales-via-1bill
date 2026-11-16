@@ -9,6 +9,7 @@ import { createGzip } from "node:zlib";
 import { pipeline } from "node:stream/promises";
 import { join,resolve } from "node:path";
 import { config } from "../node/config.js";
+import {withCloudOrigin} from '../../deploy/updater/cloud-origin.mjs';
 import { pool } from "../node/db.js";
 
 let maintenanceResult;
@@ -46,7 +47,8 @@ async function publishConnection(status) {
 }
 
 async function callCloud(action) {
-  const response = await fetch(config.terminal.cloudOrigin + "/api/terminal-sync/" + action, {
+  const {value}=await withCloudOrigin(config.terminal.cloudOrigin,async origin=>{
+  const response = await fetch(origin + "/api/terminal-sync/" + action, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Terminal-Token": process.env.TERMINAL_INSTALL_TOKEN },
     body: JSON.stringify({ installationId: process.env.TERMINAL_INSTALLATION_ID,maintenanceResult }),
@@ -54,6 +56,8 @@ async function callCloud(action) {
   });
   if (!response.ok) throw new Error(`The cloud ${action} check returned ${response.status}.`);
   return response.json();
+  });
+  return value;
 }
 
 async function refreshStatus() {

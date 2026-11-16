@@ -170,7 +170,7 @@ async function createSession(connection, req, user) {
 app.get("/health", asyncRoute(async (_req, res) => {
   await pool.query("SELECT 1");
   res.json({ status: "ok", database: "connected", runtime: "node", time: new Date().toISOString(), release:releaseInfo, paymentMode: config.paymentMode,
-    ...(config.terminal.local ? { installationId: process.env.TERMINAL_INSTALLATION_ID, handover:await terminalHandover() } : {}) });
+    ...(config.terminal.local ? { installationId: process.env.TERMINAL_INSTALLATION_ID, cloudOrigin:config.terminal.cloudOrigin, handover:await terminalHandover() } : {}) });
 }));
 
 app.post("/auth/login", asyncRoute(async (req, res) => {
@@ -513,9 +513,10 @@ app.post("/settings/clear-operational-data", asyncRoute(async (req,res) => {
 app.get("/settings/receipt", asyncRoute(async (_req,res) => res.json({layout:await getReceiptLayout()})));
 app.put("/settings/receipt", asyncRoute(async (req,res) => {
   requireOwner(req.user);
-  const layout = validateReceiptLayout(req.body);
+  let layout;
   await transaction(async connection => {
     const before = await getReceiptLayout(connection);
+    layout=validateReceiptLayout(req.body,before);
     await connection.execute("INSERT INTO settings(setting_key,setting_value,updated_by) VALUES ('receipt_layout',?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),updated_by=VALUES(updated_by)",[JSON.stringify(layout),req.user.id]);
     await audit("receipt.updated","settings","receipt_layout",before,layout,req.user.id,req,connection);
   });

@@ -11,10 +11,13 @@ export async function jsonFile(file,fallback=null){
  }
 }
 export async function atomicJson(file,value,mode=0o600){
+ return atomicText(file,JSON.stringify(value),mode);
+}
+export async function atomicText(file,value,mode=0o600){
  const temp=file+'.'+randomBytes(6).toString('hex');let handle;
  try{
   handle=await open(temp,'wx',mode);
-  await handle.writeFile(JSON.stringify(value),'utf8');
+  await handle.writeFile(value,'utf8');
   // Flush contents before publishing the filename. A rename alone can leave a
   // zero-filled state file after abrupt power loss on a Windows counter PC.
   await handle.sync();await handle.close();handle=null;

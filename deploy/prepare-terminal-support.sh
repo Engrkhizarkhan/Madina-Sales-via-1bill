@@ -25,6 +25,15 @@ finally:
     os.close(fd)
 ACK
 install -d -m 0755 -o root -g root /usr/local/libexec
+install -m 0644 "$PROJECT_DIR/deploy/nginx-cloudflare-realip.conf" /etc/nginx/snippets/madina-cloudflare-realip.conf
+python3 - <<'PROXY'
+from pathlib import Path
+common=Path('/etc/nginx/snippets/madina-common.conf')
+text=common.read_text()
+line='include /etc/nginx/snippets/madina-cloudflare-realip.conf;'
+if line not in text:
+    common.write_text(line+'\n'+text)
+PROXY
 # Other JSON routes retain their 128 KB application limit; bounded report trees allow 512 KB.
 sed -i 's/client_max_body_size 128k;/client_max_body_size 512k;/' /etc/nginx/snippets/madina-common.conf
 DEBIAN_FRONTEND=noninteractive apt-get install -y zip >/dev/null
@@ -43,7 +52,7 @@ if state.get('phase')=='active':
     relay=json.loads((root/'private.json').read_text())['relayKey']
     template=(root/'nginx-terminal.conf.template').read_text().replace('__RELAY_KEY__',relay)
 else:
-    template=(root/'nginx-production.conf.template').read_text().replace('__PUBLIC_HOST__','madinaexpress.duckdns.org').replace('__STAFF_HOST__','staff.madinaexpress.duckdns.org')
+    template=(root/'nginx-production.conf.template').read_text().replace('__PUBLIC_HOST__','madinaexpress.pk').replace('__STAFF_HOST__','staff.madinaexpress.pk')
 target=pathlib.Path('/etc/nginx/sites-available/madina-express')
 old=target.read_bytes()
 try:

@@ -12,7 +12,7 @@ export async function saveUpdateControl(paused,actor=null){
 export async function updateChannel(){const control=await updateControl();const manifest=await read(join(updateDirectory,'channel.json'),null);return {paused:control.paused===true,manifest};}
 export async function recordTerminalUpdate(value){
  const directory=join(updateDirectory,'control');await mkdir(directory,{recursive:true,mode:0o700});
- const allowed={stage:String(value.stage||'unknown').slice(0,40),checkedAt:new Date().toISOString(),current:value.current&&{releaseId:String(value.current.releaseId||'').slice(0,50),version:String(value.current.version||'').slice(0,30)},message:typeof value.message==='string'?value.message.slice(0,300):undefined};
+ const allowed={stage:String(value.stage||'unknown').slice(0,40),checkedAt:new Date().toISOString(),cloudOrigin:typeof value.cloudOrigin==='string'?value.cloudOrigin.slice(0,150):undefined,current:value.current&&{releaseId:String(value.current.releaseId||'').slice(0,50),version:String(value.current.version||'').slice(0,30)},message:typeof value.message==='string'?value.message.slice(0,300):undefined};
  const temp=join(directory,'terminal.next');await writeFile(temp,JSON.stringify(allowed),{mode:0o600});await rename(temp,join(directory,'terminal.json'));
 }
 export const terminalUpdateStatus=()=>read(join(updateDirectory,'control/terminal.json'),null);

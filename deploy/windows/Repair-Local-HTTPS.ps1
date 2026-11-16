@@ -19,7 +19,11 @@ $environment = [IO.File]::ReadAllText($configuration)
 $origin = [regex]::Match($environment, '(?m)^TERMINAL_LOCAL_ORIGIN=(.+)$').Groups[1].Value.Trim()
 $ip = ([Uri]$origin).Host
 Write-Host "Installed main server: $origin"
-$cloud = Invoke-RestMethod 'https://madinaexpress.duckdns.org/api/health' -TimeoutSec 20
+$cloud = $null
+foreach ($hostOrigin in @('https://madinaexpress.pk','https://madinaexpress.duckdns.org')) {
+    try { $cloud = Invoke-RestMethod ($hostOrigin + '/api/health') -TimeoutSec 20; break } catch { }
+}
+if ($null -eq $cloud) { throw 'The cloud clock could not be reached on either approved domain.' }
 if ($cloud.status -ne 'ok' -or $cloud.installationId) { throw 'Could not verify the cloud clock.' }
 $clockDifference = [Math]::Abs(([DateTimeOffset]::Parse($cloud.time).UtcDateTime - [DateTime]::UtcNow).TotalSeconds)
 if ($clockDifference -gt 60) { throw 'The Windows clock is still incorrect. Correct it before repairing certificates.' }

@@ -10,6 +10,7 @@ import { createGzip } from 'node:zlib';
 import { verifyRelease,verifyPackage,zipEntries,fetchBounded,maxPackageBytes } from './release.mjs';
 import { atomicJson,jsonFile,activate,recover } from './engine.mjs';
 import {expiredBackup} from './backup-retention.mjs';
+import {withCloudOrigin} from './cloud-origin.mjs';
 const exec=promisify(execFile),sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const quote=value=>"'"+value.replaceAll("'","''")+"'";
 const ps=code=>exec('powershell.exe',['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-EncodedCommand',Buffer.from("$ErrorActionPreference='Stop';"+code,'utf16le').toString('base64')],{windowsHide:true,timeout:180000,maxBuffer:1024*1024});
@@ -21,6 +22,7 @@ export async function run(base){
  const publicKey=await readFile(join(host,'release-public-key.pem'),'utf8');
  const env=Object.fromEntries((await readFile(join(base,'config/backend.env'),'utf8')).split(/\r?\n/).map(line=>line.match(/^([A-Z_]+)=(.*)$/)).filter(Boolean).map(([,key,value])=>[key,value]));
  const origin=settings.cloudOrigin.replace(/\/$/,''),data=join(base,'data'),node=join(base,'runtime/node.exe');
+ const cloudBytes=async(path,limit)=> (await withCloudOrigin(origin,candidate=>fetchBounded(candidate+path,limit,{signal:AbortSignal.timeout(limit<=65536?15000:180000)}))).value;
  // Expired update backups are separate from the daily app backup rotation.
  try{for(const name of await readdir(join(base,'backups'))){
   if(!/^pre-update-[0-9TZ-]+\.sql\.gz$/.test(name))continue;
@@ -29,7 +31,11 @@ export async function run(base){
  const report=async status=>{
   const value={...status,checkedAt:new Date().toISOString()};
   await atomicJson(join(data,'update-status.json'),value);
-  try{await fetch(origin+'/api/terminal-sync/update-status',{method:'POST',headers:{'Content-Type':'application/json','X-Terminal-Token':env.TERMINAL_INSTALL_TOKEN},body:JSON.stringify({...value,installationId:env.TERMINAL_INSTALLATION_ID}),signal:AbortSignal.timeout(10000)});}catch{/* operation remains local */}
+  try{await withCloudOrigin(origin,async candidate=>{
+   const response=await fetch(candidate+'/api/terminal-sync/update-status',{method:'POST',headers:{'Content-Type':'application/json','X-Terminal-Token':env.TERMINAL_INSTALL_TOKEN},body:JSON.stringify({...value,installationId:env.TERMINAL_INSTALLATION_ID}),signal:AbortSignal.timeout(10000)});
+   if(!response.ok)throw new Error('Cloud update status is unavailable');
+   if((await response.json()).ok!==true)throw new Error('Cloud update status was not acknowledged');
+  });}catch{/* operation remains local */}
  };
  try{
  const local=async(path,method='GET')=>{
@@ -66,7 +72,7 @@ export async function run(base){
  };
  await recover({host,operations});
 try{if((await operations.activity()).draining)await operations.resume();}catch{/* the application may be starting */}
- const channel=JSON.parse((await fetchBounded(origin+'/api/terminal-sync/update-channel',65536)).toString());
+ const channel=JSON.parse((await cloudBytes('/api/terminal-sync/update-channel',65536)).toString());
  if(channel.paused||!channel.manifest){await report({stage:channel.paused?'paused':'up-to-date',current:await jsonFile(join(host,'current.json'))});return;}
  const state=await jsonFile(join(host,'update-state.json'),{}),current=await jsonFile(join(host,'current.json'));
  const release=verifyRelease(channel.manifest,publicKey,{minimumSequence:Math.max(Number(state.highestSequence||0),Number(state.sequence||0),Number(current.sequence||0))});
@@ -75,7 +81,7 @@ try{if((await operations.activity()).draining)await operations.resume();}catch{/
  if(state.failedRelease===release.releaseId){await report({...state,current});return;}
  const releases=join(base,'releases');await mkdir(releases,{recursive:true});const target=join(releases,release.releaseId);
  const archive=join(releases,release.file);let bytes;
- try{bytes=await readFile(archive);verifyPackage(bytes,release);}catch{bytes=await fetchBounded(origin+'/updates/'+release.file,maxPackageBytes);verifyPackage(bytes,release);await writeFile(archive,bytes);}
+ try{bytes=await readFile(archive);verifyPackage(bytes,release);}catch{bytes=await cloudBytes('/updates/'+release.file,maxPackageBytes);verifyPackage(bytes,release);await writeFile(archive,bytes);}
  zipEntries(bytes);assertApplication(target);
  let staged;
  try{staged=await jsonFile(join(target,'build-info.json'));}
@@ -94,7 +100,7 @@ try{if((await operations.activity()).draining)await operations.resume();}catch{/
  const info=await jsonFile(join(target,'build-info.json'));if(info?.commit!==release.commit||info.releaseId!==release.releaseId)throw new Error('Package identity does not match signed metadata');
  await cp(join(target,'dist/assets'),join(base,'static-assets'),{recursive:true});
  await report({stage:'ready',current,available:release.releaseId});
- const latestChannel=JSON.parse((await fetchBounded(origin+'/api/terminal-sync/update-channel',65536)).toString());
+ const latestChannel=JSON.parse((await cloudBytes('/api/terminal-sync/update-channel',65536)).toString());
  if(latestChannel.paused){await report({stage:'paused',current,available:release.releaseId});return;}
  const latestRelease=verifyRelease(latestChannel.manifest,publicKey,{minimumSequence:release.sequence});
  if(latestRelease.releaseId!==release.releaseId){await report({stage:'waiting',message:'A newer release is available; checking again shortly',current});return;}

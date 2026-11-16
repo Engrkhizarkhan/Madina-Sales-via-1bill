@@ -39,9 +39,12 @@ try {
   check((await fetch(origin+'/printing/jobs/'+snapshot.body.id,{headers:{'X-Print-Token':snapshot.body.key}})).status===410,'A4 snapshot link cannot be replayed');
   check((await request('/printing/jobs',{method:'POST',body:{...report,document:{...report.document,attrs:{onclick:'alert(1)'}}}})).status===422,'Report handoff rejects executable markup');
 
-  const layout={...receiptDefaults,businessName:"MADINA EXPRESS QA",fontSize:12,paddingY:0,font:"Georgia"};
+  const layout={...receiptDefaults,businessName:"MADINA EXPRESS QA",fontSize:12,paddingY:0,font:"Georgia",websiteSize:18,websiteBold:false,websiteLabel:'Booking at',websiteAlign:'left'};
   check((await request("/settings/receipt",{method:"PUT",body:layout})).status===200,"owner can edit receipt names, fonts, sizes and margins");
   assert.deepEqual((await request("/settings/receipt")).body.layout,layout);passed++;
+  const oldReceiptClient={...layout};
+  for(const key of ['websiteSize','websiteBold','websiteLabel','websiteAlign'])delete oldReceiptClient[key];
+  assert.deepEqual((await request('/settings/receipt',{method:'PUT',body:oldReceiptClient})).body.layout,layout);passed++;
   for(const invalid of [{fontSize:-1},{font:"url(evil)"},{paddingX:100},{showQr:"true"},{businessName:""},{qrSize:999}])assert.throws(()=>validateReceiptLayout({...layout,...invalid}));
   check((await request("/settings/receipt",{method:"PUT",body:{...layout,fontSize:100}})).status===422,"unsafe receipt sizes are rejected by the server");
   const staffName="reset-qa-"+randomBytes(4).toString("hex");
@@ -64,7 +67,7 @@ try {
   const booking=await request("/bookings",{method:"POST",body:{tripId:trip.id,date,seats:[1],passenger:"Receipt QA Passenger",phone:"03001234567",cnic:"1730112345671",gender:"Male",paymentMethod:"Cash",bookingStatus:"Confirmed",discount:0}});
   check(booking.status===201,"a real booking transaction issues a paid seat for QR checks");
   const ticket=booking.body.booking,url=new URL(ticket.verificationUrl),key=new URLSearchParams(url.hash.slice(1)).get("key");
-  check(url.hostname==="madinaexpress.duckdns.org"&&key?.length===43&&!url.href.includes("03001234567"),"ticket QR contains a signed link without phone or CNIC");
+  check(url.hostname==="madinaexpress.pk"&&key?.length===43&&!url.href.includes("03001234567"),"ticket QR contains a signed link without phone or CNIC");
   const details=await request("/public/ticket-lookup",{method:"POST",authenticated:false,body:{reference:ticket.ticketNo,key}});
   check(details.status===200&&details.body.journey.passenger==="Receipt QA Passenger"&&details.body.journey.paid===ticket.paid,"scanned QR opens current paid-ticket details without retyping phone");
   check(!("phone" in details.body.journey)&&!("cnic" in details.body.journey),"public QR details exclude phone and identity numbers");

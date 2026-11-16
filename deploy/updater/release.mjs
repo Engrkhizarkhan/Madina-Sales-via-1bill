@@ -36,7 +36,7 @@ export function zipEntries(bytes){
  return [...names];
 }
 export async function fetchBounded(url,maxBytes,options={}){
- const response=await fetch(url,{...options,signal:AbortSignal.timeout(180000),redirect:options.redirect||'error'});
+ const response=await fetch(url,{...options,signal:options.signal||AbortSignal.timeout(180000),redirect:options.redirect||'error'});
  if(!response.ok)throw new Error(`Download returned ${response.status}`);
  if(Number(response.headers.get('content-length'))>maxBytes)throw new Error('Download exceeds allowed size');
  const chunks=[];let size=0;

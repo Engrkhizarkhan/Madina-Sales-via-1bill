@@ -52,6 +52,7 @@ chmod 0640 backend/.env
 sed -i "s|^URL: .*|URL: https://$staff_host/login|" /root/madina-express-initial-login.txt
 
 install -m 0644 deploy/nginx-production-api.conf /etc/nginx/snippets/madina-api.conf
+install -m 0644 deploy/nginx-cloudflare-realip.conf /etc/nginx/snippets/madina-cloudflare-realip.conf
 sed "s/__PUBLIC_HOST__/$public_host/g" deploy/nginx-production-common.conf.template > /etc/nginx/snippets/madina-common.conf
 sed -e "s/__PUBLIC_HOST__/$public_host/g" -e "s/__STAFF_HOST__/$staff_host/g" \
   deploy/nginx-production.conf.template > /etc/nginx/sites-available/madina-express

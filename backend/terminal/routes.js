@@ -18,6 +18,7 @@ import { terminalState } from "./state.js";
 import { signTerminalRequest } from "./certificates.js";
 import {buildMainInstaller,createInstallerDownload,installerDownload} from './installer-downloads.js';
 import { CloudSessions } from "../node/cloud-sessions.js";
+import {staffOrigin} from '../../shared/domains.mjs';
 
 const route = handler => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
 const bytes = value => new Uint8Array(Buffer.from(value));
@@ -59,7 +60,7 @@ terminalSyncRouter.post('/update-status',route(async(req,res)=>{
   await authenticateInstaller(req);
   const privateData=JSON.parse(await readFile(join(config.terminal.directory,'private.json'),'utf8'));
   if(req.body?.installationId!==privateData.installationId)fail('The main PC is not registered.',403,'forbidden');
-  await recordTerminalUpdate(req.body);res.json({ok:true});
+  await recordTerminalUpdate({...req.body,cloudOrigin:'https://'+req.hostname});res.json({ok:true});
 }));
 terminalSyncRouter.get("/public-status", route(async (_req, res) => {
   const state = await terminalState();
@@ -137,7 +138,7 @@ terminalEnrollmentRouter.post("/enroll", route(async (req, res) => {
 
 export const terminalAdminRouter = Router();
 terminalAdminRouter.get("/counter-launcher", route(async (req,res) => {
-  const origin = config.terminal.local ? config.terminal.localOrigin : "https://staff.madinaexpress.duckdns.org";
+  const origin = config.terminal.local ? config.terminal.localOrigin : staffOrigin;
   const device=req.verifiedTerminal?.match(/^terminal-[1-9][0-9]?:([a-f0-9]{64})$/);
   const archive = zipSync({
     "Setup-Counter-Shortcut.ps1":bytes(await readFile(resolve("deploy/windows/Setup-Counter-Shortcut.ps1"))),

@@ -1,4 +1,5 @@
 server_tokens off;
+include /etc/nginx/snippets/madina-cloudflare-realip.conf;
 ssl_certificate /etc/letsencrypt/live/__PUBLIC_HOST__/fullchain.pem;
 ssl_certificate_key /etc/letsencrypt/live/__PUBLIC_HOST__/privkey.pem;
 ssl_protocols TLSv1.2 TLSv1.3;

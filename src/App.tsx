@@ -2,6 +2,7 @@ import {ReportPrintPage} from './report-print-page';
 import {openA4Report,reportBridgeConfigured} from './report-transfer';
 import {mergeLiveRecords} from "../shared/live-records.mjs";
 import { receiptDefaults, receiptFonts, receiptNumberBounds, type ReceiptLayout } from "../shared/receipt-layout.mjs";
+import {publicOrigin} from '../shared/domains.mjs';
 import { ReceiptSettingsContext, useReceiptSettings } from "./receipt-settings";
 import { ConfirmationDialog } from "./confirmation";
 import { StaffPolicyContext, useStaffPolicy, type OperatingPolicies } from "./operating-policies";
@@ -5309,13 +5310,15 @@ function ReceiptEditor({editable}:{editable:boolean}) {
     event.preventDefault();setBusy(true);setMessage("");
     try{await save(draft);setMessage("Receipt design saved for all counters.");}catch(error){setMessage(error instanceof Error?error.message:"Could not save receipt design.");}finally{setBusy(false);}
   }}><fieldset className="counter-fields" disabled={!editable||busy}><div className="settings-fields">
-    {([['businessName','Business name',60],['brandMark','Top logo text',12],['contact','Contact numbers',100],['terminal','Terminal name',160],['website','Booking website',100],['tokenTitle','Boarding slip title',40]] as const).map(([key,label,max])=><label key={key}><span>{label}</span><input maxLength={max} required={key==='businessName'||key==='tokenTitle'} value={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.value})}/></label>)}
+    {([['businessName','Business name',60],['brandMark','Top logo text',12],['contact','Contact numbers',100],['terminal','Terminal name',160],['website','Booking website',100],['websiteLabel','Booking website caption',60],['tokenTitle','Boarding slip title',40]] as const).map(([key,label,max])=><label key={key}><span>{label}</span><input maxLength={max} required={key==='businessName'||key==='tokenTitle'} value={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.value})}/></label>)}
     <label><span>English font</span><select value={draft.font} onChange={event=>setDraft({...draft,font:event.target.value})}>{receiptFonts.map(font=><option key={font}>{font}</option>)}</select></label>
-    {(Object.entries(receiptNumberBounds) as [keyof typeof receiptNumberBounds,[number,number]][]).map(([key,[min,max]])=><label key={key}><span>{{fontSize:'Body font (px)',headingSize:'Heading font (px)',seatSize:'Seat number (px)',urduSize:'Urdu font (px)',paddingX:'Side padding (mm)',paddingY:'Top / bottom padding (mm)',lineHeight:'Line spacing',qrSize:'QR size (mm)'}[key]}</span><input type="number" required min={min} max={max} step={key==='lineHeight'?.05:.5} value={draft[key]} onChange={event=>setDraft({...draft,[key]:Number(event.target.value)})}/></label>)}
+    {(Object.entries(receiptNumberBounds) as [keyof typeof receiptNumberBounds,[number,number]][]).map(([key,[min,max]])=><label key={key}><span>{{fontSize:'Body font (px)',headingSize:'Heading font (px)',seatSize:'Seat number (px)',urduSize:'Urdu font (px)',paddingX:'Side padding (mm)',paddingY:'Top / bottom padding (mm)',lineHeight:'Line spacing',qrSize:'QR size (mm)',websiteSize:'Booking website font (px)'}[key]}</span><input type="number" required min={min} max={max} step={key==='lineHeight'?.05:.5} value={draft[key]} onChange={event=>setDraft({...draft,[key]:Number(event.target.value)})}/></label>)}
+    <label><span>Booking website alignment</span><select value={draft.websiteAlign} onChange={event=>setDraft({...draft,websiteAlign:event.target.value as ReceiptLayout['websiteAlign']})}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
     <label className="span-2"><span>Urdu passenger instructions</span><textarea lang="ur" dir="rtl" maxLength={600} value={draft.urduTerms} onChange={event=>setDraft({...draft,urduTerms:event.target.value})}/></label>
     <label className="span-2"><span>Urdu boarding slip note</span><textarea lang="ur" dir="rtl" maxLength={200} value={draft.tokenNote} onChange={event=>setDraft({...draft,tokenNote:event.target.value})}/></label>
     <label><span><input type="checkbox" checked={draft.showQr} onChange={event=>setDraft({...draft,showQr:event.target.checked})}/> Show ticket QR</span></label>
     <label><span><input type="checkbox" checked={draft.showWebsite} onChange={event=>setDraft({...draft,showWebsite:event.target.checked})}/> Show booking website</span></label>
+    <label><span><input type="checkbox" checked={draft.websiteBold} onChange={event=>setDraft({...draft,websiteBold:event.target.checked})}/> Bold booking website</span></label>
   </div><div className="form-actions"><button type="button" className="secondary-button" onClick={()=>setDraft({...receiptDefaults})}>Restore design defaults</button><button className="primary-button" disabled={!dirty||busy}>{busy?'Saving…':'Save receipt design'}</button></div></fieldset></form>
     <p role="status">{message}</p><small>Live preview · 80 mm paper · each slip prints separately</small>
     <div className="receipt thermal-ticket receipt-design-preview"><TicketSlips booking={initialBookings[0]} printedAt={new Date()} layout={draft}/></div>
@@ -5949,7 +5952,7 @@ function TicketSlips({booking,printedAt,layout:preview}:{booking:Booking;printed
     <article style={style} className="passenger-receipt" aria-label={`Passenger receipt seat ${seats}`}>
       <header className="thermal-heading">{layout.brandMark&&<div className="ticket-brand-mark">{layout.brandMark}</div>}<h2>{layout.businessName}</h2>{layout.contact&&<p className="ticket-contact">{layout.contact}</p>}</header>
       <div className="ticket-bus-type"><span>BUS Type</span><strong>{booking.service}</strong></div>
-      <div className="ticket-departure" style={!layout.showQr?{gridTemplateColumns:"1fr"}:undefined}><dl><div className="ticket-seat-number"><dt>SEAT NO #</dt><dd>{seats}</dd></div><div><dt>Departure</dt><dd>{booking.time}</dd></div><div><dt>Travel date</dt><dd>{ticketDate(booking.date)}</dd></div></dl>{layout.showQr&&<QRCodeSVG value={booking.verificationUrl || `https://madinaexpress.duckdns.org/check?reference=${encodeURIComponent(booking.ticketNo)}#ticket-lookup`} size={76} level="M" marginSize={4} title="Scan to check this ticket"/>}</div>
+      <div className="ticket-departure" style={!layout.showQr?{gridTemplateColumns:"1fr"}:undefined}><dl><div className="ticket-seat-number"><dt>SEAT NO #</dt><dd>{seats}</dd></div><div><dt>Departure</dt><dd>{booking.time}</dd></div><div><dt>Travel date</dt><dd>{ticketDate(booking.date)}</dd></div></dl>{layout.showQr&&<QRCodeSVG value={booking.verificationUrl || `${publicOrigin}/check?reference=${encodeURIComponent(booking.ticketNo)}#ticket-lookup`} size={76} level="M" marginSize={4} title="Scan to check this ticket"/>}</div>
       <table className="thermal-details"><tbody>
         <tr><th>Passenger</th><td>{booking.passenger}</td></tr><tr><th>Route</th><td>{booking.route}</td></tr><tr><th>Destination</th><td>{booking.destination}</td></tr><tr><th>Terminal</th><td>{layout.terminal||booking.boardingPoint}</td></tr>
         <tr className="ticket-fare"><th>{ticket.canBoard?"Fare paid":"Net paid"}</th><td>{money(netCollected(booking))}</td></tr>
@@ -5958,7 +5961,7 @@ function TicketSlips({booking,printedAt,layout:preview}:{booking:Booking;printed
       </tbody></table>
       {!ticket.canBoard&&<div className="thermal-payment-status"><strong>{ticket.status}</strong></div>}
       <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>{layout.urduTerms}</p></div>
-      {layout.showWebsite&&layout.website&&<p className="ticket-booking-promo">Book online: <strong>{layout.website}</strong></p>}
+      {layout.showWebsite&&layout.website&&<p className="ticket-booking-promo" style={{fontSize:layout.websiteSize,fontWeight:layout.websiteBold?700:400,textAlign:layout.websiteAlign}}>{layout.websiteLabel} <strong>{layout.website}</strong></p>}
     </article>
     {ticket.canBoard && <article style={style} className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
       <header><strong>{layout.businessName}</strong><span>{layout.tokenTitle}</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>

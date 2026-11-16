@@ -61,3 +61,14 @@ The initial `/admin/bootstrap` returns one consistent snapshot and its `liveCurs
 Unchanged responses contain no history arrays. Changed responses contain affected bookings/runs plus deleted IDs; small catalog data is returned only when changed. Existing objects are preserved when identical, so editing, selected seats, dialogs and scroll are not reset. Background refresh does not spin the manual Refresh button, display timestamps, open receipts or print another counter's ticket. Connection errors remain visible; successful quiet refreshes have no status message. Restores, cleanup and large catch-up batches request one consistent full resync. Historical data is still loaded once on entry for the existing history/finance views; server pagination of those views remains a separate improvement as history becomes large.
 
 Daily and pre-update SQL backups retain seven days. This does not remove tickets from the live database or shorten the main PC's replication binlog retention.
+
+
+## MadinaExpress.pk migration
+
+The canonical passenger host is https://madinaexpress.pk and remote staff use https://staff.madinaexpress.pk/login. Keep both DuckDNS hosts and their certificate working as compatibility endpoints; machine API/update requests are served in place, without cross-domain redirects. Previously printed signed QR links remain valid.
+
+The accepted release's privileged Windows migration entrypoint updates only the protected cloud origin and allowed web origins in config/backend.env and host/updater.json. It runs under the existing SYSTEM updater while the app is stopped. Original configuration copies are retained as .pre-pk files. Local IP, database settings, authenticator secrets, enrollment certificates, browser profiles and scheduled tasks are preserved. Each replacement is flushed before rename, interrupted partial switches are repeatable, and no database data is reset. The main app and updater can fail over to the approved legacy staff host when the canonical endpoint is unavailable. Updater telemetry records the hostname that received its authenticated report; local health exposes the configured cloud origin.
+
+Before publishing a domain migration: verify the new DNS and certificate, configure both public/staff virtual hosts, keep APIs and signed packages uncached, test existing-domain access and new-domain requests, and run isolated application/update tests. After installing: verify the main-PC health cloudOrigin, update telemetry through the new hostname, replication and public/staff pages. Child PCs retain their existing LAN shortcuts and enrolled profiles.
+
+Receipt design also allows the booking website caption, text size (9–22 px), boldness and left/center/right alignment to be saved for all counters. Older clients' complete receipt settings acquire defaults for these new fields.

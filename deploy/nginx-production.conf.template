@@ -8,11 +8,13 @@ map "$ssl_client_verify:$ssl_client_fingerprint" $madina_device {
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
-    server_name __PUBLIC_HOST__ __STAFF_HOST__;
+    server_name __PUBLIC_HOST__ www.__PUBLIC_HOST__ __STAFF_HOST__ madinaexpress.duckdns.org staff.madinaexpress.duckdns.org;
     server_tokens off;
     location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type text/plain; }
     location / {
         if ($host = __STAFF_HOST__) { return 301 https://__STAFF_HOST__$request_uri; }
+        if ($host = staff.madinaexpress.duckdns.org) { return 301 https://staff.madinaexpress.duckdns.org$request_uri; }
+        if ($host = madinaexpress.duckdns.org) { return 301 https://madinaexpress.duckdns.org$request_uri; }
         return 301 https://__PUBLIC_HOST__$request_uri;
     }
 }
@@ -20,7 +22,7 @@ server {
 server {
     listen 443 ssl http2 default_server;
     listen [::]:443 ssl http2 default_server;
-    server_name __PUBLIC_HOST__;
+    server_name __PUBLIC_HOST__ www.__PUBLIC_HOST__ madinaexpress.duckdns.org;
     include /etc/nginx/snippets/madina-common.conf;
     location ~ ^/api/(health|terminal-sync/(register|bootstrap|activate|status|abort|public-status|update-channel|update-status|update-control)|public/(bootstrap|trip-runs|bookings|ticket-lookup))$ {
         include /etc/nginx/snippets/madina-api.conf;
@@ -34,7 +36,7 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name __STAFF_HOST__;
+    server_name __STAFF_HOST__ staff.madinaexpress.duckdns.org;
     include /etc/nginx/snippets/madina-common.conf;
 
     ssl_client_certificate /etc/nginx/madina-device-ca.crt;

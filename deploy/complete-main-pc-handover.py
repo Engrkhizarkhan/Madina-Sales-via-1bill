@@ -88,7 +88,7 @@ console.log(JSON.stringify(verifyOwnerCommand(JSON.parse(readFileSync(0,'utf8'))
     site = pathlib.Path('/etc/nginx/sites-available/madina-express')
     old_site = site.read_bytes()
     template = (project / 'deploy/nginx-production.conf.template').read_text()
-    template = template.replace('__PUBLIC_HOST__', 'madinaexpress.duckdns.org').replace('__STAFF_HOST__', 'staff.madinaexpress.duckdns.org')
+    template = template.replace('__PUBLIC_HOST__', 'madinaexpress.pk').replace('__STAFF_HOST__', 'staff.madinaexpress.pk')
     site.write_text(template)
     os.chmod(site, 0o600)
     try:

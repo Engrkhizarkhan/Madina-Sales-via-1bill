@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {config} from '../node/config.js';
 import {fail} from '../node/helpers.js';
 import {runProcess} from './process.js';
+import {staffOrigin} from '../../shared/domains.mjs';
 
 export const installerDownloadLifetime=30*60000;
 export const installerDirectory=()=>process.env.TERMINAL_INSTALLER_DIRECTORY||join(config.terminal.directory,'installer-downloads');
@@ -17,7 +18,7 @@ export async function buildMainInstaller(setup,{project=resolve('.'),baseArchive
   try {
     await copyFile(baseArchive,join(directory,'application.zip'));
     for(const name of files)await copyFile(join(project,'deploy/windows',name),join(directory,name));
-    await writeFile(join(directory,'setup.json'),JSON.stringify({token:setup.installToken,knownHost:setup.knownHost,cloudOrigin:'https://staff.madinaexpress.duckdns.org'}),{mode:0o600});
+    await writeFile(join(directory,'setup.json'),JSON.stringify({token:setup.installToken,knownHost:setup.knownHost,cloudOrigin:staffOrigin}),{mode:0o600});
     const file=join(directory,'main-pc.zip');
     await runProcess('zip',['-0','-q',file,'application.zip',...files,'setup.json'],{cwd:directory});
     return {file,dispose};

@@ -2,6 +2,8 @@
 import mysql from 'mysql2/promise';
 import { applyMigrations } from './migrations.js';
 import { readFile } from 'node:fs/promises';
+import {join} from 'node:path';
+import {migrateCloudDomain} from '../../deploy/updater/domain-migration.mjs';
 const file=process.argv[2];
 if(!file)throw new Error('Pass the protected database administrator configuration');
 const source=await readFile(file,'utf8');
@@ -11,4 +13,5 @@ const db=await mysql.createConnection({...(config.socket?{socketPath:config.sock
 try{
  const [[locked]]=await db.query("SELECT GET_LOCK('madina_schema_update',30) acquired");if(!locked.acquired)throw new Error('Another migration is in progress');
  await applyMigrations(db);
+  if(process.platform==='win32')await migrateCloudDomain(join(process.env.ProgramData||'C:\\ProgramData','MadinaExpress'));
 }finally{await db.end();}

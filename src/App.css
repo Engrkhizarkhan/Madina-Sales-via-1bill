@@ -6339,8 +6339,8 @@ td small {
 .settings-card { overflow-wrap: anywhere; }
 .settings-fields input, .settings-fields select { min-width: 0; max-width: 100%; }
 
-.thermal-ticket .ticket-booking-promo { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid #000; color: #000; font: 11px/1.35 Arial, sans-serif; text-align: center; }
-.thermal-ticket .ticket-booking-promo strong { font-weight: 700; }
+.thermal-ticket .ticket-booking-promo { margin: 6px 0 0; padding-top: 6px; border-top: 1px solid #000; color: #000; font-family:var(--receipt-font,Arial),sans-serif; line-height:1.35; overflow-wrap:anywhere; }
+.thermal-ticket .ticket-booking-promo strong { font-weight: inherit; }
 
 /* Account and policy checkboxes stay compact within the standard settings grid. */
 .settings-card input[type="checkbox"] { width: 16px; min-width: 16px; height: 16px; margin: 0 8px 0 0; vertical-align: middle; accent-color: var(--primary, #175b47); }

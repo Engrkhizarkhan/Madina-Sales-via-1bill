@@ -3,6 +3,7 @@ import https from "node:https";
 import { readFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { config } from "../node/config.js";
+import {staffOrigin,legacyStaffOrigin} from '../../shared/domains.mjs';
 
 export async function startTerminalWeb(app) {
   const web = express();
@@ -21,7 +22,7 @@ export async function startTerminalWeb(app) {
     try {
       const template = await readFile(resolve("dist/Madina-Express-Counter.cmd"), "utf8");
       res.type("text/plain").attachment("Madina-Express-Counter.cmd")
-        .send(template.replaceAll("https://staff.madinaexpress.duckdns.org", config.terminal.localOrigin));
+        .send(template.replaceAll(staffOrigin,config.terminal.localOrigin).replaceAll(legacyStaffOrigin,config.terminal.localOrigin));
     } catch (error) { next(error); }
   });
   web.use("/assets",express.static(resolve(process.env.TERMINAL_ASSET_DIRECTORY || "dist/assets"),{dotfiles:"deny",index:false}));

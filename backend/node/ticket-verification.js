@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config.js";
+import {publicOrigin} from '../../shared/domains.mjs';
 
 function signature(booking, reference = booking.reservation_no || booking.ticket_no) {
   const key = process.env.PUBLIC_TICKET_KEY || config.adminOtpKey;
@@ -7,7 +8,7 @@ function signature(booking, reference = booking.reservation_no || booking.ticket
   return createHmac("sha256",key).update(`madina-ticket-view-v1:${booking.id}:${reference}`).digest("base64url");
 }
 export function ticketVerificationUrl(booking) {
-  const url = new URL("/check", "https://madinaexpress.duckdns.org");
+  const url = new URL("/check", publicOrigin);
   url.searchParams.set("reference",booking.ticket_no);
   const key = signature(booking);
   // Keep the capability out of web-server access logs and referrer headers.
