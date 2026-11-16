@@ -3,12 +3,14 @@ import bcrypt from 'bcryptjs';
 import {config} from '../node/config.js';
 import {pool,closePool} from '../node/db.js';
 import {pakistanDate} from '../node/helpers.js';
+import {currentRoutePricing,seatFare} from '../../shared/service-pricing.mjs';
 if(!/test|qa/i.test(config.db.database)) throw new Error('Use an isolated test database.');
 const suffix=Date.now(), username=`services-${suffix}`,password='ServiceQA!2026';
 const base=process.env.TEST_API_URL||`http://${config.host}:${config.port}`;
 const [user]=await pool.execute("INSERT INTO users(name,email,username,password_hash,role,force_password_change,is_owner,remote_allowed) VALUES (?,?,?,?,'admin',0,1,1)",['Service QA',`${username}@example.invalid`,username,await bcrypt.hash(password,10)]);
-let cookie='',csrf='',count=0,busId,routeId;
+let cookie='',csrf='',count=0,busId,routeId,fallbackRouteId;
 const tripId=`services-trip-${suffix}`;
+const fallbackTripId=`base-fare-trip-${suffix}`;
 const tomorrow=pakistanDate(new Date(Date.now()+86400000)),today=pakistanDate();
 const check=(value,label)=>{assert.ok(value,label);count++;console.log(`PASS ${label}`);};
 async function req(method,path,body){const response=await fetch(base+path,{method,headers:{'Content-Type':'application/json',Cookie:cookie,'X-CSRF-Token':csrf,'X-Forwarded-For':`198.51.100.${suffix%200+1}`},body:body?JSON.stringify(body):undefined});if(response.headers.get('set-cookie'))cookie=response.headers.get('set-cookie').split(';')[0];return {status:response.status,...await response.json()};}
@@ -86,18 +88,39 @@ try{
    cnic: paidDraft.cnic, gender: paidDraft.gender, paymentMethod: 'Cash', fareOverrides: [5150],
  });
  check(collected.status === 200 && collected.booking.paid === 5150, 'reservation payment uses the edited fare');
+ // Match the single-destination/base-fare case that explicit class-price tests
+ // do not cover: today's saved departure still has 550 after management saves 500.
+ const fallbackDraft={...route,to:'Kohat',fare:550,destinations:[],services:[{busId,times:['10:00'],fares:{Kohat:{}}}]};
+ const fallbackSaved=await req('POST','/routes/new',fallbackDraft);fallbackRouteId=fallbackSaved.route?.id;
+ check(fallbackSaved.status===200,'single-destination route saves without explicit fare overrides');
+ await pool.execute("INSERT INTO trips(id,route_id,bus_id,departure,arrival,driver,attendant,platform,status,service_days,active) VALUES (?,?,?,'10:00','12:00','','','','Scheduled',?,1)",[fallbackTripId,fallbackRouteId,busId,JSON.stringify(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])]);
+ const sale={...paidDraft,tripId:fallbackTripId,destination:'Kohat'};
+ const originalSale=await req('POST','/bookings',{...sale,seats:[1],quotedFares:[550]});
+ check(originalSale.status===201&&originalSale.booking.fare===550,'original ticket uses the previous base fare');
+ const oldRun=(await req('GET',`/trip-runs?date=${tomorrow}`)).runs.find(run=>run.tripId===fallbackTripId);
+ const updated=await req('PUT',`/routes/${fallbackRouteId}`,{...fallbackSaved.route,fare:500});
+ check(updated.status===200&&updated.route.fare===500,'management saves the lower base fare on an existing departure');
+ const clientRoute=currentRoutePricing(oldRun.snapshot.route,updated.route);
+ const nextSale=await req('POST','/bookings',{...sale,seats:[2],quotedFares:[seatFare(clientRoute,oldRun.snapshot.bus,'Kohat',2)]});
+ check(nextSale.status===201&&nextSale.booking.fare===500&&nextSale.booking.paid===500,'Counter quote and API agree on the new base fare despite an older departure snapshot');
+ check((await req('POST','/bookings',{...sale,seats:[3],quotedFares:[550]})).error.code==='fare_changed','unrefreshed clients still cannot charge a stale managed fare');
+ const [[original]]=await pool.execute('SELECT fare,paid FROM bookings WHERE id=?',[originalSale.booking.id]);
+ const [[oldLedger]]=await pool.execute('SELECT SUM(amount) amount FROM financial_transactions WHERE booking_id=?',[originalSale.booking.id]);
+ check(Number(original.fare)===550&&Number(original.paid)===550&&Number(oldLedger.amount)===550,'old paid ticket and finance ledger retain the collected 550');
+ check(oldRun.snapshot.route.fare===550,'new Counter pricing does not mutate the saved route snapshot');
  console.log(`\n${count} route service checks passed.`);
 }finally{
- await pool.execute('DELETE FROM financial_transactions WHERE booking_id IN (SELECT id FROM bookings WHERE trip_id=?) OR created_by=?',[tripId,user.insertId]);
+ await pool.execute('DELETE FROM financial_transactions WHERE booking_id IN (SELECT id FROM bookings WHERE trip_id IN (?,?)) OR created_by=?',[tripId,fallbackTripId,user.insertId]);
  await pool.execute('DELETE FROM expenses WHERE created_by=?',[user.insertId]);
- await pool.execute('DELETE FROM refunds WHERE booking_id IN (SELECT id FROM bookings WHERE trip_id=?)',[tripId]);
- await pool.execute('DELETE FROM booking_seats WHERE booking_id IN (SELECT id FROM bookings WHERE trip_id=?)',[tripId]);
- await pool.execute('DELETE FROM bookings WHERE trip_id=?',[tripId]);
- await pool.execute('DELETE FROM trip_runs WHERE trip_id=?',[tripId]);
- await pool.execute('DELETE FROM trips WHERE id=?',[tripId]);
+ await pool.execute('DELETE FROM refunds WHERE booking_id IN (SELECT id FROM bookings WHERE trip_id IN (?,?))',[tripId,fallbackTripId]);
+ await pool.execute('DELETE FROM booking_seats WHERE booking_id IN (SELECT id FROM bookings WHERE trip_id IN (?,?))',[tripId,fallbackTripId]);
+ await pool.execute('DELETE FROM bookings WHERE trip_id IN (?,?)',[tripId,fallbackTripId]);
+ await pool.execute('DELETE FROM trip_runs WHERE trip_id IN (?,?)',[tripId,fallbackTripId]);
+ await pool.execute('DELETE FROM trips WHERE id IN (?,?)',[tripId,fallbackTripId]);
  await pool.execute('DELETE FROM audit_logs WHERE user_id=?',[user.insertId]);
  await pool.execute('DELETE FROM api_sessions WHERE user_id=?',[user.insertId]);
  if(routeId)await pool.execute('DELETE FROM routes WHERE id=?',[routeId]);
+ if(fallbackRouteId)await pool.execute('DELETE FROM routes WHERE id=?',[fallbackRouteId]);
  if(busId)await pool.execute('DELETE FROM buses WHERE id=?',[busId]);
  await pool.execute("DELETE FROM buses WHERE registration=?",[`SERV-${suffix}`]);
  await pool.execute('DELETE FROM users WHERE id=?',[user.insertId]);

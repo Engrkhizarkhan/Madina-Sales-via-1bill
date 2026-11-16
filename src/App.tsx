@@ -7,7 +7,7 @@ import { ConfirmationDialog } from "./confirmation";
 import { StaffPolicyContext, useStaffPolicy, type OperatingPolicies } from "./operating-policies";
 import { runningBuild, type ReleaseInfo } from "./release";
 import { AccountAccessSettings, BookingPolicySettings, ApplicationUpdateSettings } from "./system-settings";
-import {routeDestinations,seatFare,seatClass,departureTimes,commissionPolicy,type SeatClass,type RouteService} from "../shared/service-pricing.mjs";
+import {currentRoutePricing,routeDestinations,seatFare,seatClass,departureTimes,commissionPolicy,type SeatClass,type RouteService} from "../shared/service-pricing.mjs";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { QRCodeSVG } from "qrcode.react";
@@ -607,7 +607,7 @@ const tripBus = (trip: TripRecord, fleet: BusRecord[]) => {
 const vehicleLabel = (bus?:BusRecord)=>bus?.isTemplate?"Not assigned":presentationText(bus?.registration??"Not assigned");
 const tripRoute = (trip: TripRecord, routes: RouteRecord[]) => {
   const current=routes.find(route=>route.id===trip.routeId);
-  return trip.snapshot?.route ? {...trip.snapshot.route,...(current?{destinations:current.destinations,services:current.services}: {})} : current!;
+  return currentRoutePricing(trip.snapshot?.route,current)!;
 };
 const serviceDayFor = (date: string) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][new Date(`${date}T12:00:00`).getDay()] as Weekday;
 const tripsOnDate = (trips: TripRecord[], date: string, runs: TripRun[]) =>

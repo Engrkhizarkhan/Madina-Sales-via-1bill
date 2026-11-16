@@ -2,6 +2,7 @@ export type SeatClass = {name:string;seats:number[]};
 export type RouteService = {busId:string;times:string[];fares:Record<string,Record<string,number>>;commissionRate?:number};
 type PricedRoute = {to:string;fare:number;destinations?:{name:string;fare:number}[];services?:RouteService[]};
 type PricedBus = {id:string;layoutId?:string;seatClasses?:SeatClass[];commissionRate?:number};
+export function currentRoutePricing<T extends PricedRoute>(snapshot:T|undefined,current:T|undefined):T|undefined;
 export function routeDestinations(route:PricedRoute):{name:string;fare:number}[];
 export function serviceSettings(route:PricedRoute,bus:PricedBus):RouteService|undefined;
 export function seatClass(bus:PricedBus,seat:number):string;

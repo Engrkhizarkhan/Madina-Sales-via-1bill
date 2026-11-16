@@ -1,4 +1,11 @@
 // Shared by the counter, public checkout and API. Saved ticket amounts never change.
+// A dated departure preserves its original route details, but new sales must
+// quote the current pricing, including the base fare when no override exists.
+export function currentRoutePricing(snapshot,current) {
+  if(!snapshot)return current;
+  if(!current)return snapshot;
+  return {...snapshot,fare:current.fare,destinations:current.destinations,services:current.services};
+}
 export const routeDestinations = route => route.destinations?.length ? route.destinations : [{name:route.to,fare:route.fare}];
 export const serviceSettings = (route,bus) => route.services?.find(item=>item.busId===(bus.layoutId||bus.id));
 export const seatClass = (bus,seat) => bus.seatClasses?.find(group=>group.seats.includes(seat))?.name || 'Standard';
