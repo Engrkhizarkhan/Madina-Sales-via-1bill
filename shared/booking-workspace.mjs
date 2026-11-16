@@ -23,6 +23,26 @@ export function fareQuantities(fares) {
   return [...quantities].map(([fare, count]) => ({fare, count}));
 }
 
+// Keep class/destination price proportions and allocate the final cents exactly.
+export function allocateFareTotal(fares, total) {
+  if (total === undefined || !fares.length) return [...fares];
+  if (!Number.isFinite(total) || total < 0 || !Number.isSafeInteger(Math.round(total * 100))) throw new RangeError('Invalid total fare.');
+  let weights = fares.map(fare => {
+    const cents = Math.round(fare * 100);
+    if (!Number.isSafeInteger(cents) || cents < 0) throw new RangeError('Invalid seat fare.');
+    return BigInt(cents);
+  });
+  if (weights.every(weight => weight === 0n)) weights = weights.map(() => 1n);
+  const denominator = weights.reduce((sum, weight) => sum + weight, 0n);
+  const target = BigInt(Math.round(total * 100));
+  const amounts = weights.map(weight => target * weight / denominator);
+  const remainders = weights.map((weight, index) => ({index, value:target * weight % denominator}));
+  remainders.sort((a,b) => a.value === b.value ? a.index - b.index : a.value > b.value ? -1 : 1);
+  const remaining = Number(target - amounts.reduce((sum, amount) => sum + amount, 0n));
+  for (let index = 0; index < remaining; index++) amounts[remainders[index].index]++;
+  return amounts.map(amount => Number(amount) / 100);
+}
+
 export function paidVoucherBookings(bookings) {
   return bookings.filter(booking => booking.bookingStatus === 'Confirmed' &&
     booking.paid - (booking.refunds || []).reduce((sum, refund) => sum + refund.amount, 0) > 0)
