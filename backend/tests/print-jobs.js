@@ -1,9 +1,20 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {mkdtemp,readFile,readdir,writeFile,rm} from 'node:fs/promises';import {tmpdir} from 'node:os';import {join} from 'node:path';
 import {validateReportTree,reportProtocol} from '../../shared/report-print.mjs';
+import {EventEmitter} from 'node:events';
 Object.assign(process.env,{DB_NAME:'print_job_qa',DB_USER:'qa',DB_PASSWORD:'unused',TERMINAL_ROLE:'standalone'});
 const {createPrintJob,claimPrintJob,clearPrintJobs,printJobSnapshot}=await import('../node/print-jobs.js');
 const {maintenance}=await import('../update/maintenance.js');
 const document={tag:'article',attrs:{class:'print-document operations-document report-a4'},children:[{tag:'h1',attrs:{},children:['MADINA EXPRESS']},{tag:'p',attrs:{lang:'ur',dir:'rtl'},children:['مدینہ ایکسپریس']},{tag:'table',attrs:{},children:[{tag:'colgroup',attrs:{},children:[{tag:'col',attrs:{style:'width: 17%;'},children:[]}]}]}]};
+test('cleanup waits for an in-flight print preparation before taking its snapshot',()=>{
+ const response=new EventEmitter();let next=false;
+ maintenance.middleware({method:'POST',path:'/printing/jobs'},response,()=>{next=true;});
+ try{
+  assert.ok(next);assert.equal(maintenance.status().activeWrites,1);
+  assert.equal(maintenance.beginOwnerMaintenance(0),false);
+  response.emit('finish');assert.equal(maintenance.status().activeWrites,0);
+  assert.equal(maintenance.beginOwnerMaintenance(0),true);
+ }finally{response.emit('close');maintenance.endOwnerMaintenance();}
+});
 test('maintenance clears only bounded print snapshots and blocks new snapshots until cleanup finishes',async()=>{
  const directory=await mkdtemp(join(tmpdir(),'madina-print-reset-'));process.env.PRINT_JOB_DIRECTORY=directory;
  try{

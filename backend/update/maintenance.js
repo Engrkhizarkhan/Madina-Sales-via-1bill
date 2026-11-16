@@ -11,7 +11,7 @@ export const maintenance = {
  status: () => ({ activeWrites:active, quietSeconds:Math.floor((Date.now()-lastWrite)/1000), draining:Date.now()<drainUntil }),
  draining: () => Date.now()<drainUntil,
  middleware(req,res,next) {
-  const write = !['GET','HEAD','OPTIONS'].includes(req.method) && /^\/(?:bookings|public\/bookings|trips|buses|routes|crew|users|expenses|finance|settings)(?:\/|$)/.test(req.path);
+  const write = !['GET','HEAD','OPTIONS'].includes(req.method) && /^\/(?:bookings|public\/bookings|printing|trips|buses|routes|crew|users|expenses|finance|settings)(?:\/|$)/.test(req.path);
   if (!write) return next();
   if (Date.now()<drainUntil) return res.status(503).json({error:{code:'updating',message:'A system update is being installed. Wait a moment, refresh and try again.'}});
   active++;lastWrite=Date.now();let finished=false;
