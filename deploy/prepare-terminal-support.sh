@@ -7,6 +7,22 @@ STATE_DIR=/var/lib/madina-express/terminal
 install -d -m 0750 -o root -g madina-express "$STATE_DIR"
 install -d -m 2750 -o madina-express -g www-data /var/cache/madina-express/installers
 install -d -m 0700 -o madina-express -g madina-express /var/lib/madina-express/admin-sessions
+# Allow only the acknowledgement file to be written by the API. Signed release
+# packages and their parent directory remain owned by root.
+python3 - <<'ACK'
+import os,pwd
+account=pwd.getpwnam('madina-express')
+path='/var/lib/madina-express/updates/owner-maintenance-result.json'
+fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_NOFOLLOW,0o600)
+try:
+    if os.fstat(fd).st_size==0:
+        os.write(fd,b'{}')
+        os.fsync(fd)
+    os.fchown(fd,account.pw_uid,account.pw_gid)
+    os.fchmod(fd,0o600)
+finally:
+    os.close(fd)
+ACK
 install -d -m 0755 -o root -g root /usr/local/libexec
 # Other JSON routes retain their 128 KB application limit; bounded report trees allow 512 KB.
 sed -i 's/client_max_body_size 128k;/client_max_body_size 512k;/' /etc/nginx/snippets/madina-common.conf
