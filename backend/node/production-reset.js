@@ -5,6 +5,40 @@ import { join } from "node:path";
 import { config } from "./config.js";
 import { transaction } from "./db.js";
 import { audit } from "./operations.js";
+import {requireOwner} from './account-access.js';
+import {printJobSnapshot,clearPrintJobs} from './print-jobs.js';
+import {maintenance} from '../update/maintenance.js';
+
+// Sales-only cleanup retains accounts, devices and every roster row, including
+// date-specific vehicle/time assignments. This is never a release migration.
+export async function clearTestSales(owner,req,command) {
+  requireOwner(owner);
+  if(!maintenance.draining())throw new Error('Sales cleanup requires the maintenance write fence.');
+  if(command?.action!=='clear-test-sales'||!/^[a-f0-9]{32}$/.test(command.nonce||''))throw new Error('A fixed sales-cleanup command is required.');
+  const tables=['financial_transactions','expenses','shift_closures','counter_shifts','refunds','booking_seats','payment_events','bookings'];
+  const auditTypes=['booking','expense','trip_run','shift','counter_shift','refund','payment'];
+  return transaction(async connection=>{
+    const marker=`production_reset_${command.nonce}`;
+    const [[applied]]=await connection.execute('SELECT setting_value FROM settings WHERE setting_key=? FOR UPDATE',[marker]);
+    if(applied)return {...(typeof applied.setting_value==='string'?JSON.parse(applied.setting_value):applied.setting_value),alreadyApplied:true};
+    const snapshot={createdAt:new Date().toISOString(),scope:'sales-only',tables:{},printJobs:await printJobSnapshot()};
+    for(const table of [...tables,'trip_runs'])snapshot.tables[table]=(await connection.query(`SELECT * FROM \`${table}\``))[0];
+    const placeholders=auditTypes.map(()=>'?').join(',');
+    snapshot.tables.audit_logs=(await connection.execute(`SELECT * FROM audit_logs WHERE entity_type IN (${placeholders})`,auditTypes))[0];
+    const directory=join(config.terminal.directory,'backups');await mkdir(directory,{recursive:true,mode:0o700});
+    const filename=`production-reset-${Date.now()}-${randomBytes(4).toString('hex')}.json.gz`;
+    await writeFile(join(directory,filename),gzipSync(JSON.stringify(snapshot)),{mode:0o600,flag:'wx',flush:true});
+    const cleared={};
+    for(const table of tables)cleared[table]=(await connection.query(`DELETE FROM \`${table}\``))[0].affectedRows;
+    cleared.audit_logs=(await connection.execute(`DELETE FROM audit_logs WHERE entity_type IN (${placeholders})`,auditTypes))[0].affectedRows;
+    cleared.trip_runs_reset=(await connection.execute("UPDATE trip_runs SET status='Scheduled',sales_paused=0,sales_override=0,notes='',boarding_started_at=NULL,departed_at=NULL,returned_at=NULL,snapshot=JSON_REMOVE(snapshot,'$.voucher','$.passengers')"))[0].affectedRows;
+    cleared.print_jobs=await clearPrintJobs();
+    const result={cleared,backup:filename,inventoryPreserved:true,accountsPreserved:true,devicesPreserved:true,schedulePreserved:true,releaseId:command.releaseId,completedAt:new Date().toISOString()};
+    await connection.execute('INSERT INTO settings(setting_key,setting_value,updated_by) VALUES (?,?,?)',[marker,JSON.stringify(result),owner.id]);
+    await audit('production.data_cleared','system','test-sales',null,{...result,scope:'sales-only'},owner.id,req,connection);
+    return result;
+  });
+}
 
 // An explicit owner operation, never an automatic release migration or seed.
 export async function clearOperationalData(owner, req, command = null) {

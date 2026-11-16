@@ -2,12 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync,sign } from "node:crypto";
 import { verifyOwnerCommand,applyOwnerCommand } from "../terminal/owner-command.js";
+import {salesCleanupEnvelope} from '../../scripts/sign-sales-cleanup.mjs';
 const keys=generateKeyPairSync("ed25519"),now=Date.now();
 const context={installationId:"test-main-pc",releaseId:"r-test-release",now};
 const command={project:"madina-express",action:"clear-test-data",installationId:context.installationId,releaseId:context.releaseId,nonce:"ab".repeat(16),ownerId:1,expiresAt:now+600000};
 const signed=data=>{const payload=JSON.stringify(data);return {payload,signature:sign(null,Buffer.from(payload),keys.privateKey).toString("base64")};};
+test('operator workflow signs only sales cleanup and rejects unsafe input',()=>{
+ const input={installationId:'11111111-2222-4333-8444-555555555555',releaseId:'r-0123456789ab',ownerId:1};
+ const envelope=salesCleanupEnvelope(input,keys.privateKey,now);
+ const result=verifyOwnerCommand(envelope,keys.publicKey,{...input,now});
+ assert.equal(result.action,'clear-test-sales');assert.equal(result.expiresAt,now+600000);
+ assert.notEqual(result.nonce,JSON.parse(salesCleanupEnvelope(input,keys.privateKey,now).payload).nonce);
+ for(const changed of [{installationId:'another;command'},{releaseId:'../../release'},{ownerId:0},{ownerId:1.5}])assert.throws(()=>salesCleanupEnvelope({...input,...changed},keys.privateKey,now));
+});
 test("maintenance accepts only operator-signed requests for the exact PC and release",()=>{
   assert.deepEqual(verifyOwnerCommand(signed(command),keys.publicKey,context),command);
+  assert.equal(verifyOwnerCommand(signed({...command,action:'clear-test-sales'}),keys.publicKey,context).action,'clear-test-sales');
   assert.equal(verifyOwnerCommand(signed({...command,action:"prepare-main-pc-handover"}),keys.publicKey,context).action,"prepare-main-pc-handover");
   for(const changed of [{action:"run-sql"},{installationId:"another-pc"},{releaseId:"previous-release"},{expiresAt:now-1},{expiresAt:now+3600000},{nonce:"../path"},{ownerId:0}])assert.throws(()=>verifyOwnerCommand(signed({...command,...changed}),keys.publicKey,context));
   const tampered=signed(command);tampered.payload=tampered.payload.replace('clear-test-data','run-sql');assert.throws(()=>verifyOwnerCommand(tampered,keys.publicKey,context));

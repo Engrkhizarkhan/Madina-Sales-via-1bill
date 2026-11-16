@@ -4,16 +4,31 @@ import {join,resolve} from 'node:path';
 import express from 'express';
 import {config} from './config.js';
 import {fail} from './helpers.js';
+import {maintenance} from '../update/maintenance.js';
 import {validateReportTree} from '../../shared/report-print.mjs';
 const lifetime=5*60000;
 const directory=()=>process.env.PRINT_JOB_DIRECTORY||join(config.terminal.cloud?(process.env.CLOUD_SESSION_DIRECTORY||resolve('backend','.cloud-sessions')):config.terminal.directory,'print-jobs');
 const validId=value=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
 const digest=value=>createHash('sha256').update(value).digest('hex');
+const printFile=name=>/^[a-f0-9]{64}\.json(?:\.claimed)?$/.test(name);
+export async function printJobSnapshot(){
+ let names;try{names=await readdir(directory());}catch(error){if(error.code==='ENOENT')return [];throw error;}
+ const files=[];
+ for(const name of names.filter(printFile))try{files.push({name,content:await readFile(join(directory(),name),'utf8')});}catch(error){if(error.code!=='ENOENT')throw error;}
+ return files;
+}
+export async function clearPrintJobs(){
+ let names;try{names=await readdir(directory());}catch(error){if(error.code==='ENOENT')return 0;throw error;}
+ let count=0;
+ for(const name of names.filter(printFile))try{await rm(join(directory(),name));count++;}catch(error){if(error.code!=='ENOENT')throw error;}
+ return count;
+}
 export async function prunePrintJobs(now=Date.now()){
  let names;try{names=await readdir(directory());}catch(e){if(e.code==='ENOENT')return;throw e;}
  for(const name of names){if(!/^[a-f0-9]{64}\.json(?:\.claimed)?$/.test(name))continue;const file=join(directory(),name);try{if((await stat(file)).mtimeMs<now-lifetime)await rm(file,{force:true});}catch(e){if(e.code!=='ENOENT')throw e;}}
 }
 export async function createPrintJob(body,userId){
+ if(maintenance.draining())fail('Maintenance is in progress. Print again in a moment.',503,'updating');
  if(!body||!['portrait','landscape'].includes(body.orientation)||typeof body.title!=='string'||body.title.length>120||!body.title.trim())fail('Choose a valid A4 report.',422,'invalid_report');
  let tree;try{tree=validateReportTree(body.document);}catch(e){fail(e.message,422,'invalid_report');}
  await mkdir(directory(),{recursive:true,mode:0o700});await prunePrintJobs();

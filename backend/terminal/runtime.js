@@ -82,12 +82,13 @@ async function refreshStatus() {
     if (ready && status.maintenanceCommand && status.ioRunning && status.sqlRunning) {
       try {
         const key=await readFile(resolve('deploy/updater/release-public-key.pem'));
-        const {clearOperationalData}=await import('../node/production-reset.js');
+        const {clearOperationalData,clearTestSales}=await import('../node/production-reset.js');
         maintenanceResult=await applyOwnerCommand(status.maintenanceCommand,{
           key,installationId:process.env.TERMINAL_INSTALLATION_ID,releaseId:releaseInfo.releaseId,
           begin:()=>maintenance.beginOwnerMaintenance(0),end:()=>maintenance.endOwnerMaintenance(),
           loadOwner:async id=>(await pool.execute('SELECT id,role,is_owner,active FROM users WHERE id=?',[id]))[0][0],
           execute:async(owner,command)=>{
+            if(command.action==='clear-test-sales')return clearTestSales(owner,{ip:'signed-operator-command'},command);
             if(command.action!=='prepare-main-pc-handover')return clearOperationalData(owner,{ip:'signed-operator-command'},command);
             const handover={installationId:process.env.TERMINAL_INSTALLATION_ID,nonce:command.nonce,stage:'preparing'};
             const path=join(config.terminal.directory,'handover.json');

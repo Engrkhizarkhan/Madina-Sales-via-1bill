@@ -111,6 +111,42 @@ try {
   check((await pool.execute('SELECT id FROM bookings WHERE id=?',[subsequent.body.booking.id]))[0].length===1,'post-cleanup booking survives duplicate maintenance delivery');
   await pool.execute("INSERT INTO terminal_devices(slot,fingerprint,certificate,expires_at) VALUES (1,?,'QA certificate',DATE_ADD(NOW(),INTERVAL 1 DAY))",['b'.repeat(64)]);
   await pool.execute("INSERT INTO terminal_enrollments(slot,token_hash,expires_at,created_by) VALUES (1,?,DATE_ADD(NOW(),INTERVAL 1 DAY),?)",['c'.repeat(64),owner.id]);
+  const {clearTestSales}=await import('../node/production-reset.js');
+  const {createPrintJob,claimPrintJob}=await import('../node/print-jobs.js');
+  const {maintenance}=await import('../update/maintenance.js');
+  check((await request('/users',{method:'POST',body:{name:'Retained counter',username:'retained-'+randomBytes(5).toString('hex'),password:'1234',role:'counter',remoteAllowed:false,terminals:[1]}})).status===201,'sales-only fixture includes an existing staff account');
+  await pool.execute("INSERT INTO crew(name,role,phone,cnic,license,duty,status,initials) VALUES ('Retained driver','Driver','03001234567',?,'','Roster','Available','RD')",[randomBytes(12).toString('hex')]);
+  const retained=async()=>{
+    const state={};
+    for(const table of ['users','crew','routes','buses','trips','terminal_slots','terminal_devices','terminal_enrollments'])state[table]=(await pool.query(`SELECT * FROM ${table} ORDER BY 1`))[0];
+    state.settings=(await pool.query("SELECT * FROM settings WHERE setting_key NOT LIKE 'production_reset_%' ORDER BY setting_key"))[0];
+    return state;
+  };
+  const retainedBefore=await retained();
+  await pool.execute("UPDATE trip_runs SET status='Departed',sales_paused=1,sales_override=1,notes='Test departure',snapshot=JSON_SET(snapshot,'$.voucher',JSON_OBJECT('basis',2200),'$.passengers',JSON_ARRAY(JSON_OBJECT('passenger','Test passenger'))) WHERE id=?",[subsequent.body.booking.tripRunId]);
+  const [[runBefore]]=await pool.execute('SELECT * FROM trip_runs WHERE id=?',[subsequent.body.booking.tripRunId]);
+  const pendingPrint=await createPrintJob(report,owner.id);
+  const salesCommand={action:'clear-test-sales',nonce:randomBytes(16).toString('hex'),releaseId:'qa-release'};
+  check(maintenance.beginOwnerMaintenance(0),'sales-only cleanup fences counter writes');
+  let salesReset;
+  try{salesReset=await clearTestSales(owner,{ip:'sales-only-qa'},salesCommand);}finally{maintenance.endOwnerMaintenance();}
+  assert.deepEqual(await retained(),retainedBefore);passed++;
+  check(salesReset.accountsPreserved&&salesReset.devicesPreserved&&salesReset.schedulePreserved,'sales cleanup preserves staff, crew, settings, devices and roster exactly');
+  for(const table of ['bookings','booking_seats','payment_events','refunds','financial_transactions','expenses','counter_shifts','shift_closures'])check((await pool.query(`SELECT COUNT(*) n FROM ${table}`))[0][0].n===0,`${table} cleared by sales-only cleanup`);
+  const [[runAfter]]=await pool.execute('SELECT * FROM trip_runs WHERE id=?',[runBefore.id]);
+  const {voucher:_voucher,passengers:_passengers,...runConfiguration}=runBefore.snapshot;
+  assert.deepEqual(runAfter.snapshot,runConfiguration);passed++;
+  check(runAfter.bus_id===runBefore.bus_id&&runAfter.service_date===runBefore.service_date&&runAfter.status==='Scheduled'&&!runAfter.sales_paused&&!runAfter.sales_override,'daily bus/time assignments survive with seats reopened and test vouchers removed');
+  await assert.rejects(claimPrintJob(pendingPrint.id,pendingPrint.key),error=>error.status===410);passed++;
+  const salesBackup=JSON.parse(gunzipSync(await readFile(join(config.terminal.directory,'backups',salesReset.backup))));
+  check(salesBackup.scope==='sales-only'&&salesBackup.tables.bookings.length>0&&salesBackup.printJobs.length>0,'protected backup contains removed sales and print snapshots');
+  const laterSale=await request('/bookings',{method:'POST',body:{tripId:trip.id,date,seats:[4],passenger:'Later passenger',phone:'03001234567',cnic:'1730112345671',gender:'Male',paymentMethod:'Cash',bookingStatus:'Confirmed',discount:0}});
+  check(laterSale.status===201,'new sales work after scoped cleanup');
+  const laterPrint=await createPrintJob(report,owner.id);
+  check(maintenance.beginOwnerMaintenance(0),'repeated signed command remains fenced');
+  try{check((await clearTestSales(owner,{ip:'sales-replay-qa'},salesCommand)).alreadyApplied===true,'repeated scoped cleanup does not run twice');}finally{maintenance.endOwnerMaintenance();}
+  check((await pool.execute('SELECT id FROM bookings WHERE id=?',[laterSale.body.booking.id]))[0].length===1,'later ticket survives repeated sales-cleanup delivery');
+  check((await claimPrintJob(laterPrint.id,laterPrint.key)).title===report.title,'later print job survives repeated sales-cleanup delivery');
   await clearOperationalData(owner,{ip:'handover-qa'},{nonce:randomBytes(16).toString('hex'),releaseId:'qa-release',action:'prepare-main-pc-handover'});
   check((await pool.query('SELECT slot FROM terminal_devices'))[0].length===0&&(await pool.query('SELECT slot FROM terminal_enrollments'))[0].length===0,'a different-main handover revokes old device certificates and unused enrollment tokens');
   console.log(`Passed ${passed} receipt, QR and production cleanup checks.`);
