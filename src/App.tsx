@@ -4,6 +4,8 @@ import {openA4Report,reportBridgeConfigured} from './report-transfer';
 import {mergeLiveRecords} from "../shared/live-records.mjs";
 import { receiptDefaults, receiptFonts, receiptNumberBounds, type ReceiptLayout } from "../shared/receipt-layout.mjs";
 import {publicOrigin} from '../shared/domains.mjs';
+import {onlineCounterPreferences} from '../shared/counter-fallback.mjs';
+import {onlineCounterLink,tryOnlineCounter} from './counter-fallback';
 import { ReceiptSettingsContext, useReceiptSettings } from "./receipt-settings";
 import { ConfirmationDialog } from "./confirmation";
 import { StaffPolicyContext, useStaffPolicy, type OperatingPolicies } from "./operating-policies";
@@ -701,14 +703,24 @@ function ManagementGate({
 }) {
   const [user, setUser] = useState<StaffUser | null>(null);
   const [checking, setChecking] = useState(true);
+  const [connectionFailed,setConnectionFailed]=useState(false);
   useEffect(() => {
     api
       .me<{ user: StaffUser }>()
       .then((result) => setUser(result.user))
-      .catch(() => onNavigate("/login"))
+      .catch((error:unknown) => {
+        if(error instanceof ApiError&&error.status===0||error instanceof TypeError)setConnectionFailed(true);
+        else onNavigate("/login");
+      })
       .finally(() => setChecking(false));
   }, [onNavigate]);
+  useEffect(()=>{
+    if(!connectionFailed)return;
+    const controller=new AbortController();void tryOnlineCounter(controller.signal);
+    return()=>controller.abort();
+  },[connectionFailed]);
   if (checking) return <AppLoading message="Checking secure staff session…" />;
+  if(connectionFailed)return <div className="app-loading"><p>The local connection did not finish loading. Try opening the Counter again, or use the online counter.</p><OnlineCounterLink/></div>;
   if (!user) return null;
   return (
     <ManagementApp
@@ -732,6 +744,11 @@ function AppLoading({ message }: { message: string }) {
       <span>{message}</span>
     </div>
   );
+}
+
+function OnlineCounterLink() {
+  const href=onlineCounterLink();
+  return href?<a className="secondary-button" href={href}>Use online counter · internet required</a>:null;
 }
 
 function PublicHeader({onNavigate, lookupPage = false}: {onNavigate: (path: string) => void; lookupPage?: boolean}) {
@@ -1463,16 +1480,19 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
     [otp, setOtp] = useState(""),
     [requiresOtp, setRequiresOtp] = useState(false),
     [loginNotice, setLoginNotice] = useState(""),
+    [loginConnectionFailed,setLoginConnectionFailed]=useState(false),
     [signingIn, setSigningIn] = useState(false);
   const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!username || !password) return;
     setSigningIn(true);
     setLoginNotice("");
+    setLoginConnectionFailed(false);
     try {
       await api.login<{ user: StaffUser }>(username, password, otp);
       onNavigate("/manage");
     } catch (error) {
+      setLoginConnectionFailed(error instanceof ApiError&&error.status===0||error instanceof TypeError);
       if (error instanceof ApiError && error.code === "authenticator_required") setRequiresOtp(true);
       setLoginNotice(
         error instanceof ApiError
@@ -1493,6 +1513,7 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           </div>
           <p className="login-business">Madina Express Operations</p>
           <h2>Welcome back</h2>
+          {onlineCounterPreferences(window.location.href)&&<p className="login-notice">Online counter · internet required. Use your normal staff login.</p>}
           <label>
             <span>Username or email</span>
             <input
@@ -1536,6 +1557,7 @@ function LoginPage({ onNavigate }: { onNavigate: (path: string) => void }) {
           </button>
           <small>Use the staff account issued by your administrator.</small>
           {loginNotice && <p className="login-notice">{loginNotice}</p>}
+          {loginConnectionFailed && <OnlineCounterLink />}
         </form>
       </div>
     </div>
@@ -1645,6 +1667,7 @@ function ManagementApp({
     [toast, setToast] = useState(""),
     [loading, setLoading] = useState(true),
     [loadError, setLoadError] = useState(""),
+    [initialConnectionFailed,setInitialConnectionFailed]=useState(false),
     [paymentMode, setPaymentMode] = useState("disabled"),
     [cloudReadOnly, setCloudReadOnly] = useState(false),
     [availableBuild,setAvailableBuild]=useState<ReleaseInfo>(),
@@ -1666,11 +1689,17 @@ function ManagementApp({
         setCloudReadOnly(Boolean(result.readOnly));setAvailableBuild(result.release);setStaffPolicy(result.policies||null);
         onUserChange(result.user);
       })
-      .catch((error: unknown) =>
-        setLoadError(error instanceof Error ? error.message : "Operations data could not be loaded."),
-      )
+      .catch((error: unknown) => {
+        setLoadError(error instanceof Error ? error.message : "Operations data could not be loaded.");
+        setInitialConnectionFailed(error instanceof ApiError&&error.status===0||error instanceof TypeError);
+      })
       .finally(() => setLoading(false));
   }, [onUserChange]);
+  useEffect(()=>{
+    if(!initialConnectionFailed)return;
+    const controller=new AbortController();void tryOnlineCounter(controller.signal);
+    return()=>controller.abort();
+  },[initialConnectionFailed]);
   const [refreshError,setRefreshError]=useState("");
   const [refreshing,setRefreshing]=useState(false);
   const refreshingRef=useRef(false);
@@ -1951,6 +1980,7 @@ function ManagementApp({
       <div className="app-loading" role="alert">
         <XCircle size={22} />
         <span>{loadError}</span>
+        {initialConnectionFailed&&<OnlineCounterLink/>}
         <button type="button" className="secondary-button" onClick={onLogout}>
           Return to sign in
         </button>

@@ -1,14 +1,20 @@
 import react from '@vitejs/plugin-react'
 import { sites } from '@openai/sites-vite-plugin'
-import { defineConfig, loadEnv } from 'vite'
+import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import {onlineCounterUrl} from './shared/counter-fallback.mjs'
 
-const workerEntry = () => ({
+const startupBundle=()=>readFileSync(resolve('public/startup.js'),'utf8').replace('/*__COUNTER_FALLBACK_HELPER__*/',`var onlineCounterUrlForStartup = ${onlineCounterUrl.toString()};`)
+const workerEntry = ():Plugin => ({
   name: 'madina-express-worker-entry',
+  configureServer(server) {
+    server.middlewares.use('/startup.js',(_req,res)=>{res.setHeader('Content-Type','application/javascript');res.setHeader('Cache-Control','no-store');res.end(startupBundle())})
+  },
   closeBundle() {
     const serverDir = resolve('dist/server')
     mkdirSync(serverDir, { recursive: true })
+    writeFileSync(resolve('dist/startup.js'),startupBundle())
     writeFileSync(
       resolve(serverDir, 'index.js'),
       `export default {

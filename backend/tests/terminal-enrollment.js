@@ -2,7 +2,8 @@ import 'reflect-metadata';
 import assert from 'node:assert/strict';
 import bcrypt from 'bcryptjs';
 import https from 'node:https';
-import { createHmac, randomBytes, webcrypto } from 'node:crypto';
+import http from 'node:http';
+import { createHmac, randomBytes, webcrypto, X509Certificate } from 'node:crypto';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -23,7 +24,7 @@ const {pakistanDate} = await import('../node/helpers.js');
 const { createTerminalCertificates } = await import('../terminal/certificates.js');
 const { app } = await import('../node/app.js');
 const { startTerminalWeb } = await import('../terminal/web.js');
-let server;
+let server,relay,proxy;
 const userIds = [];
 const suffix = randomBytes(5).toString('hex');
 const saleFixture={route:'seller-route-'+suffix,bus:'seller-bus-'+suffix,trip:'seller-trip-'+suffix};
@@ -31,9 +32,9 @@ const password = 'Terminal-QA!-' + suffix;
 let passed = 0;
 const check = (value, label) => { assert.ok(value, label); passed++; console.log('PASS', label); };
 let ca;
-const request = (path, { method = 'GET', body, cookie = '', csrf = '', device, extraHeaders = {} } = {}) => new Promise((resolve, reject) => {
+const request = (path, { method = 'GET', body, cookie = '', csrf = '', device, extraHeaders = {}, viaProxy=false } = {}) => new Promise((resolve, reject) => {
   const data = body ? JSON.stringify(body) : '';
-  const req = https.request({ host: '127.0.0.1', servername: 'localhost', port: server.address().port,
+  const req = https.request({ host: '127.0.0.1', servername: 'localhost', port: (viaProxy?proxy:server).address().port,
     path: '/api' + path, method, agent: false, ca, ...device,
     headers: { Cookie: cookie, 'X-CSRF-Token': csrf, ...(body ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {}), ...extraHeaders },
   }, res => {
@@ -60,6 +61,18 @@ try {
   await writeFile(join(directory, 'ready.json'), JSON.stringify({ installationId: 'enrollment-test' }));
   ca = await readFile(join(directory, 'tls/ca.crt'));
   server = await startTerminalWeb(app);
+  // Reproduce the cloud TLS boundary: trust only its actual peer certificate,
+  // overwrite client-supplied forwarding headers, then use the private relay.
+  relay=http.createServer(app).listen(0,'127.0.0.1');
+  await new Promise(resolve=>relay.once('listening',resolve));
+  proxy=https.createServer({key:await readFile(join(directory,'tls/server.key')),cert:await readFile(join(directory,'tls/server.crt')),ca,requestCert:true,rejectUnauthorized:false,minVersion:'TLSv1.2'},(req,res)=>{
+    const peer=req.socket.getPeerCertificate()?.raw;
+    const forwarded=http.request({host:'127.0.0.1',port:relay.address().port,path:req.url.replace(/^\/api/,''),method:req.method,headers:{...req.headers,'X-Madina-Relay-Key':config.terminal.relayKey,'X-Madina-Client-Cert':peer?encodeURIComponent(new X509Certificate(peer).toString()):''}},upstream=>{
+      res.writeHead(upstream.statusCode,upstream.headers);upstream.pipe(res);
+    });
+    forwarded.on('error',()=>{res.statusCode=502;res.end();});req.pipe(forwarded);
+  }).listen(0,'127.0.0.1');
+  await new Promise(resolve=>proxy.once('listening',resolve));
   for (const role of ['admin', 'counter']) {
     const [user] = await pool.execute('INSERT INTO users (name, username, password_hash, role, force_password_change,is_owner,remote_allowed) VALUES (?, ?, ?, ?, 0,?,?)',
       [role==='counter'?'Counter Agent Full Name':'Main Admin Full Name', 'enroll-' + role + '-' + suffix, await bcrypt.hash(password, 10), role, role === 'admin' ? 1 : 0, role === 'admin' ? 1 : 0]);
@@ -96,6 +109,11 @@ try {
   const login = await request('/auth/login', { method: 'POST', body: credentials, device });
   check(login.status === 200, 'staff signs in with the enrolled TLS device');
   check((await request('/auth/me', { cookie: login.cookie, device })).status === 200, 'approved staff session stays valid');
+  const onlineLogin=await request('/auth/login',{method:'POST',body:credentials,device,viaProxy:true});
+  check(onlineLogin.status===200,'online fallback authenticates enrolled staff through actual client TLS and the private relay');
+  check((await request('/auth/me',{cookie:onlineLogin.cookie,device,viaProxy:true})).status===200,'online fallback retains the same terminal-bound staff session');
+  check((await request('/auth/login',{method:'POST',body:credentials,viaProxy:true,extraHeaders:{'X-Madina-Client-Cert':encodeURIComponent(enrolled.payload.certificate),'X-Madina-Device':'terminal-2','X-Madina-Relay-Key':config.terminal.relayKey}})).status===403,'forged cloud forwarding headers without a real enrolled client certificate cannot sign in');
+  check((await request('/auth/me',{cookie:onlineLogin.cookie,viaProxy:true})).status===403,'copying an online staff session to an unenrolled browser is rejected');
   const date=pakistanDate(new Date(Date.now()+86400000));
   await pool.execute("INSERT INTO routes(id,origin,destination,distance,duration,fare,boarding_point,status) VALUES (?,'Peshawar','Test destination','','',500,'Terminal','Active')",[saleFixture.route]);
   await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,'Standard Plus',49,'Seller test',2026,'Ready','Not scheduled')",[saleFixture.bus,'SELLER-'+suffix]);
@@ -178,6 +196,8 @@ try {
   check((await request('/terminal/devices/99/package',{...admin,method:'POST',body:{currentPassword:password}})).status===404,'PC must be added before setup can be generated');
   console.log(`Passed ${passed} terminal enrollment checks.`);
 } finally {
+  if(proxy)await new Promise(resolve=>proxy.close(resolve));
+  if(relay)await new Promise(resolve=>relay.close(resolve));
   if (server) await new Promise(resolve => server.close(resolve));
   await pool.execute('DELETE f FROM financial_transactions f JOIN bookings b ON b.id=f.booking_id WHERE b.trip_id=?',[saleFixture.trip]);
   await pool.execute('DELETE r FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.trip_id=?',[saleFixture.trip]);
