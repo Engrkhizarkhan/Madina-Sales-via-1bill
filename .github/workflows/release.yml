@@ -46,7 +46,7 @@ jobs:
           npm run server:check
           npm run test:terminal
           npm run test:layout
-          node --test backend/tests/terminal-web.js backend/tests/startup-recovery.js
+          node --test backend/tests/terminal-web.js backend/tests/startup-recovery.js backend/tests/web-diagnostics.js
           node --test backend/tests/current-route-pricing.js
           node --test backend/tests/domain-migration.js backend/tests/domain-bridge.js backend/tests/receipt-layout.js backend/tests/booking-workspace.js
           node --test backend/tests/policies-access.js backend/tests/updater.js backend/tests/owner-command.js backend/tests/cloud-authority.js backend/tests/live-records.js backend/tests/installer-downloads.js backend/tests/certificate-clock-repair.js backend/tests/tunnel-recovery.js backend/tests/print-jobs.js
@@ -88,6 +88,9 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22.23.4'
       - name: Windows PowerShell 5.1, service and updater checks
         shell: powershell
         run: ./scripts/test-windows-service.ps1
@@ -101,6 +104,9 @@ jobs:
         run: |
           npm ci --omit=dev --ignore-scripts
           node --test backend/tests/certificate-clock-repair.js
+      - name: Real local HTTPS transfers and protected diagnostics on Windows
+        shell: powershell
+        run: node --test backend/tests/terminal-web.js backend/tests/web-diagnostics.js
   publish:
     needs: [application, windows]
     runs-on: ubuntu-24.04

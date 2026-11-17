@@ -7,6 +7,7 @@ import { terminalAdminRouter, terminalEnrollmentRouter, terminalSyncRouter } fro
 import { cloudAuthorityGuard, terminalState, cloudNeedsMain } from "../terminal/state.js";
 import { localTerminalGuard } from "../terminal/certificates.js";
 import { terminalReady, terminalHandover } from "../terminal/runtime.js";
+import {webDiagnosticsHandler} from '../terminal/web-diagnostics.js';
 import { readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { CloudSessions } from "./cloud-sessions.js";
@@ -64,6 +65,7 @@ app.use((req, res, next) => {
   next();
 });
 app.use("/printing/jobs",express.json({limit:"512kb",strict:true,inflate:false}));
+app.get('/internal-diagnostics/web',webDiagnosticsHandler());
 app.use(express.json({ limit: "128kb", strict: true, inflate: false }));
 app.use((req, _res, next) => {
   if (req.url === "/index.php") req.url = "/";

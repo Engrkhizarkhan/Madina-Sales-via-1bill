@@ -72,6 +72,8 @@ try {
   check(adminLogin.status === 200, 'main admin signs in over local HTTPS with authenticator');
   const admin = { cookie: adminLogin.cookie, csrf: adminLogin.payload.csrfToken };
   check((await request('/terminal/status', admin)).payload.mode === 'terminal', 'settings identifies the local main PC');
+  check((await request('/internal-diagnostics/web',{...admin,extraHeaders:{'X-Madina-Diagnostic-Key':process.env.TERMINAL_RELAY_KEY}})).status===403,
+    'even the admin browser cannot invoke the protected loopback operator self-check');
   const packageRequest = () => request('/terminal/devices/2/package', { ...admin, method: 'POST', body: { currentPassword: password } });
   const archive = await packageRequest();
   check(archive.status === 200, 'admin generates a protected child PC installer');
