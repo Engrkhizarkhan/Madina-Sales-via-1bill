@@ -1,11 +1,11 @@
 import express from "express";
 import https from "node:https";
 import { readFile } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { resolve, join, basename } from "node:path";
 import { config } from "../node/config.js";
 import {staffOrigin,legacyStaffOrigin} from '../../shared/domains.mjs';
 
-export async function startTerminalWeb(app) {
+export function createTerminalWeb(app, { directory = resolve("dist"), assets = resolve(process.env.TERMINAL_ASSET_DIRECTORY || "dist/assets") } = {}) {
   const web = express();
   web.disable("x-powered-by");
   web.use((_req, res, next) => {
@@ -20,15 +20,28 @@ export async function startTerminalWeb(app) {
   web.get("/", (_req, res) => res.redirect("/manage"));
   web.get("/Madina-Express-Counter.cmd", async (_req, res, next) => {
     try {
-      const template = await readFile(resolve("dist/Madina-Express-Counter.cmd"), "utf8");
+      const template = await readFile(join(directory, "Madina-Express-Counter.cmd"), "utf8");
       res.type("text/plain").attachment("Madina-Express-Counter.cmd")
         .send(template.replaceAll(staffOrigin,config.terminal.localOrigin).replaceAll(legacyStaffOrigin,config.terminal.localOrigin));
     } catch (error) { next(error); }
   });
-  web.use("/assets",express.static(resolve(process.env.TERMINAL_ASSET_DIRECTORY || "dist/assets"),{dotfiles:"deny",index:false}));
-  web.use(express.static(resolve("dist"), { dotfiles: "deny", index: false }));
-  web.get(["/login", "/manage", "/print/report"], (_req, res) => res.sendFile(resolve("dist/index.html")));
+  const assetOptions = { dotfiles: "deny", index: false, setHeaders(res, file) {
+    // Only content-addressed build files are reusable across visits/releases.
+    // HTML, API responses and printable customer data retain no-store.
+    if (/-[A-Za-z0-9_-]{8,}\.[a-z0-9.]+$/i.test(basename(file))) {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    }
+  } };
+  web.use("/assets",express.static(assets,assetOptions));
+  web.use("/assets",express.static(join(directory, "assets"),assetOptions));
+  web.use(express.static(directory, { dotfiles: "deny", index: false }));
+  web.get(["/login", "/manage", "/print/report"], (_req, res) => res.sendFile(join(directory, "index.html")));
   web.use((_req, res) => res.sendStatus(404));
+  return web;
+}
+
+export async function startTerminalWeb(app) {
+  const web = createTerminalWeb(app);
   const tlsDirectory = join(config.terminal.directory, "tls");
   const options = {
     key: await readFile(join(tlsDirectory, "server.key")),
