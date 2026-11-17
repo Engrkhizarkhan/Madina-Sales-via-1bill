@@ -47,9 +47,10 @@ test('HTTPS diagnostics verify full large-file transfers and report the exact pa
     await new Promise(resolve=>server.once('listening',resolve));
     const state={...terminal,directory:base,localOrigin:'https://192.168.7.243:8443',httpsPort:server.address().port};
     const report=await inspectTerminalWeb({directory,terminal:state});
-    assert.equal(report.files.length,4);
+    assert.equal(report.files.length,5);
     assert.ok(report.files.every(file=>file.matches&&file.complete&&file.bytes===file.expectedBytes));
-    assert.deepEqual(report.files.filter(file=>file.path.endsWith('.js')&&file.path.startsWith('/assets/')).map(file=>file.protocol).sort(),['TLSv1.2','TLSv1.3']);
+    assert.deepEqual(report.files.filter(file=>file.path.endsWith('.js')&&file.path.startsWith('/assets/')).map(file=>file.protocol).sort(),['TLSv1.2','TLSv1.3','TLSv1.3']);
+    assert.equal(report.files.find(file=>file.readDelay===20).matches,true);
     const untrusted=await probeWebFile({port:state.httpsPort,ca:Buffer.from(''),path:'/assets/index-DIAGTEST.js',expected,version:'TLSv1.2'});
     assert.equal(untrusted.matches,false);assert.equal(untrusted.bytes,0);assert.ok(untrusted.error);
     stalled=https.createServer(options,(_req,res)=>{res.writeHead(200,{'Content-Length':expected.length});res.write(expected.subarray(0,65536));}).listen(0,'127.0.0.1');

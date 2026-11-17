@@ -4,6 +4,8 @@ import {readFile} from 'node:fs/promises';
 import {join,resolve} from 'node:path';
 import {networkInterfaces} from 'node:os';
 import {config} from '../node/config.js';
+import {readWindowsNetwork} from './windows-network.js';
+import {transferMonitor} from './web-transfers.js';
 
 export function diagnosticsAllowed(req,terminal=config.terminal) {
   if(!terminal.local||req.socket.encrypted||!['127.0.0.1','::ffff:127.0.0.1','::1'].includes(req.socket.remoteAddress))return false;
@@ -13,13 +15,13 @@ export function diagnosticsAllowed(req,terminal=config.terminal) {
 
 // Fixed public build files only: no cookies, customer records, commands or
 // caller-provided URLs. Verify the installed CA and localhost certificate.
-export function probeWebFile({port,ca,path,expected,version,timeout=5000}) {
+export function probeWebFile({port,ca,path,expected,version,timeout=5000,readDelay=0}) {
   return new Promise(resolveResult=>{
     const started=performance.now(),hash=createHash('sha256');
     let bytes=0,status=null,complete=false,protocol=null,finished=false;
     const done=error=>{
       if(finished)return;finished=true;clearTimeout(timer);
-      resolveResult({path,version,status,bytes,expectedBytes:expected.length,complete,
+      resolveResult({path,version,readDelay,status,bytes,expectedBytes:expected.length,complete,
         matches:!error&&status===200&&complete&&bytes===expected.length&&hash.digest('hex')===createHash('sha256').update(expected).digest('hex'),
         milliseconds:Math.round(performance.now()-started),protocol,error:error||null});
     };
@@ -28,6 +30,7 @@ export function probeWebFile({port,ca,path,expected,version,timeout=5000}) {
       status=response.statusCode;protocol=response.socket.getProtocol();
       response.on('data',chunk=>{
         bytes+=chunk.length;hash.update(chunk);
+        if(readDelay){response.pause();setTimeout(()=>response.resume(),readDelay).unref();}
         if(bytes>4*1024*1024){done('RESPONSE_TOO_LARGE');request.destroy();}
       });
       response.once('end',()=>{complete=response.complete;done();});
@@ -44,6 +47,8 @@ export async function inspectTerminalWeb({directory=resolve('dist'),terminal=con
   const files=[...html.matchAll(/(?:src|href)="(\/assets\/[A-Za-z0-9_.-]+\.(?:js|css))"/g)].map(match=>match[1]);
   const paths=[...new Set(['/startup.js',...files])].slice(0,4);
   const ca=await readFile(join(terminal.directory,'tls','ca.crt'));
+  const host=new URL(terminal.localOrigin).hostname;
+  const windowsNetwork=readWindowsNetwork(host);
   const probes=[];
   for(const path of paths){
     const expected=await readFile(join(directory,path.slice(1)));
@@ -51,13 +56,14 @@ export async function inspectTerminalWeb({directory=resolve('dist'),terminal=con
     for(const version of path.startsWith('/assets/')&&path.endsWith('.js')?['TLSv1.2','TLSv1.3']:['TLSv1.3']){
       probes.push(probeWebFile({port:terminal.httpsPort,ca,path,expected,version,timeout}));
     }
+    if(path.startsWith('/assets/')&&path.endsWith('.js'))probes.push(probeWebFile({port:terminal.httpsPort,ca,path,expected,version:'TLSv1.3',timeout,readDelay:20}));
   }
-  const host=new URL(terminal.localOrigin).hostname;
   const adapters=Object.entries(networkInterfaces()).flatMap(([name,addresses])=>(addresses||[])
     .filter(address=>!address.internal&&address.address===host)
     .map(address=>({name,address:address.address,netmask:address.netmask,mac:address.mac})));
   return {checkedAt:new Date().toISOString(),node:process.version,openssl:process.versions.openssl,
-    platform:process.platform,localOrigin:terminal.localOrigin,adapters,files:await Promise.all(probes)};
+    platform:process.platform,localOrigin:terminal.localOrigin,adapters,files:await Promise.all(probes),windowsNetwork:await windowsNetwork,
+    transfers:transferMonitor.snapshot()};
 }
 
 export function webDiagnosticsHandler({terminal=config.terminal,inspect=inspectTerminalWeb,ttl=30000}={}) {

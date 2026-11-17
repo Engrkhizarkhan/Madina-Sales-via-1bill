@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { resolve, join, basename } from "node:path";
 import { config } from "../node/config.js";
 import {staffOrigin,legacyStaffOrigin} from '../../shared/domains.mjs';
+import {transferMonitor} from './web-transfers.js';
 
 export function createTerminalWeb(app, { directory = resolve("dist"), assets = resolve(process.env.TERMINAL_ASSET_DIRECTORY || "dist/assets") } = {}) {
   const web = express();
@@ -16,6 +17,7 @@ export function createTerminalWeb(app, { directory = resolve("dist"), assets = r
     });
     next();
   });
+  web.use(transferMonitor.observe);
   web.use("/api", app);
   web.get("/", (_req, res) => res.redirect("/manage"));
   web.get("/Madina-Express-Counter.cmd", async (_req, res, next) => {
