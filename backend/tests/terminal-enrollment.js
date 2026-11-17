@@ -113,7 +113,7 @@ try {
   check(onlineLogin.status===200,'online fallback authenticates enrolled staff through actual client TLS and the private relay');
   check((await request('/auth/me',{cookie:onlineLogin.cookie,device,viaProxy:true})).status===200,'online fallback retains the same terminal-bound staff session');
   check((await request('/auth/login',{method:'POST',body:credentials,viaProxy:true,extraHeaders:{'X-Madina-Client-Cert':encodeURIComponent(enrolled.payload.certificate),'X-Madina-Device':'terminal-2','X-Madina-Relay-Key':config.terminal.relayKey}})).status===403,'forged cloud forwarding headers without a real enrolled client certificate cannot sign in');
-  check((await request('/auth/me',{cookie:onlineLogin.cookie,viaProxy:true})).status===403,'copying an online staff session to an unenrolled browser is rejected');
+  check((await request('/auth/me',{cookie:onlineLogin.cookie,viaProxy:true})).status===401,'copying an online staff session to an unenrolled browser does not authenticate');
   const date=pakistanDate(new Date(Date.now()+86400000));
   await pool.execute("INSERT INTO routes(id,origin,destination,distance,duration,fare,boarding_point,status) VALUES (?,'Peshawar','Test destination','','',500,'Terminal','Active')",[saleFixture.route]);
   await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,'Standard Plus',49,'Seller test',2026,'Ready','Not scheduled')",[saleFixture.bus,'SELLER-'+suffix]);
