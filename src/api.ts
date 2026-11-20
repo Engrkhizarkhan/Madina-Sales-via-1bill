@@ -113,6 +113,11 @@ function rememberCsrf<T extends { csrfToken?: string }>(payload: T): T {
 }
 
 export const api = {
+  reviewRemoval:(id:string,action:'restore'|'approve'|'purge',currentPassword='')=>request<{status:string;affected:number}>(`/admin/recovery/${encodeURIComponent(id)}/${action}`,{method:'POST',body:JSON.stringify({confirm:true,currentPassword})}),
+  reconciliationOptions:()=>request<{users:{id:number;name:string;active:number}[];terminals:{slot:number}[]}>('/admin/reconciliation-options'),
+  recordCashEntry:(data:unknown)=>request<{ok:boolean;id:number}>('/admin/cash-entries',{method:'POST',body:JSON.stringify(data)}),
+  reverseCashEntry:(id:number,data:{notes:string;requestKey:string})=>request<{ok:boolean;id:number}>(`/admin/cash-entries/${id}/reverse`,{method:'POST',body:JSON.stringify(data)}),
+
   printingSettings:()=>request<PrintSettingsPayload>("/settings/printing"),
   savePrintingSettings:(terminals:NonNullable<PrintSettingsPayload["terminals"]>)=>request<PrintSettingsPayload>("/settings/printing",{method:"PUT",body:JSON.stringify({terminals})}),
   recordPage: <T>(path:string,filters:Record<string,string|number|undefined>,signal?:AbortSignal) => request<import("./record-pages").PageResult<T>>(path+"?"+new URLSearchParams(Object.entries(filters).filter(([,value])=>value!==undefined).map(([key,value])=>[key,String(value)])),{signal}),
@@ -215,18 +220,18 @@ export const api = {
       method: isNew ? "POST" : "PUT",
       body: JSON.stringify(route),
     }),
-  deleteRoute: (id: string) =>
+  deleteRoute: (id: string,reason?:string) =>
     request<{ ok: boolean }>(`/routes/${encodeURIComponent(id)}`, {
-      method: "DELETE",
+      method: "DELETE",body:JSON.stringify({reason}),
     }),
   saveBus: <T>(id: string, bus: unknown, isNew: boolean) =>
     request<{ bus: T }>(`/buses/${encodeURIComponent(isNew ? "new" : id)}`, {
       method: isNew ? "POST" : "PUT",
       body: JSON.stringify(bus),
     }),
-  deleteBus: (id: string) =>
+  deleteBus: (id: string,reason?:string) =>
     request<{ ok: boolean }>(`/buses/${encodeURIComponent(id)}`, {
-      method: "DELETE",
+      method: "DELETE",body:JSON.stringify({reason}),
     }),
   saveTrip: <T>(id: string, trip: unknown, isNew: boolean) =>
     request<{ trip: T }>(`/trips/${encodeURIComponent(isNew ? "new" : id)}`, {
@@ -234,9 +239,9 @@ export const api = {
       body: JSON.stringify(trip),
     }),
   restoreTrip:<T>(id:string)=>request<{trip:T}>(`/trips/${encodeURIComponent(id)}/restore`,{method:'POST',body:JSON.stringify({confirm:true})}),
-  deleteTrip: (id: string) =>
+  deleteTrip: (id: string,reason?:string) =>
     request<{ ok: boolean }>(`/trips/${encodeURIComponent(id)}`, {
-      method: "DELETE",
+      method: "DELETE",body:JSON.stringify({reason}),
     }),
   transitionTrip: <T>(id: string, action: string, date: string, notes = "", options: {confirm?:boolean;resolveReservations?:boolean}={}) =>
     request<{ trip: T }>(`/trips/${encodeURIComponent(id)}/transition`, {
@@ -257,9 +262,9 @@ export const api = {
         body: JSON.stringify(person),
       },
     ),
-  deleteCrew: (id: number) =>
+  deleteCrew: (id: number,reason?:string) =>
     request<{ ok: boolean }>(`/crew/${encodeURIComponent(id)}`, {
-      method: "DELETE",
+      method: "DELETE",body:JSON.stringify({reason}),
     }),
   listExpenses: <T>() => request<{ expenses: T[] }>("/expenses"),
   createExpense: <T>(expense: unknown) =>

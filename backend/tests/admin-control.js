@@ -1,0 +1,113 @@
+import assert from 'node:assert/strict';
+import bcrypt from 'bcryptjs';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {config} from '../node/config.js';
+import {pool,closePool} from '../node/db.js';
+import {app} from '../node/app.js';
+import {pakistanDate} from '../node/helpers.js';
+import {sameBookingCustomer} from '../../shared/booking-workspace.mjs';
+if(!/test|qa/i.test(config.db.database)||config.terminal.cloud||config.terminal.local)throw Error('Use an isolated standalone QA database.');
+const suffix=randomBytes(4).toString('hex'),prefix='admin-qa-'+suffix,password='AdminControl!QA2026',ids={route:prefix+'-route',bus:prefix+'-bus',trip:prefix+'-trip',paused:prefix+'-paused',independent:prefix+'-independent'};
+const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));const origin='http://127.0.0.1:'+server.address().port;
+const users=[],date=pakistanDate(new Date(Date.now()+86400000)),today=pakistanDate();let count=0;
+const check=(ok,label)=>{assert.ok(ok,label);count++;console.log('PASS',label);};
+async function client(role,owner=false){
+ const username=prefix+'-'+users.length,[created]=await pool.execute('INSERT INTO users(name,username,password_hash,role,is_owner,remote_allowed,force_password_change) VALUES(?,?,?,?,?,1,0)',[username,username,await bcrypt.hash(password,4),role,Number(owner)]);users.push(created.insertId);
+ let cookie='',csrf='';const request=async(method,path,body)=>{const response=await fetch(origin+path,{method,headers:{'Content-Type':'application/json',Cookie:cookie,'X-CSRF-Token':csrf},body:body?JSON.stringify(body):undefined});if(response.headers.get('set-cookie'))cookie=response.headers.get('set-cookie').split(';')[0];const data=await response.json();if(data.csrfToken)csrf=data.csrfToken;return {...data,status:response.status};};
+ check((await request('POST','/auth/login',{identity:username,password})).status===200,role+' logs in');return {request,id:created.insertId};
+}
+const [[oldPolicy]]=await pool.query("SELECT CAST(setting_value AS CHAR) value,updated_by FROM settings WHERE setting_key='booking_policies'");
+const [[oldPin]]=await pool.query("SELECT CAST(setting_value AS CHAR) value,updated_by FROM settings WHERE setting_key='finance_pin_hash'");
+try{
+ const owner=await client('admin',true),operator=await client('admin'),other=await client('manager');const req=owner.request,op=operator.request,ot=other.request;
+ await pool.execute("INSERT INTO routes(id,origin,destination,distance,duration,fare,boarding_point,status) VALUES (?,'QA Peshawar',?,'','',500,'QA Terminal','Active')",[ids.route,prefix]);
+ await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service,is_template) VALUES (?,?,'Standard Plus',49,'QA Standard 49',2026,'Ready','Not scheduled',1)",[ids.bus,prefix]);
+ for(const [id,time,active] of [[ids.trip,'23:00',1],[ids.paused,'17:00',0],[ids.independent,'21:00',1]])await pool.execute("INSERT INTO trips(id,route_id,bus_id,departure,arrival,driver,attendant,platform,status,service_days,active) VALUES (?,?,?,?,'23:59','','','','Scheduled',?,?)",[id,ids.route,ids.bus,time,JSON.stringify(['Mon','Tue','Wed','Thu','Fri','Sat','Sun']),active]);
+ check((await req('PUT','/finance/pin',{pin:'765432',currentPassword:password})).status===200,'main admin configures finance PIN');
+ for(const actor of [owner,operator])check((await actor.request('POST','/auth/finance-unlock',{pin:'765432'})).status===200,'admin-role finance unlock works');
+ for(const actor of [operator,other])for(const path of ['/admin/recovery','/admin/activity','/admin/reconciliation','/admin/cash-entries'])check((await actor.request('GET',path)).status===403,'operational '+(actor===operator?'admin':'manager')+' cannot access '+path);
+ const baseline=(await req('GET',`/admin/reconciliation?from=${today}&to=${today}`)).summary;
+ const draft={tripId:ids.trip,date,passenger:prefix,phone:'03001234567',cnic:'1730112345671',gender:'Male',paymentMethod:'Cash'};
+ let result=await op('POST','/bookings',{...draft,seats:[1,2],fareOverrides:[450,450],discount:20,tariffTotalAtSale:1,soldTerminalSlot:99});
+ check(result.status===201&&result.bookings.length===2&&result.bookings.every(b=>b.tariffTotalAtSale===500&&b.total===440),'server stores original tariffs, independent of forged fields and manual fare cuts');
+ const first=result.bookings[0],second=result.bookings[1];
+ let [[ledger]]=await pool.execute("SELECT terminal_slot,actor_name FROM financial_transactions WHERE booking_id=? AND transaction_type='sale'",[first.id]);
+ check(ledger.terminal_slot===null&&ledger.actor_name===prefix+'-1','ledger takes actor and missing PC from the verified connection, not submitted fields');
+ // Supply trusted counter identities to these standalone fixtures; real TLS identity is tested separately.
+ await pool.execute('UPDATE financial_transactions SET terminal_slot=2 WHERE booking_id IN (?,?)',[first.id,second.id]);await pool.execute('UPDATE bookings SET sold_terminal_slot=2 WHERE id IN (?,?)',[first.id,second.id]);
+ check((await ot('POST',`/bookings/${first.id}/refunds`,{amount:40,method:'Cash',reason:'Passenger request'})).status===201,'another account can process an authorized refund');
+ await pool.execute("UPDATE financial_transactions SET terminal_slot=3 WHERE booking_id=? AND transaction_type='refund'",[first.id]);
+ result=await op('POST','/expenses',{date:today,category:'Terminal',description:prefix,amount:20,paymentMethod:'Cash',notes:'QA cash expense'});check(result.status===201,'recorded cash expense is included in counter expectations');
+ await pool.execute("UPDATE financial_transactions SET terminal_slot=2 WHERE created_by=? AND transaction_type='expense'",[operator.id]);
+ result=await req('GET',`/admin/reconciliation?from=${today}&to=${today}`);
+ check(result.status===200,'reconciliation aggregation runs');const summary=Object.fromEntries(Object.entries(result.summary).map(([key,value])=>[key,typeof value==='number'?Number((value-(baseline[key]||0)).toFixed(2)):value]));
+ check(summary.tickets===2&&summary.collected===880&&summary.refunds===40&&summary.tariffValue===1000&&summary.discounts===20&&summary.manualCuts===100,'ticket counts and tariff/discount/manual reduction totals reconcile');
+ check(summary.expectedCash===820&&summary.discountTickets===2,'cash expectation deducts refunds and recorded cash expenses exactly once');
+ let row=result.rows.find(row=>Number(row.staffId)===operator.id&&row.terminal===2);check(row.expectedCash===860,'sale counter is not incorrectly charged for cash refunded by a different PC');
+ const entry={date:today,staff:operator.id,terminal:2,kind:'Handover',amount:800,notes:'Cash received and counted',requestKey:randomUUID()};
+ const handover=await req('POST','/admin/cash-entries',entry);check(handover.status===200,'only the main admin records cash actually received');
+ const repeat=await req('POST','/admin/cash-entries',entry);check(repeat.status===200&&repeat.id===handover.id,'retrying a handover cannot count cash twice');
+ const [[cashAudits]]=await pool.execute("SELECT COUNT(*) count FROM audit_logs WHERE entity_type='counter_cash' AND entity_id=? AND action='cash.handover'",[String(handover.id)]);check(Number(cashAudits.count)===1,'handover retries produce one audit action');
+ check((await req('POST','/admin/cash-entries',{...entry,amount:799})).status===409,'reusing a saved request for a different amount is rejected');
+ check((await op('POST','/admin/cash-entries',{...entry,requestKey:randomUUID()})).status===403,'operational admin cannot falsely acknowledge cash received');
+ check((await req('POST','/admin/cash-entries',{...entry,amount:-1,requestKey:randomUUID()})).status===422,'negative handovers are not accepted');
+ check((await req('POST','/admin/cash-entries',{...entry,kind:'Payout',amount:60,notes:'Other approved payout, not an expense',requestKey:randomUUID()})).status===200,'other authorized cash payout is recorded separately');
+ result=await req('GET',`/admin/reconciliation?from=${today}&to=${today}&staff=${operator.id}&terminal=2`);check(result.rows[0].expectedCash===800&&result.rows[0].handovers===800&&result.rows[0].outstanding===0,'cash handed over settles the correct account and PC');
+ const reverse={notes:'Cash entry correction',requestKey:randomUUID()},reversed=await req('POST',`/admin/cash-entries/${handover.id}/reverse`,reverse);
+ check(reversed.status===200,'incorrect handover is corrected with a linked reversal');check((await req('POST',`/admin/cash-entries/${handover.id}/reverse`,reverse)).id===reversed.id,'reversal retry is idempotent');
+ check((await req('POST',`/admin/cash-entries/${handover.id}/reverse`,{...reverse,requestKey:randomUUID()})).status===409,'a second reversal cannot alter cash twice');
+ result=await req('GET',`/admin/reconciliation?from=${today}&to=${today}&staff=${operator.id}&terminal=2&group=month`);check(result.rows[0].handovers===0&&result.rows[0].outstanding===800&&/^\d{4}-\d{2}$/.test(result.rows[0].period),'monthly account preserves handover and reversal history');
+ result=await req('GET',`/admin/cash-entries?staff=${operator.id}&terminal=2`);check(result.rows.length===3&&result.rows.some(row=>row.id===handover.id&&row.reversedBy===reversed.id),'cash register keeps original and reversing entries');
+ await pool.execute('UPDATE routes SET fare=600 WHERE id=?',[ids.route]);
+ result=await op('POST','/bookings',{...draft,seats:[3,4]});check(result.status===201&&result.bookings.every(b=>b.tariffTotalAtSale===600&&sameBookingCustomer(first,b)),'additional seats create separate tickets linked by the same customer and departure');
+ check((await req('GET','/admin/price-review?reductions=true')).rows.filter(b=>[first.id,second.id].includes(b.id)).every(b=>b.tariff===500&&b.total===440),'later management price changes cannot rewrite sale-time tariff evidence');
+ result=await op('POST','/bookings',{...draft,seats:[5,6],bookingStatus:'Reserved'});check(result.status===201,'same customer can also add reservations');
+ const policies=(await req('GET','/settings/policies')).policies;
+ check((await req('PUT','/settings/policies',{...policies,staffCanEditFare:false})).status===200,'main admin can restrict staff fare overrides');
+ check((await op('POST','/bookings',{...draft,seats:[7],fareOverrides:[1]})).status===403,'operational admin roles also obey main-admin staff limits');
+ await req('PUT','/settings/policies',policies);
+ await op('POST',`/trips/${ids.trip}/transition`,{date,action:'pause'});
+ const before=(await req('GET',`/admin/bootstrap?date=${date}`)).bookings.filter(b=>b.tripId===ids.trip);
+ check((await op('DELETE',`/trips/${ids.trip}`,{reason:'Operator selected the wrong schedule'})).status===200,'staff removal hides the schedule and requests review');
+ let removal=(await req('GET',`/admin/recovery?search=${ids.trip}`)).rows.find(row=>row.entityId===ids.trip);
+ check(removal?.status==='Pending'&&removal.removedBy===prefix+'-1','main admin sees the remover and pending record');
+ for(const actor of [operator,other])check((await actor.request('POST',`/trips/${ids.trip}/restore`,{confirm:true})).status===403,'only main admin can use the older restore endpoint');
+ check((await op('POST',`/admin/recovery/${removal.id}/approve`,{confirm:true})).status===403,'operational admin cannot approve its own removal');
+ result=await req('POST',`/admin/recovery/${removal.id}/approve`,{confirm:true});check(result.status===200,'main admin can approve retained archive');
+ check((await req('POST',`/admin/recovery/${removal.id}/purge`,{confirm:true,currentPassword:password})).status===409,'history-linked schedules cannot be purged out of the audit trail');
+ check((await req('POST',`/admin/recovery/${removal.id}/restore`,{confirm:true})).status===200,'main admin restores the original schedule');
+ const after=(await req('GET',`/admin/bootstrap?date=${date}`));assert.deepEqual(after.bookings.filter(b=>b.tripId===ids.trip),before);count++;
+ check(after.runs.find(run=>run.tripId===ids.trip).salesPaused,'restoring a schedule does not reopen a deliberately paused dated seat map');
+ await op('DELETE',`/trips/${ids.independent}`,{reason:'Independent earlier deletion'});
+ await op('DELETE',`/routes/${ids.route}`,{reason:'Wrong route selected'});
+ const recovery=await req('GET',`/admin/recovery?search=${prefix}&size=100`),root=recovery.rows.find(row=>row.type==='route'&&row.status==='Pending');
+ check(root&&recovery.rows.filter(row=>row.parentId===root.id).length===2,'route removal records exactly its affected schedules');
+ check((await req('POST',`/admin/recovery/${root.id}/restore`,{confirm:true})).affected===3,'restoring a route also restores schedules hidden in that operation');
+ const [trips]=await pool.execute('SELECT id,active,deleted_at FROM trips WHERE route_id=?',[ids.route]);
+ check(trips.find(t=>t.id===ids.trip).active===1&&trips.find(t=>t.id===ids.paused).active===0&&!trips.find(t=>t.id===ids.paused).deleted_at&&Boolean(trips.find(t=>t.id===ids.independent).deleted_at),'cascade recovery retains prior pauses and unrelated deletions');
+ check((await op('DELETE',`/buses/${ids.bus}`,{reason:'Bus removal review'})).status===200,'bus removal hides its active setup without deleting history');
+ const busRemoval=(await req('GET',`/admin/recovery?search=${prefix}&size=100`)).rows.find(row=>row.type==='bus'&&row.status==='Pending');
+ check((await req('POST',`/admin/recovery/${busRemoval.id}/restore`,{confirm:true})).affected===3,'bus recovery restores only schedules included in that bus removal');
+ const [crew]=await pool.execute("INSERT INTO crew(name,role,phone,cnic,license,duty,status,initials) VALUES (?,'Driver','03001234567',?,'QA','QA','Available','QA')",[prefix,prefix]);
+ ids.crew=crew.insertId;
+ check((await op('DELETE',`/crew/${ids.crew}`,{reason:'Unused test crew'})).status===200,'crew removal is a reviewable hide');
+ const crewRemoval=(await req('GET',`/admin/recovery?search=${prefix}&size=100`)).rows.find(row=>row.type==='crew');
+ check((await req('POST',`/admin/recovery/${crewRemoval.id}/purge`,{confirm:true,currentPassword:'wrong'})).status===422,'permanent removal requires the owner password');
+ check((await req('POST',`/admin/recovery/${crewRemoval.id}/purge`,{confirm:true,currentPassword:password})).status===200,'main admin can permanently remove an unused record');
+ check((await req('GET',`/admin/recovery?status=Purged&search=${prefix}`)).rows.some(row=>row.id===crewRemoval.id),'permanent removal retains its recovery snapshot and review history');
+ const activity=await req('GET','/admin/activity?search=recovery&size=10');check(activity.status===200&&activity.rows.every(row=>!('before_json' in row)&&!('after_json' in row)),'paginated action history exposes safe change fields, not arbitrary raw data');
+ await pool.execute("UPDATE bookings SET tariff_total_at_sale=NULL WHERE id=?",[second.id]);result=await req('GET',`/admin/reconciliation?staff=${operator.id}&from=${today}&to=${today}`);check(result.summary.unknownTariffs===1,'older missing tariff snapshots are labelled instead of fabricated');
+ console.log(`${count} admin control checks passed.`);
+}finally{
+ if(oldPolicy)await pool.execute("UPDATE settings SET setting_value=?,updated_by=? WHERE setting_key='booking_policies'",[oldPolicy.value,oldPolicy.updated_by]);else await pool.execute("DELETE FROM settings WHERE setting_key='booking_policies'");
+ if(oldPin)await pool.execute("UPDATE settings SET setting_value=?,updated_by=? WHERE setting_key='finance_pin_hash'",[oldPin.value,oldPin.updated_by]);else await pool.execute("DELETE FROM settings WHERE setting_key='finance_pin_hash'");
+ if(users.length){const marks=users.map(()=>'?').join(',');await pool.query(`DELETE FROM counter_cash_entries WHERE recorded_by IN (${marks})`,users);await pool.query(`DELETE FROM audit_logs WHERE user_id IN (${marks})`,users);}
+ if(ids.crew){await pool.execute("DELETE FROM catalog_removals WHERE entity_type='crew' AND entity_id=?",[String(ids.crew)]);await pool.execute('DELETE FROM crew WHERE id=?',[ids.crew]);}
+ await pool.execute('DELETE FROM catalog_removals WHERE entity_id IN (?,?,?,?,?)',[ids.route,ids.bus,ids.trip,ids.paused,ids.independent]);
+ await pool.execute('DELETE t FROM financial_transactions t LEFT JOIN bookings b ON b.id=t.booking_id WHERE b.trip_id=? OR t.description=?',[ids.trip,'Terminal: '+prefix]);
+ if(users.length){const marks=users.map(()=>'?').join(',');await pool.query(`DELETE FROM financial_transactions WHERE created_by IN (${marks})`,users);await pool.query(`DELETE FROM expenses WHERE created_by IN (${marks})`,users);}
+ await pool.execute('DELETE r FROM refunds r JOIN bookings b ON b.id=r.booking_id WHERE b.trip_id=?',[ids.trip]);await pool.execute('DELETE s FROM booking_seats s JOIN bookings b ON b.id=s.booking_id WHERE b.trip_id=?',[ids.trip]);await pool.execute('DELETE FROM bookings WHERE trip_id=?',[ids.trip]);
+ await pool.execute('DELETE FROM trip_runs WHERE trip_id IN (?,?,?)',[ids.trip,ids.paused,ids.independent]);await pool.execute('DELETE FROM trips WHERE route_id=?',[ids.route]);await pool.execute('DELETE FROM buses WHERE id=?',[ids.bus]);await pool.execute('DELETE FROM routes WHERE id=?',[ids.route]);
+ for(const id of users){await pool.execute('DELETE FROM api_sessions WHERE user_id=?',[id]);await pool.execute('DELETE FROM users WHERE id=?',[id]);}
+ await new Promise(resolve=>server.close(resolve));await closePool();
+}

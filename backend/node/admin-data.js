@@ -28,6 +28,7 @@ async function catalog(connection,user,runs) {
     }),
     fleet:await fetchBuses(false,connection),routes:await fetchRoutes(false,connection),crew:await fetchCrew(connection),
     users:isOwner(user)?await fetchUsers(connection):[],policies:await getPolicies(connection),
+    ...(isOwner(user)?{pendingRemovals:Number((await connection.query("SELECT COUNT(*) count FROM catalog_removals WHERE status='Pending'"))[0][0].count)}:{}),
   };
 }
 

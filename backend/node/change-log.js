@@ -22,7 +22,7 @@ export async function recordAuditedChange(executor,action,type,id,before,after) 
     return recordLiveEntries(executor,[['run',String(id)],['catalog','all'],...bookings.map(booking=>['booking',booking.id])]);
   }
   if (action==='production.data_cleared') return recordLiveEntries(executor,[['reset','all']]);
-  if (['route','bus','trip','crew','settings'].includes(type)||type==='user'&&!/^(auth\.|finance\.)/.test(action)) {
+  if (['route','bus','trip','crew','settings','expense','counter_cash'].includes(type)||type==='user'&&!/^(auth\.|finance\.)/.test(action)) {
     return recordLiveEntries(executor,[['catalog','all']]);
   }
 }

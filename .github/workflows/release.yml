@@ -69,6 +69,7 @@ jobs:
           npm run test:api
           npm run test:counter
           node backend/tests/operational-reports.js
+          node backend/tests/admin-control.js
           node backend/tests/customer-reservations.js
           npm run test:services
           npm run test:enrollment

@@ -1,3 +1,4 @@
+import AdminRecovery,{AdminActivity,CounterReconciliation} from './admin-control';
 import {collectionPrintAction} from '../shared/collection-print.mjs';
 import {PrintPreferencesContext,useManagedPrinting,usePrintPreferences,type TerminalPrintPolicy} from './print-preferences';
 import SalesReports from './sales-reports';
@@ -103,7 +104,10 @@ type AdminView =
   | "expenses"
   | "reports"
   | "crew"
-  | "settings";
+  | "settings"
+  | "recovery"
+  | "reconciliation"
+  | "activity";
 
 type DepartureAction = "pause" | "resume" | "depart" | "reopen" | "close-sales";
 type DepartureOptions = {confirm?:boolean;resolveReservations?:boolean};
@@ -286,6 +290,7 @@ type PublicBootstrap = {
 type AdminBootstrap = {
   liveCursor?:string;
   policies?:OperatingPolicies;
+  pendingRemovals?:number;
   release?: ReleaseInfo;
   readOnly?: boolean;
   runs: TripRun[];
@@ -301,7 +306,7 @@ type AdminBootstrap = {
 type AdminChanges = {
   liveCursor:string;changed?:boolean;reset?:boolean;readOnly:boolean;release?:ReleaseInfo;
   bookings?:Booking[];runs?:TripRun[];removedBookingIds?:string[];removedRunIds?:string[];
-  catalog?:Pick<AdminBootstrap,"trips"|"fleet"|"routes"|"crew"|"users"|"policies">;
+  catalog?:Pick<AdminBootstrap,"trips"|"fleet"|"routes"|"crew"|"users"|"policies"|"pendingRemovals">;
 };
 type PassengerForm = {
   destination:string;
@@ -1605,9 +1610,14 @@ const navGroups = [
       { id: "crew" as AdminView, label: "Crew", icon: UserRoundCog },
     ],
   },
+  {label:'MAIN ADMIN',items:[
+    {id:'recovery' as AdminView,label:'Admin recovery',icon:RefreshCw},
+    {id:'reconciliation' as AdminView,label:'Counter accounts',icon:FileBarChart},
+    {id:'activity' as AdminView,label:'Action history',icon:FileText},
+  ]},
 ];
 const roleViews: Record<StaffUser["role"], AdminView[]> = {
-  admin: ["dashboard", "sale", "passengers", "bookings", "reservations", "trips", "fleet", "routes", "finance", "expenses", "reports", "crew", "settings"],
+  admin: ["dashboard", "sale", "passengers", "bookings", "reservations", "trips", "fleet", "routes", "finance", "expenses", "reports", "crew", "settings", "recovery", "reconciliation", "activity"],
   manager: ["dashboard", "sale", "passengers", "bookings", "reservations", "trips", "fleet", "routes", "reports", "crew", "settings"],
   counter: ["dashboard", "sale", "passengers", "bookings", "reservations", "reports", "settings"],
   dispatcher: ["trips", "sale", "fleet", "reports", "crew", "settings"],
@@ -1650,6 +1660,7 @@ function ManagementApp({
   onLogout: () => void | Promise<void>;
 }) {
   const managedPrinting=useManagedPrinting();
+  const [pendingRemovals,setPendingRemovals]=useState(0);
   const automaticRequests=useRef(new Map<string,AutomaticPrintRequest>());
   const [previewAutoPrint,setPreviewAutoPrint]=useState(false);
   const [printFailure,setPrintFailure]=useState<{request:AutomaticPrintRequest;message:string}|null>(null);
@@ -1696,7 +1707,7 @@ function ManagementApp({
       if(sequence!==scopeSequence.current)return;
       liveCursor.current=result.liveCursor||null;loadedDateRef.current=date;setLoadedDate(date);
       setBookings(result.bookings);setFleet(result.fleet);setTrips(result.trips);setRuns(result.runs);setRoutes(result.routes);setCrew(result.crew);setStaffUsers(result.users);
-      setPaymentMode(result.paymentMode);setCloudReadOnly(Boolean(result.readOnly));setAvailableBuild(result.release);setStaffPolicy(result.policies||null);setRefreshError('');onUserChange(result.user);
+      setPaymentMode(result.paymentMode);setCloudReadOnly(Boolean(result.readOnly));setAvailableBuild(result.release);setStaffPolicy(result.policies||null);setPendingRemovals(result.pendingRemovals||0);setRefreshError('');onUserChange(result.user);
     }catch(error){
       if(sequence!==scopeSequence.current)return;
       const message=error instanceof Error?error.message:'Operations data could not be loaded.';
@@ -1727,7 +1738,7 @@ function ManagementApp({
           window.dispatchEvent(new Event("madina-records-changed"));
           setBookings(current=>mergeLiveRecords(current,changes.bookings,changes.removedBookingIds));
           setRuns(current=>mergeLiveRecords(current,changes.runs,changes.removedRunIds));
-          if(changes.catalog){const catalog=changes.catalog;setTrips(catalog.trips);setFleet(catalog.fleet);setRoutes(catalog.routes);setCrew(catalog.crew);setStaffUsers(catalog.users);setStaffPolicy(catalog.policies||null);}
+          if(changes.catalog){const catalog=changes.catalog;setTrips(catalog.trips);setFleet(catalog.fleet);setRoutes(catalog.routes);setCrew(catalog.crew);setStaffUsers(catalog.users);setStaffPolicy(catalog.policies||null);setPendingRemovals(catalog.pendingRemovals||0);}
         }
         liveCursor.current=changes.liveCursor;
       }
@@ -1848,7 +1859,7 @@ function ManagementApp({
     showToast(`${result.bookings.length} reservation(s) removed. Seats released.`);
   };
   const changeView = (view: AdminView) => {
-    if (!roleViews[user.role].includes(view)) return;
+    if (!roleViews[user.role].includes(view)||(!user.isOwner&&['recovery','reconciliation','activity'].includes(view))) return;
     setActiveView(view);
     if(view==='dashboard')setContextDate(today);
     setSidebarOpen(false);
@@ -1865,14 +1876,14 @@ function ManagementApp({
       failure(error);throw error;
     }
   };
-  const deleteBus = async (id: string) => {
+  const deleteBus = async (id: string,reason?:string) => {
     try {
       const bus = fleet.find((item) => item.id === id);
-      await api.deleteBus(id);
+      await api.deleteBus(id,reason);
       dataVersion.current++;window.dispatchEvent(new Event("madina-records-changed"));
       setFleet(current=>current.map(item=>item.id===id?{...item,deleted:true}:item));
       setTrips(current=>current.map(item=>item.busId===id?{...item,deleted:true,active:false}:item));
-      showToast(`${bus?.model ?? "Bus layout"} deleted.`);
+      showToast(`${bus?.model ?? "Bus layout"} hidden for admin review.`);
     } catch (error) {
       failure(error);
       throw error;
@@ -1891,20 +1902,12 @@ function ManagementApp({
       throw error;
     }
   };
-  const restoreTrip = async (id:string) => {
-    try{
-      const result=await api.restoreTrip<TripRecord>(id);
-      dataVersion.current++;window.dispatchEvent(new Event('madina-records-changed'));
-      setTrips(current=>current.map(trip=>trip.id===id?result.trip:trip));
-      showToast('Schedule restored. Existing tickets and reservations retained.');
-    }catch(error){failure(error);throw error;}
-  };
-  const deleteTrip = async (id: string) => {
+  const deleteTrip = async (id: string,reason?:string) => {
     try {
-      await api.deleteTrip(id);
+      await api.deleteTrip(id,reason);
       dataVersion.current++;window.dispatchEvent(new Event("madina-records-changed"));
       setTrips(current=>current.map(item=>item.id===id?{...item,deleted:true,active:false}:item));
-      showToast("Schedule deleted. Ticket history retained.");
+      showToast("Departure hidden and sent to the main administrator for review.");
     } catch (error) {
       failure(error);
       throw error;
@@ -1922,14 +1925,14 @@ function ManagementApp({
       throw error;
     }
   };
-  const deleteRoute = async (id: string) => {
+  const deleteRoute = async (id: string,reason?:string) => {
     try {
       const route = routes.find((item) => item.id === id);
-      await api.deleteRoute(id);
+      await api.deleteRoute(id,reason);
       dataVersion.current++;window.dispatchEvent(new Event("madina-records-changed"));
       setRoutes(current=>current.map(item=>item.id===id?{...item,deleted:true,status:"Paused"}:item));
       setTrips(current=>current.map(item=>item.routeId===id?{...item,deleted:true,active:false}:item));
-      showToast(`${route ? routeLabel(route) : "Route"} deleted.`);
+      showToast(`${route ? routeLabel(route) : "Route"} hidden for admin review.`);
     } catch (error) {
       failure(error);
       throw error;
@@ -1945,13 +1948,13 @@ function ManagementApp({
       failure(error);
     }
   };
-  const deleteCrewMember = async (id: number) => {
+  const deleteCrewMember = async (id: number,reason?:string) => {
     try {
       const person = crew.find((item) => item.id === id);
-      await api.deleteCrew(id);
+      await api.deleteCrew(id,reason);
       dataVersion.current++;window.dispatchEvent(new Event("madina-records-changed"));
       setCrew((current) => current.filter((item) => item.id !== id));
-      showToast(`${person?.name ?? "Staff member"} deleted.`);
+      showToast(`${person?.name ?? "Crew member"} hidden for admin review.`);
     } catch (error) {
       failure(error);
       throw error;
@@ -2008,11 +2011,11 @@ function ManagementApp({
   const visibleNavGroups = navGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => roleViews[user.role].includes(item.id)),
+      items: group.items.filter((item) => roleViews[user.role].includes(item.id)&&(user.isOwner||!['recovery','reconciliation','activity'].includes(item.id))),
     }))
     .filter((group) => group.items.length > 0);
   return (
-    <PrintPreferencesContext.Provider value={managedPrinting}><StaffPolicyContext.Provider value={user.role==="admin"?null:staffPolicy}><div
+    <PrintPreferencesContext.Provider value={managedPrinting}><StaffPolicyContext.Provider value={user.isOwner?null:staffPolicy}><div
       className={`admin-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}
     >
       <button
@@ -2056,7 +2059,7 @@ function ManagementApp({
                     ? paidCount
                     : item.id === "reservations"
                       ? reservationCount
-                      : 0;
+                      : item.id === "recovery"?pendingRemovals:0;
                 return (
                   <button
                     type="button"
@@ -2199,7 +2202,7 @@ function ManagementApp({
               fleet={fleet}
               routes={routes}
               onSave={async trip => { await saveTrip(trip); }}
-              onDelete={deleteTrip} onRestore={restoreTrip}
+              onDelete={deleteTrip}
               onReport={openReport}
             />
           )}
@@ -2213,6 +2216,9 @@ function ManagementApp({
           {activeView === "routes" && (
             <RoutesView fleet={fleet} routes={routes} onSave={saveRoute} onDelete={deleteRoute} />
           )}
+          {user.isOwner&&activeView==='recovery'&&<AdminRecovery onChanged={()=>refreshData(true)}/>}
+          {user.isOwner&&activeView==='activity'&&<FinanceProtected onOpenSettings={()=>changeView('settings')}><AdminActivity/></FinanceProtected>}
+          {user.isOwner&&activeView==='reconciliation'&&<FinanceProtected onOpenSettings={()=>changeView('settings')}><CounterReconciliation/></FinanceProtected>}
           {activeView === "finance" && (
             <FinanceProtected onOpenSettings={() => changeView("settings")}>
               <FinanceView bookings={bookings} />
@@ -2413,7 +2419,7 @@ function BookingWorkspace({onServiceDate,dataDate,scopeLoading,bookings,trips,fl
   onSave: (booking:Booking)=>Promise<void>; showToast:(message:string)=>void; paymentMode:string;
   onCounterSave:(id:string,date:string,changes:CounterChanges)=>Promise<TripRun>;
   onAddDeparture?: (date: string, defaults: Partial<TripRecord>) => void;
-  onDeleteDeparture?: (id: string) => Promise<void>;
+  onDeleteDeparture?: (id: string,reason?:string) => Promise<void>;
   onPrint:(booking:Booking)=>void; onCancel:(id:string)=>Promise<void>;
   onConfirmReservations:(ids:string[],method:PaymentMethod,reference:string,details?:Partial<Booking>)=>Promise<void>;
   onCancelReservations:(ids:string[])=>Promise<void>;
@@ -2524,7 +2530,7 @@ function BookingWorkspace({onServiceDate,dataDate,scopeLoading,bookings,trips,fl
       })}{!choices.length&&<p>No departures for this route and date.</p>}</div>
       {(onAddDeparture || onDeleteDeparture) && <div className="departure-roster-actions">
         {onAddDeparture && <button type="button" className="secondary-button" disabled={busy} onClick={() => onAddDeparture(date, { routeId, busId: bus.layoutId || bus.id, arrival: trip.arrival, days: trip.days })}><Plus size={15}/> Add departure</button>}
-        {onDeleteDeparture && selectedDeparture && <button type="button" className="danger-button" disabled={busy} onClick={() => setDepartureToRemove(selectedDeparture)}><Trash2 size={15}/> Remove {selectedDeparture.departure} departure</button>}
+        {onDeleteDeparture && selectedDeparture && <button type="button" className="danger-button" disabled={busy} onClick={() => setDepartureToRemove(selectedDeparture)}><Trash2 size={15}/> Hide {selectedDeparture.departure} departure</button>}
       </div>}
       <CounterDeparture key={`${runId}-${bus.id}-${bus.layoutId}-${bus.registration}-${bus.service}-${bus.seats}-${trip.departure}`} trip={trip} bus={bus} route={route} fleet={fleet} disabled={busy||date<today||!trip.active||!trip.days.includes(serviceDayFor(date))||["Departed","Returned","Cancelled"].includes(trip.status)} onDirty={setDepartureDirty} onSave={async changes=>{const saved=await onCounterSave(trip.id,date,changes);setDepartureDirty(false);setSelected([]);setTotalFareOverride(undefined);setFocusedId(null);return saved;}}/>
     </section>
@@ -2545,6 +2551,7 @@ function BookingWorkspace({onServiceDate,dataDate,scopeLoading,bookings,trips,fl
           </div>}
           <div className="inspector-amount"><small>{focused.bookingStatus==="Reserved"?"To collect":"Net collected"}</small><strong>{money(focused.bookingStatus==="Reserved"?selectedReservations.reduce((sum,booking)=>sum+booking.balance,0):netCollected(focused))}</strong></div>
           <div className="counter-actions">
+            {!readOnly&&['Reserved','Confirmed'].includes(focused.bookingStatus)&&<button type="button" className="secondary-button" disabled={paymentBlocked} onClick={()=>{setPassenger({...blank(),passenger:focused.passenger,phone:focused.phone,cnic:focused.cnic,gender:focused.gender,destination:focused.destination,boardingPoint:focused.boardingPoint});setMode(focused.bookingStatus==='Reserved'?'Reservation':'Ticket');setFocusedId(null);setGroupSelection(null);setSelected([]);setSelectionBasis(selectionContext);setTotalFareOverride(undefined);setAction(null);setError('');showToast('Choose additional available seats. Existing seats and payments stay as they are.');}}>Add more seats for this customer</button>}
             {!readOnly&&focused.bookingStatus==="Reserved"&&<><button type="button" className="primary-button" disabled={paymentBlocked||!selectedReservations.length} aria-keyshortcuts="Enter" onClick={beginPayment}>Collect payment & issue {selectedReservations.length>1?`${selectedReservations.length} tickets`:'ticket'}</button><button type="button" className="danger-button" disabled={busy||!selectedReservations.length} onClick={()=>setReservationsToCancel(selectedReservations)}>Remove {selectedReservations.length>1?`${selectedReservations.length} reservations`:'reservation'}</button><small>Reserved seats have no ticket or boarding token.</small></>}
             {focused.bookingStatus!=="Reserved"&&<button type="button" className="primary-button" onClick={()=>onPrint(focused)}><Printer size={16}/> {focused.bookingStatus==="Confirmed"?"Print receipt & token":"Print refund record"}</button>}
             {!readOnly&&focused.bookingStatus==="Confirmed"&&focused.paid===0&&<button type="button" className="danger-button" disabled={busy} onClick={async()=>{setBusy(true);try{await onCancel(focused.id);setFocusedId(null);}catch(e){showToast(e instanceof Error?e.message:"Could not cancel ticket.");}finally{setBusy(false);}}}>Cancel ticket & release seat</button>}
@@ -2595,8 +2602,8 @@ function BookingWorkspace({onServiceDate,dataDate,scopeLoading,bookings,trips,fl
       item={`${routeLabel(route)} · ${trips.find(item => item.id === departureToRemove.id)?.departure ?? departureToRemove.departure}`}
       text="This removes the recurring time from the roster and stops future sales. Existing tickets and journey history are retained."
       onClose={() => setDepartureToRemove(null)}
-      onConfirm={async () => {
-        await onDeleteDeparture(departureToRemove.id);
+      onConfirm={async (reason) => {
+        await onDeleteDeparture(departureToRemove.id,reason);
         setDepartureToRemove(null);
         const next = choices.find(item => item.id !== departureToRemove.id);
         if (next) choose(next.id);
@@ -3353,26 +3360,25 @@ function CollectPaymentModal({
 }
 
 function TripsView({dataDate,onServiceDate,
-  bookings, trips, fleet, routes, runs, onSell, onSave, onDelete, onRestore, onReport,
+  bookings, trips, fleet, routes, runs, onSell, onSave, onDelete, onReport,
 }: {
   dataDate:string;onServiceDate:(date:string)=>void;
   bookings: Booking[]; trips: TripRecord[]; fleet: BusRecord[]; routes: RouteRecord[];
   runs: TripRun[]; onSell: (id: string, date: string) => void;
-  onSave: (trip: TripRecord) => Promise<void>; onDelete: (id: string) => Promise<void>; onRestore:(id:string)=>Promise<void>;
+  onSave: (trip: TripRecord) => Promise<void>; onDelete: (id: string,reason?:string) => Promise<void>;
   onReport: (kind: ReportKind, tripId: string, run: number, date?: string) => void;
 }) {
   const [editing, setEditing] = useState<TripRecord | "new" | null>(null);
   const [deleting, setDeleting] = useState<TripRecord | null>(null);
-  const [restoring,setRestoring]=useState<string|null>(null),[restoreError,setRestoreError]=useState("");
   const [openTrip, setOpenTrip] = useState<{ id: string; date: string } | null>(null);
   const [serviceDate, setServiceDate] = useState(today);
   const [range,setRange]=useState<DateRange>({from:"",to:""});
   const [filter, setFilter] = useState("This date");
   useEffect(()=>{if(filter==='This date')onServiceDate(serviceDate);},[serviceDate,onServiceDate,filter]);
-  const historyPage=useRecordPage<TripRun>('/admin/run-page',{from:range.from,to:range.to,status:['This date','Deleted'].includes(filter)?'History':filter});
+  const historyPage=useRecordPage<TripRun>('/admin/run-page',{from:range.from,to:range.to,status:filter==='This date'?'History':filter});
   const visible = filter === "This date"
     ? tripsOnDate(trips, serviceDate, runs).map((trip) => ({ trip, date: serviceDate }))
-    : filter==="Deleted"?trips.filter(trip=>trip.deleted).map(trip=>({trip,date:serviceDate})):historyPage.rows
+    : historyPage.rows
       .flatMap((run) => { const trip = trips.find((item) => item.id === run.tripId); return trip ? [{ trip: tripOnDate(trip, run.date, [run]), date: run.date }] : []; });
   const modalTrip = openTrip && trips.find((trip) => trip.id === openTrip.id);
   return (
@@ -3382,10 +3388,9 @@ function TripsView({dataDate,onServiceDate,
       <section className="surface data-surface">
         <div className="data-toolbar">
           {filter==="This date"&&<div className="date-switcher"><label><CalendarDays size={17}/><span>Service date</span><input type="date" value={serviceDate} onChange={(event) => setServiceDate(event.target.value)}/></label></div>}
-          <div className="filter-tabs">{["This date", "Departed", "History", "Deleted"].map((label) => <button type="button" key={label} className={filter === label ? "active" : ""} onClick={() => setFilter(label)}>{label}</button>)}</div>
+          <div className="filter-tabs">{["This date", "Departed", "History"].map((label) => <button type="button" key={label} className={filter === label ? "active" : ""} onClick={() => setFilter(label)}>{label}</button>)}</div>
         </div>
-        {!["This date","Deleted"].includes(filter)&&<><DateRangeFilter value={range} onChange={setRange}/><RecordPager {...historyPage}/></>}
-        {restoreError&&<p role="alert" className="form-error">{restoreError}</p>}
+        {filter!=="This date"&&<><DateRangeFilter value={range} onChange={setRange}/><RecordPager {...historyPage}/></>}
         <div className="trip-cards" role="table" aria-label="Departures">
           <div className="trip-table-head" role="row"><span>Time</span><span>Route</span><span>Bus</span><span>Crew</span><span>Seats</span><span>Status</span><span>Actions</span></div>
           {visible.map(({trip, date}) => {
@@ -3402,11 +3407,10 @@ function TripsView({dataDate,onServiceDate,
               <div><strong>{dataDate===date?`${paid} paid · ${held} held`:'Open passengers for seat totals'}</strong><small>{dataDate===date?`${bus.seats-paid-held} available`:''}</small></div>
               <div><b className={`plain-status ${trip.status.toLowerCase()}`}>{trip.deleted?"Deleted":trip.status}</b>{trip.departedAt && <small>Left {formatPrintTime(trip.departedAt)}</small>}</div>
               <div className="trip-actions">
-                {trip.deleted&&<button className="text-action" type="button" disabled={Boolean(restoring)} onClick={async()=>{if(!window.confirm(`Restore ${routeLabel(route)} · ${trip.departure}? Existing tickets and reservations will be retained.`))return;setRestoreError('');setRestoring(trip.id);try{await onRestore(trip.id);}catch(error){setRestoreError(error instanceof Error?error.message:'Schedule could not be restored.');}finally{setRestoring(null);}}}>{restoring===trip.id?'Restoring…':'Restore schedule'}</button>}
-                {!trip.deleted&&<><button className="text-action" type="button" onClick={() => {onServiceDate(date);setOpenTrip({id: trip.id, date});}}>Passengers</button>
+                <button className="text-action" type="button" onClick={() => {onServiceDate(date);setOpenTrip({id: trip.id, date});}}>Passengers</button>
                 <button className="text-action" type="button" onClick={() => onSell(trip.id, date)}>Ticket page</button>
                 <button className="text-action" type="button" disabled={trip.deleted} onClick={() => setEditing(trips.find((item) => item.id === trip.id) ?? trip)}>Edit</button>
-                <button className="icon-action danger" type="button" disabled={trip.deleted} aria-label={`Delete ${routeLabel(route)} trip`} onClick={() => setDeleting(trip)}><Trash2 size={15}/></button></>}
+                <button className="icon-action danger" type="button" disabled={trip.deleted} aria-label={`Delete ${routeLabel(route)} trip`} onClick={() => setDeleting(trip)}><Trash2 size={15}/></button>
               </div>
             </article>;
           })}
@@ -3414,7 +3418,7 @@ function TripsView({dataDate,onServiceDate,
         </div>
       </section>
       {editing && <TripFormModal trip={editing === "new" ? undefined : editing} fleet={fleet} routes={routes} onClose={() => setEditing(null)} onSave={async (trip) => { await onSave(trip); setEditing(null); }}/>}
-      {deleting && <ConfirmDeleteModal title="Delete schedule?" item={`${routeLabel(tripRoute(deleting,routes))} · ${deleting.departure}`} text="Remove this schedule from the roster and stop future sales. Existing tickets, refunds and journey history are retained." onClose={() => setDeleting(null)} onConfirm={async () => { await onDelete(deleting.id); setDeleting(null); }}/>}
+      {deleting && <ConfirmDeleteModal title="Hide schedule?" item={`${routeLabel(tripRoute(deleting,routes))} · ${deleting.departure}`} text="Remove this schedule from the roster and stop future sales. Existing tickets, refunds and journey history are retained." onClose={() => setDeleting(null)} onConfirm={async (reason) => { await onDelete(deleting.id,reason); setDeleting(null); }}/>}
       {modalTrip && openTrip && dataDate===openTrip.date && <TripRunModal trip={tripOnDate(modalTrip, openTrip.date, runs)} fleet={fleet} bookings={bookings} routes={routes} serviceDate={openTrip.date} onClose={() => setOpenTrip(null)} onReport={onReport}/>}
     </div>
   );
@@ -3437,14 +3441,14 @@ function DepartureControls({trip,date,reservedCount,onTransition}:{trip:TripReco
   </form></div>}</section>;
 }
 
-function FleetView({fleet,onSave,onDelete}:{fleet:BusRecord[];onSave:(bus:BusRecord)=>Promise<void>;onDelete:(id:string)=>Promise<void>}) {
+function FleetView({fleet,onSave,onDelete}:{fleet:BusRecord[];onSave:(bus:BusRecord)=>Promise<void>;onDelete:(id:string,reason?:string)=>Promise<void>}) {
   const [editing,setEditing]=useState<BusRecord|"new"|null>(null),[deleting,setDeleting]=useState<BusRecord|null>(null);
   const layouts=fleet.filter(b=>!b.deleted&&b.isTemplate);
   return <div className="admin-view"><ViewHeading eyebrow="BUS LAYOUTS" title="Buses" text="Save the bus name and seating plan here. Enter its vehicle number on the ticket page." action={<button className="primary-button" onClick={()=>setEditing("new")}><Plus size={16}/> Add bus layout</button>}/>
     <section className="fleet-grid">{layouts.map(bus=><article className="surface fleet-card" key={bus.id}><div className="fleet-card-top"><span><BusFront size={20}/></span><strong>{bus.model}</strong></div><p>{bus.service} · {bus.seats} seats</p><div className="fleet-card-actions"><button onClick={()=>setEditing(bus)}>Edit layout <ChevronRight size={15}/></button><button className="danger-text-button" onClick={()=>setDeleting(bus)}><Trash2 size={15}/> Delete</button></div></article>)}</section>
     {!layouts.length&&<EmptyState title="No bus layouts" text="Add a name, bus type and seat capacity to get started."/>}
     {editing&&<BusFormModal bus={editing==="new"?undefined:editing} onClose={()=>setEditing(null)} onSave={async bus=>{await onSave(bus);setEditing(null);}}/>}
-    {deleting&&<ConfirmDeleteModal title="Delete bus layout?" item={deleting.model} text="This removes the layout and its recurring schedules from the working lists. Saved tickets and journey history remain available." onClose={()=>setDeleting(null)} onConfirm={async()=>{await onDelete(deleting.id);setDeleting(null);}}/>}
+    {deleting&&<ConfirmDeleteModal title="Hide bus layout?" item={deleting.model} text="This removes the layout and its recurring schedules from the working lists. Saved tickets and journey history remain available." onClose={()=>setDeleting(null)} onConfirm={async(reason)=>{await onDelete(deleting.id,reason);setDeleting(null);}}/>}
   </div>;
 }
 
@@ -4207,7 +4211,7 @@ function RoutesView({
   routes: RouteRecord[];
   fleet: BusRecord[];
   onSave: (route: RouteRecord) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
+  onDelete: (id: string,reason?:string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<RouteRecord | "new" | null>(null);
   const [deleting, setDeleting] = useState<RouteRecord | null>(null);
@@ -4324,12 +4328,12 @@ function RoutesView({
       )}
       {deleting && (
         <ConfirmDeleteModal
-          title="Delete route?"
+          title="Hide route?"
           item={routeLabel(deleting)}
-          text="A route used by a trip cannot be deleted until that trip is reassigned or removed."
+          text="The route and its schedules will be hidden from operations and sent to the main administrator for review. Existing tickets and financial history remain saved."
           onClose={() => setDeleting(null)}
-          onConfirm={async () => {
-            await onDelete(deleting.id);
+          onConfirm={async (reason) => {
+            await onDelete(deleting.id,reason);
             setDeleting(null);
           }}
         />
@@ -4441,17 +4445,18 @@ function ConfirmDeleteModal({
   text: string;
   item: string;
   onClose: () => void;
-  onConfirm: () => Promise<void>;
+  onConfirm: (reason?:string) => Promise<void>;
 }) {
   const [deleting, setDeleting] = useState(false);
+  const [reason,setReason]=useState("");
   const [error, setError] = useState("");
   const confirm = async () => {
     setDeleting(true);
     setError("");
     try {
-      await onConfirm();
+      await onConfirm(reason);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "This record could not be deleted.");
+      setError(caught instanceof Error ? caught.message : "This record could not be hidden.");
       setDeleting(false);
     }
   };
@@ -4464,13 +4469,14 @@ function ConfirmDeleteModal({
         </header>
         <div className="delete-modal-body">
           <span><Trash2 size={21} /></span>
-          <div><strong>This action cannot be undone.</strong><p>{text}</p></div>
+          <div><strong>The main administrator can restore or approve this archive.</strong><p>{text}</p></div>
         </div>
+        <label>Reason for hiding<input maxLength={500} value={reason} onChange={event=>setReason(event.target.value)} placeholder="Optional explanation for the main administrator"/></label>
         {error && <p className="form-error delete-error">{error}</p>}
         <footer>
           <button className="secondary-button" type="button" onClick={onClose} disabled={deleting}>Cancel</button>
           <button className="danger-button" type="button" onClick={() => void confirm()} disabled={deleting}>
-            <Trash2 size={16} /> {deleting ? "Deleting…" : "Delete"}
+            <Trash2 size={16} /> {deleting ? "Hiding…" : "Hide & send for review"}
           </button>
         </footer>
       </div>
@@ -4689,7 +4695,7 @@ function CrewView({
 }: {
   crew: CrewRecord[];
   onSave: (person: CrewRecord, previousName?: string) => void;
-  onDelete: (id: number) => Promise<void>;
+  onDelete: (id: number,reason?:string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState<CrewRecord | "new" | null>(null);
   const [deleting, setDeleting] = useState<CrewRecord | null>(null);
@@ -4785,12 +4791,12 @@ function CrewView({
       )}
       {deleting && deleting.id && (
         <ConfirmDeleteModal
-          title="Delete staff member?"
+          title="Hide crew member?"
           item={deleting.name}
-          text="Staff assigned to an active trip must be reassigned before deletion."
+          text="The crew record will be hidden from working lists and retained for main administrator review. Existing trip assignments and history remain saved."
           onClose={() => setDeleting(null)}
-          onConfirm={async () => {
-            await onDelete(deleting.id!);
+          onConfirm={async (reason) => {
+            await onDelete(deleting.id!,reason);
             setDeleting(null);
           }}
         />

@@ -15,8 +15,8 @@ export async function clearTestSales(owner,req,command) {
   requireOwner(owner);
   if(!maintenance.draining())throw new Error('Sales cleanup requires the maintenance write fence.');
   if(command?.action!=='clear-test-sales'||!/^[a-f0-9]{32}$/.test(command.nonce||''))throw new Error('A fixed sales-cleanup command is required.');
-  const tables=['financial_transactions','expenses','shift_closures','counter_shifts','refunds','booking_seats','payment_events','bookings'];
-  const auditTypes=['booking','expense','trip_run','shift','counter_shift','refund','payment'];
+  const tables=['counter_cash_entries','financial_transactions','expenses','shift_closures','counter_shifts','refunds','booking_seats','payment_events','bookings'];
+  const auditTypes=['booking','expense','trip_run','shift','counter_shift','refund','payment','counter_cash'];
   return transaction(async connection=>{
     const marker=`production_reset_${command.nonce}`;
     const [[applied]]=await connection.execute('SELECT setting_value FROM settings WHERE setting_key=? FOR UPDATE',[marker]);
@@ -43,7 +43,7 @@ export async function clearTestSales(owner,req,command) {
 // An explicit owner operation, never an automatic release migration or seed.
 export async function clearOperationalData(owner, req, command = null) {
   const devicesPreserved=command?.action!=="prepare-main-pc-handover";
-  const tables = ["financial_transactions","expenses","shift_closures","counter_shifts","refunds","booking_seats","payment_events","bookings","trip_runs","api_sessions","audit_logs","users","crew"];
+  const tables = ["counter_cash_entries","financial_transactions","expenses","shift_closures","counter_shifts","refunds","booking_seats","payment_events","bookings","trip_runs","api_sessions","audit_logs","users","crew"];
   return transaction(async connection => {
     const marker = command ? `production_reset_${command.nonce}` : null;
     if (marker) {

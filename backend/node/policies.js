@@ -1,3 +1,4 @@
+import {isOwner} from './account-access.js';
 import { pool } from './db.js';
 import { fail, parseJson } from './helpers.js';
 export const defaultPolicies = Object.freeze({
@@ -28,14 +29,14 @@ export async function getPolicies(executor = pool) {
   return { ...defaultPolicies, ...parseJson(row?.setting_value) };
 }
 export function staffCollectionPolicy(policy, user, baseFares, fares, discount) {
-  if (!user || user.role === 'admin') return;
+  if (!user || isOwner(user)) return;
   if (!policy.staffCanEditFare && fares.some((fare,index) => fare !== baseFares[index])) fail('The administrator has disabled staff fare changes.',403,'policy_denied');
   const total = fares.reduce((sum,fare)=>sum+fare,0);
   if (discount > 0 && (!policy.staffCanDiscount || discount > total * policy.staffMaxDiscountPercent / 100 + .005)) fail('The discount exceeds the staff policy. Ask an administrator.',403,'policy_denied');
   if (policy.staffMaxCollection > 0 && total-discount > policy.staffMaxCollection) fail('This collection exceeds the staff limit. Ask an administrator.',403,'policy_denied');
 }
 export function staffRefundPolicy(policy, user, amount, paid, alreadyRefunded) {
-  if (user.role === 'admin') return;
+  if (isOwner(user)) return;
   if (!policy.staffCanRefund || (policy.staffMaxRefundAmount > 0 && amount > policy.staffMaxRefundAmount) || alreadyRefunded+amount > paid*policy.staffMaxRefundPercent/100+.005) fail('This refund exceeds the staff policy. Ask an administrator.',403,'policy_denied');
 }
 export function reservationExpiry(policy, isPublic, departure, now = Date.now()) {

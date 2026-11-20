@@ -1,3 +1,4 @@
+import {hideCatalog,reviewRemoval,recoveryForEntity} from './recovery.js';
 import {saleIdentity} from './sale-identity.js';
 import {sameBookingCustomer} from '../../shared/booking-workspace.mjs';
 import {seatFare,routeDestinations,commissionPolicy} from '../../shared/service-pricing.mjs';
@@ -18,12 +19,19 @@ const query = async (executor, sql, parameters = []) => {
 };
 
 export async function audit(action, entityType, entityId, before, after, userId, req, executor = pool) {
+  const actor=saleIdentity({id:userId,name:null},req);
+  const [[actorRow]]=userId?await executor.execute('SELECT name FROM users WHERE id=?',[userId]):[[null]];
   await query(executor,
-    "INSERT INTO audit_logs (user_id, action, entity_type, entity_id, before_json, after_json, ip_address) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO audit_logs (user_id, action, entity_type, entity_id, before_json, after_json, ip_address,terminal_slot,actor_name) VALUES (?, ?, ?, ?, ?, ?, ?,?,?)",
     [userId || null, action, entityType, String(entityId), before == null ? null : JSON.stringify(before),
-      after == null ? null : JSON.stringify(after), String(req?.ip || "system").slice(0, 64)],
+      after == null ? null : JSON.stringify(after), String(req?.ip || "system").slice(0, 64),actor.terminalSlot,actorRow?.name||null],
   );
   await recordAuditedChange(executor,action,entityType,entityId,before,after);
+}
+
+async function financialEntry(connection,{bookingId=null,refundId=null,type,amount,method,reference,description},user,req){
+  const actor=saleIdentity(user,req);
+  await query(connection,'INSERT INTO financial_transactions(booking_id,refund_id,transaction_type,amount,payment_method,reference,description,created_by,terminal_slot,actor_name) VALUES(?,?,?,?,?,?,?,?,?,?)',[bookingId,refundId,type,amount,method,reference,description,user?.id??null,actor.terminalSlot,user?.name??null]);
 }
 
 const validDate = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value)) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
@@ -147,20 +155,18 @@ export async function createBooking(data, user, isPublic, req) {
          (id, ticket_no, source, passenger, phone, cnic, gender, route_label, destination, boarding_point,
           bus_registration, service, fare, discount, total, paid, balance, payment_method, payment_reference,
           payment_status, booking_status, travel_date, travel_time, driver, attendant, trip_id, trip_run_id,
-          expires_at, seat_printed_at, issued_by, terminal, created_by, sold_by_user_id, sold_terminal_slot, sold_from)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          expires_at, seat_printed_at, issued_by, terminal, created_by, sold_by_user_id, sold_terminal_slot, sold_from, tariff_total_at_sale)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [id, ticketNo, isPublic ? "Public web" : "Counter", details.passenger, details.phone,
           details.cnic, details.gender,
           `${route.from} → ${route.to}`, destination, String(data.boardingPoint || run.snapshot.route.boarding).trim(),
           (run.snapshot.bus.isTemplate ? "To be assigned" : run.snapshot.bus.registration), run.snapshot.bus.service, fare, discount, total, paid, reserved ? total : 0, paymentMethod, paymentReference,
           reserved ? "Unpaid" : "Paid", reserved ? "Reserved" : "Confirmed", travelDate, run.snapshot.departure, run.driver,
           run.attendant, trip.id, tripRunId, expiresAt, reserved ? null : sqlDateTime(), user?.name || "Public website",
-          "Madina Terminal, Peshawar", user?.id || null, seller?.userId??null, seller?.terminalSlot??null, seller?.origin??null]);
+          "Madina Terminal, Peshawar", user?.id || null, seller?.userId??null, seller?.terminalSlot??null, seller?.origin??null,reserved?null:baseFares[index]]);
       await query(connection, "INSERT INTO booking_seats (booking_id, trip_run_id, seat_number, active) VALUES (?, ?, ?, 1)", [id, tripRunId, seat]);
       if (!reserved) {
-        await query(connection,
-          "INSERT INTO financial_transactions (booking_id, transaction_type, amount, payment_method, reference, description, created_by) VALUES (?, 'sale', ?, ?, ?, ?, ?)",
-          [id, paid, paymentMethod, paymentReference, `Ticket ${ticketNo}`, user?.id || null]);
+        await financialEntry(connection,{bookingId:id,type:'sale',amount:paid,method:paymentMethod,reference:paymentReference,description:`Ticket ${ticketNo}`},user,req);
       }
       const created = await fetchBooking(id, connection);
       await audit("booking.created", "booking", id, null, created, user?.id, req, connection);
@@ -299,10 +305,9 @@ export async function confirmReservations(anchor, values, data, user, req) {
       const before = await fetchBooking(row.id,connection);
       const ticketNo = await nextTicketNumber(connection);
       await query(connection,
-        "UPDATE bookings SET reservation_no=COALESCE(reservation_no,ticket_no),ticket_no=?,passenger=?,phone=?,cnic=?,gender=?,destination=?,boarding_point=?,fare=?,discount=?,total=?,paid=?,balance=0,payment_method=?,payment_reference=?,payment_status='Paid',booking_status='Confirmed',expires_at=NULL,seat_printed_at=NOW(),issued_by=?,sold_by_user_id=?,sold_terminal_slot=?,sold_from=? WHERE id=?",
-        [ticketNo,details.passenger,details.phone,details.cnic,details.gender,destination,String(data.boardingPoint||row.boarding_point||route.boarding),fare,discount,total,total,method,reference,seller.name,seller.userId,seller.terminalSlot,seller.origin,row.id]);
-      await query(connection,"INSERT INTO financial_transactions (booking_id,transaction_type,amount,payment_method,reference,description,created_by) VALUES (?,'sale',?,?,?,?,?)",
-        [row.id,total,method,reference,`Confirmed reservation ${ticketNo}`,user.id]);
+        "UPDATE bookings SET reservation_no=COALESCE(reservation_no,ticket_no),ticket_no=?,passenger=?,phone=?,cnic=?,gender=?,destination=?,boarding_point=?,fare=?,discount=?,total=?,paid=?,balance=0,payment_method=?,payment_reference=?,payment_status='Paid',booking_status='Confirmed',expires_at=NULL,seat_printed_at=NOW(),issued_by=?,sold_by_user_id=?,sold_terminal_slot=?,sold_from=?,tariff_total_at_sale=? WHERE id=?",
+        [ticketNo,details.passenger,details.phone,details.cnic,details.gender,destination,String(data.boardingPoint||row.boarding_point||route.boarding),fare,discount,total,total,method,reference,seller.name,seller.userId,seller.terminalSlot,seller.origin,Math.round(indices.reduce((sum,index)=>sum+baseFares[index],0)*100)/100,row.id]);
+      await financialEntry(connection,{bookingId:row.id,type:'sale',amount:total,method,reference,description:`Confirmed reservation ${ticketNo}`},user,req);
       const after = await fetchBooking(row.id,connection);
       await audit('reservation.confirmed','booking',row.id,before,after,user.id,req,connection);
       bookings.push(after);
@@ -338,9 +343,7 @@ export async function refundBooking(id, data, user, req) {
     await query(connection, "UPDATE bookings SET payment_status = ?, booking_status = ? WHERE id = ?",
       [full ? "Refunded" : "Partially refunded", full ? "Refunded" : data.releaseSeats === true ? "Cancelled" : row.booking_status, id]);
     if (full || data.releaseSeats === true) await query(connection, "UPDATE booking_seats SET active = 0 WHERE booking_id = ?", [id]);
-    await query(connection,
-      "INSERT INTO financial_transactions (booking_id, refund_id, transaction_type, amount, payment_method, reference, description, created_by) VALUES (?, ?, 'refund', ?, ?, ?, ?, ?)",
-      [id, refundId, -amount, method, reference, `Refund: ${reason}`, user.id]);
+    await financialEntry(connection,{bookingId:id,refundId,type:'refund',amount:-amount,method,reference,description:`Refund: ${reason}`},user,req);
     const after = await fetchBooking(id, connection);
     await audit("booking.refunded", "booking", id, before, after, user.id, req, connection);
     return after;
@@ -352,6 +355,7 @@ export async function saveRoute(id, data, user, req) {
   data={distance:"",duration:"",...data};
   const recordId = id === "new" ? uuid("route-") : id;
   const before = (await fetchRoutes()).find((item) => item.id === recordId) || null;
+  if(before?.deleted)fail('This route is hidden. Ask the main administrator to restore it.',409,'record_hidden');
   const settings=validateRouteConfig({...data,destinations:data.destinations??before?.destinations??[],services:data.services??before?.services??[]},await fetchBuses());
   await query(pool,
     `INSERT INTO routes (id, origin, destination, distance, duration, fare, boarding_point, status, destinations, services) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -373,6 +377,7 @@ export async function saveBus(id, data, user, req) {
   return transaction(async (connection) => {
   await query(connection, "SELECT id FROM buses WHERE id = ? FOR UPDATE", [recordId]);
   const before = (await fetchBuses(false, connection)).find((item) => item.id === recordId) || null;
+  if(before?.deleted)fail('This bus is hidden. Ask the main administrator to restore it.',409,'record_hidden');
   allowed(data.status, ['Ready', 'On route', 'Maintenance', 'Retired'], 'status');
   const held = await query(connection, `SELECT MAX(bs.seat_number) seat FROM booking_seats bs JOIN bookings b ON b.id = bs.booking_id
     JOIN trip_runs tr ON tr.id = b.trip_run_id WHERE tr.bus_id = ? AND tr.status IN ('Scheduled','Boarding') AND bs.active = 1`, [recordId]);
@@ -440,6 +445,7 @@ export async function saveCrew(key, data, user, req) {
   requireFields(data, ["name", "role", "phone", "cnic", "license", "duty", "status", "initials"]);
   const previous = key === "new" ? [] : await query(pool, "SELECT * FROM crew WHERE name = ? LIMIT 1", [key]);
   const before = previous[0] || null;
+  if(before?.deleted_at)fail('This crew record is hidden. Ask the main administrator to restore it.',409,'record_hidden');
   let id;
   if (before) {
     await query(pool, "UPDATE crew SET name = ?, role = ?, phone = ?, cnic = ?, license = ?, duty = ?, status = ?, initials = ? WHERE id = ?",
@@ -457,60 +463,22 @@ export async function saveCrew(key, data, user, req) {
   return after;
 }
 
-export async function deleteRoute(id, user, req) {
-  return transaction(async connection=>{
-    const [before]=await query(connection,'SELECT * FROM routes WHERE id=? AND deleted_at IS NULL FOR UPDATE',[id]);
-    if(!before) fail('Route not found.',404,'not_found');
-    await query(connection,'UPDATE trips SET active=0, deleted_at=COALESCE(deleted_at,NOW()) WHERE route_id=?',[id]);
-    await query(connection,"UPDATE routes SET status='Paused', deleted_at=NOW() WHERE id=?",[id]);
-    await audit('route.deleted','route',id,before,{deleted:true,historyRetained:true},user.id,req,connection);
-  });
+export async function deleteRoute(id,user,req){return hideCatalog('route',id,user,req);}
+
+export async function deleteBus(id,user,req){return hideCatalog('bus',id,user,req);}
+
+export async function restoreTrip(id,user,req){
+  requireOwner(user);
+  const removal=await recoveryForEntity('trip',id);
+  if(removal)await reviewRemoval(removal,'restore',user,req);
+  else if(req.body?.confirm!==true)fail('Confirm restoration.',422,'confirmation_required');
+  const trip=(await fetchTrips()).find(trip=>trip.id===id);
+  if(!trip)fail('Schedule not found.',404,'not_found');return trip;
 }
 
-export async function deleteBus(id, user, req) {
-  return transaction(async connection=>{
-    const [before]=await query(connection,'SELECT * FROM buses WHERE id=? AND deleted_at IS NULL FOR UPDATE',[id]);
-    if(!before) fail('Bus layout not found.',404,'not_found');
-    await query(connection,'UPDATE trips SET active=0, deleted_at=COALESCE(deleted_at,NOW()) WHERE bus_id=?',[id]);
-    await query(connection,"UPDATE buses SET deleted_at=NOW() WHERE id=?",[id]);
-    await audit('bus.deleted','bus',id,before,{deleted:true,historyRetained:true},user.id,req,connection);
-  });
-}
+export async function deleteTrip(id,user,req){return hideCatalog('trip',id,user,req);}
 
-export async function restoreTrip(id, user, req) {
-  if(req.body?.confirm!==true)fail('Confirm that this deleted schedule should be restored.',422,'confirmation_required');
-  return transaction(async connection=>{
-    const [before]=await query(connection,'SELECT * FROM trips WHERE id=? FOR UPDATE',[id]);
-    if(!before)fail('Schedule not found.',404,'not_found');
-    if(!before.deleted_at)return (await fetchTrips(false,connection)).find(trip=>trip.id===id);
-    const [route]=await query(connection,'SELECT status,deleted_at FROM routes WHERE id=? FOR SHARE',[before.route_id]);
-    const [bus]=await query(connection,'SELECT is_template,deleted_at,status FROM buses WHERE id=? FOR SHARE',[before.bus_id]);
-    if(!route||route.deleted_at||route.status!=='Active'||!bus||bus.deleted_at||bus.status==='Retired')fail('Activate the route and bus before restoring this schedule.',409,'setup_unavailable');
-    const days=parseJson(before.service_days,[]);
-    const conflict=(await fetchTrips(false,connection)).some(trip=>trip.id!==id&&!trip.deleted&&trip.active&&trip.departure===trimTime(before.departure)&&trip.days.some(day=>days.includes(day))&&((!bus.is_template&&trip.busId===before.bus_id)||(before.driver&&trip.driver===before.driver)||(before.attendant&&trip.attendant===before.attendant)));
-    if(conflict)fail('This bus or crew already has a schedule at the same time. Resolve the conflict before restoring.',409,'roster_conflict');
-    await query(connection,'UPDATE trips SET active=1,deleted_at=NULL WHERE id=?',[id]);
-    const after=(await fetchTrips(false,connection)).find(trip=>trip.id===id);
-    await audit('trip.restored','trip',id,before,after,user.id,req,connection);
-    return after;
-  });
-}
-
-export async function deleteTrip(id, user, req) {
-  return transaction(async connection=>{
-    const [before]=await query(connection,'SELECT * FROM trips WHERE id=? AND deleted_at IS NULL FOR UPDATE',[id]);
-    if(!before) fail('Schedule not found.',404,'not_found');
-    await query(connection,'UPDATE trips SET active=0, deleted_at=NOW() WHERE id=?',[id]);
-    await audit('trip.deleted','trip',id,before,{deleted:true,historyRetained:true},user.id,req,connection);
-  });
-}
-
-export async function deleteCrew(id, user, req) {
-  const [before]=await query(pool,'SELECT * FROM crew WHERE id=? AND deleted_at IS NULL',[id]);
-  if(!before) fail('Staff member not found.',404,'not_found');
-  await query(pool,'UPDATE crew SET deleted_at=NOW() WHERE id=?',[id]);
-  await audit('crew.deleted','crew',id,before,{deleted:true},user.id,req);
-}
+export async function deleteCrew(id,user,req){return hideCatalog('crew',id,user,req);}
 
 export async function assignDeparture(id, data, user, req) {
   requireFields(data, ['date', 'busId', 'driver', 'attendant', 'departure', 'platform', 'expected']);
@@ -624,9 +592,7 @@ export async function createExpense(data, user, req) {
       "INSERT INTO expenses (expense_date, category, description, amount, payment_method, reference, notes, shift_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       [data.date, category, description, amount, method, reference, String(data.notes || "").trim(), null, user.id]);
     const ledgerReference = reference || `EXPENSE-${result.insertId}`;
-    await query(connection,
-      "INSERT INTO financial_transactions (transaction_type, amount, payment_method, reference, description, created_by) VALUES ('expense', ?, ?, ?, ?, ?)",
-      [-amount, method, ledgerReference, `${category}: ${description}`, user.id]);
+    await financialEntry(connection,{type:'expense',amount:-amount,method,reference:ledgerReference,description:`${category}: ${description}`},user,req);
     const expense = (await fetchExpenses(connection)).find((item) => item.id === Number(result.insertId));
     await audit("expense.created", "expense", result.insertId, null, expense, user.id, req, connection);
     return expense;
@@ -811,7 +777,7 @@ export async function saveCounterDeparture(id, data, user, req) {
         expenseId = Number(result.insertId);
       }
       const delta = Math.round((deductions-(previous?.deductions || 0))*100)/100;
-      if (delta !== 0) await query(connection,`INSERT INTO financial_transactions (transaction_type,amount,payment_method,reference,description,created_by) VALUES ('expense',?,'Cash',?,?,?)`,[-delta,reference,description,user.id]);
+      if (delta !== 0) await financialEntry(connection,{type:'expense',amount:-delta,method:'Cash',reference,description},user,req);
       snapshot.voucher = {...amounts,driver,attendant,commission,deductions,basis,totalRemaining:Math.round((basis-deductions)*100)/100,expenseId,revision:uuid(),savedAt:isoDateTime(sqlDateTime()),savedBy:user.name};
     }
     await query(connection,'UPDATE trip_runs SET bus_id=?, driver=?, attendant=?, snapshot=? WHERE id=?',[bus.id,driver,attendant,JSON.stringify(snapshot),run.id]);

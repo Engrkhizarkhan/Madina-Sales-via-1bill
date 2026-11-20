@@ -144,6 +144,10 @@ try {
   const sold=await request('/bookings',{...staff,method:'POST',body:draft,extraHeaders:{'X-Madina-Device':'terminal-99'}});
   check(sold.payload.printing?.slot===2&&sold.payload.printing.autoPrint&&!sold.payload.printing.preview,'sale returns the current centrally managed print decision');
   check(sold.status===201&&sold.payload.booking.issuedBy==='Counter Agent Full Name'&&sold.payload.booking.soldByUserId===userIds[1]&&sold.payload.booking.soldTerminalSlot===2&&sold.payload.booking.soldFrom==='Terminal 2','sale saves the authenticated full name and real TLS terminal, ignoring forged fields');
+  const [[saleMetadata]]=await pool.execute("SELECT terminal_slot,actor_name FROM financial_transactions WHERE booking_id=? AND transaction_type='sale'",[sold.payload.booking.id]);
+  check(saleMetadata.terminal_slot===2&&saleMetadata.actor_name==='Counter Agent Full Name','cash ledger records the authenticated PC and account snapshot');
+  const [[auditMetadata]]=await pool.execute("SELECT terminal_slot,actor_name FROM audit_logs WHERE entity_id=? AND action='booking.created' ORDER BY id DESC LIMIT 1",[sold.payload.booking.id]);
+  check(auditMetadata.terminal_slot===2&&auditMetadata.actor_name==='Counter Agent Full Name','action history records the actual enrolled PC, ignoring forged terminal fields');
   const held=await request('/bookings',{...admin,method:'POST',body:{...draft,seats:[2,3],bookingStatus:'Reserved'}});
   check(held.status===201&&held.payload.bookings.every(b=>b.soldByUserId===null&&b.soldTerminalSlot===null&&b.soldFrom===null),'reservation creator is not recorded as the seller');
   const ids=held.payload.bookings.map(b=>b.id);

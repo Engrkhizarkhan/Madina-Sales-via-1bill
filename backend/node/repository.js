@@ -102,7 +102,7 @@ function mapBooking(row, seats, refunds) {
     id: row.id, ticketNo: row.ticket_no, verificationUrl: ticketVerificationUrl(row), source: row.source, passenger: row.passenger,
     phone: row.phone, cnic: row.cnic, gender: row.gender, route: row.route_label,
     destination: row.destination, boardingPoint: row.boarding_point, bus: row.bus_registration,
-    service: row.service, seats: seats.map((item) => Number(item.seat_number)), fare: Number(row.fare),
+    service: row.service, seats: seats.map((item) => Number(item.seat_number)), fare: Number(row.fare), tariffTotalAtSale:row.tariff_total_at_sale==null?null:Number(row.tariff_total_at_sale),
     discount: Number(row.discount), total: Number(row.total), paid: Number(row.paid), balance: Number(row.balance),
     paymentMethod: row.payment_method, paymentReference: row.payment_reference, paymentStatus: row.payment_status,
     bookingStatus: row.booking_status, date: row.travel_date, time: trimTime(row.travel_time),

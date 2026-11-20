@@ -1,3 +1,5 @@
+import {recoveryPage,reviewRemoval,activityPage} from './recovery.js';
+import {reconciliationPage,priceReviewPage,cashEntryPage,recordCashEntry,reverseCashEntry} from './counter-reconciliation.js';
 import {salesReport,settlementPage} from './sales-report.js';
 import {printingSettings,savePrintingSettings} from './terminal-printing.js';
 import {scopeDate,bookingPage,runPage,expensePage,dashboardSummary} from './admin-records.js';
@@ -508,7 +510,8 @@ app.post("/expenses", asyncRoute(async (req, res) => {
 }));
 
 app.get("/audit", asyncRoute(async (req, res) => {
-  requireRole(req.user, ["admin", "manager"]);
+  requireOwner(req.user);
+  if(!financeUnlocked(req))fail('Enter the finance PIN to view action history.',403,'finance_locked');
   const [events] = await pool.query("SELECT a.id, a.action, a.entity_type, a.entity_id, a.before_json, a.after_json, a.ip_address, a.created_at, u.name user_name FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id ORDER BY a.id DESC LIMIT 200");
   res.json({ events });
 }));
@@ -537,6 +540,26 @@ app.post("/settings/clear-operational-data", asyncRoute(async (req,res) => {
 }));
 app.get('/settings/printing',asyncRoute(async(req,res)=>res.json(await printingSettings(req))));
 app.put('/settings/printing',asyncRoute(async(req,res)=>res.json(await savePrintingSettings(req))));
+const ownerOnly=(req,_res,next)=>{requireOwner(req.user);next();};
+const ownerFinance=(req,_res,next)=>{requireOwner(req.user);if(!financeUnlocked(req))fail('Enter the finance PIN to view cash reconciliation.',403,'finance_locked');next();};
+app.get('/admin/recovery',ownerOnly,asyncRoute(async(req,res)=>res.json(await recoveryPage(req.query))));
+app.get('/admin/activity',ownerFinance,asyncRoute(async(req,res)=>res.json(await activityPage(req.query))));
+app.post('/admin/recovery/:id/:action',ownerOnly,asyncRoute(async(req,res)=>{
+ if(req.params.action==='purge'){
+  limitAttempts('catalog-purge',req,15,15*60_000);
+  const [[owner]]=await pool.execute('SELECT password_hash FROM users WHERE id=?',[req.user.id]);
+  if(typeof req.body?.currentPassword!=='string'||!await bcrypt.compare(req.body.currentPassword,owner.password_hash))fail('Enter the current main administrator password.',422,'invalid_password');
+ }
+ res.json(await reviewRemoval(req.params.id,req.params.action,req.user,req));
+}));
+app.get('/admin/reconciliation',ownerFinance,asyncRoute(async(req,res)=>res.json(await reconciliationPage(req.query))));
+app.get('/admin/price-review',ownerFinance,asyncRoute(async(req,res)=>res.json(await priceReviewPage(req.query))));
+app.get('/admin/cash-entries',ownerFinance,asyncRoute(async(req,res)=>res.json(await cashEntryPage(req.query))));
+app.post('/admin/cash-entries',ownerFinance,asyncRoute(async(req,res)=>res.json(await recordCashEntry(req.body,req.user,req))));
+app.post('/admin/cash-entries/:id/reverse',ownerFinance,asyncRoute(async(req,res)=>res.json(await reverseCashEntry(req.params.id,req.body,req.user,req))));
+app.get('/admin/reconciliation-options',ownerFinance,asyncRoute(async(_req,res)=>{
+ const [users]=await pool.query('SELECT id,name,active FROM users ORDER BY active DESC,name');const [terminals]=await pool.query('SELECT slot FROM terminal_slots ORDER BY slot');res.json({users,terminals});
+}));
 app.get('/finance/sales-report',asyncRoute(async(req,res)=>{requireRole(req.user,['admin','manager','finance']);if(!financeUnlocked(req))fail('Enter the finance PIN to view finance.',403,'finance_locked');res.json(await salesReport(req.query));}));
 app.get('/finance/settlements',asyncRoute(async(req,res)=>{requireRole(req.user,['admin','manager','finance']);if(!financeUnlocked(req))fail('Enter the finance PIN to view finance.',403,'finance_locked');res.json(await settlementPage(req.query));}));
 
