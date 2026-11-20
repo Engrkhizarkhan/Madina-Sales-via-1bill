@@ -3849,14 +3849,20 @@ function ReportsView({onServiceDate,dataDate,bookings, trips, fleet, routes, run
   return <div className="admin-view reports-view">
     <ViewHeading eyebrow="" title="Print" text="Select a departure to review its records and print." />
     <section className="surface report-selector">
+      <div className="report-current-departure">
       <label><span>Service date</span><input type="date" value={reportDate} onChange={(event) => {setReportDate(event.target.value);setTripId("");}} /></label>
       <label><span>Bus / route</span><select value={trip?.id ?? ""} onChange={(event) => setTripId(event.target.value)}>
         {!options.length && <option value="">No departures for this date</option>}
         {options.map((item) => <option value={item.id} key={item.id}>{item.departure} · {vehicleLabel(tripBus(item,fleet))} · {tripRoute(item,routes) ? routeLabel(tripRoute(item,routes)) : ""} · {item.status}</option>)}
       </select></label>
-      <div className="span-2"><DateRangeFilter value={historyRange} onChange={setHistoryRange} label="Previous departure dates"/><RecordPager {...historyPage}/></div><label><span>Previous departures</span><select value="" onChange={(event) => {const run = historyPage.rows.find((item) => item.id === event.target.value);if(run){setReportDate(run.date);setTripId(run.tripId);}}}>
+      </div>
+      <div className="report-departure-history">
+      <DateRangeFilter value={historyRange} onChange={setHistoryRange} label="Previous departure dates"/>
+      <label className="report-history-departure"><span>Previous departures</span><select value="" onChange={(event) => {const run = historyPage.rows.find((item) => item.id === event.target.value);if(run){setReportDate(run.date);setTripId(run.tripId);}}}>
         <option value="">Choose a recorded departure</option>{history.map((run) => <option key={run.id} value={run.id}>{run.date} · {vehicleLabel(run.snapshot?.bus)} · {run.snapshot?.route.from} → {run.snapshot?.route.to} · {run.status}</option>)}
       </select></label>
+      <RecordPager {...historyPage}/>
+      </div>
       {trip && bus && route && <div className="report-trip-summary"><span><small>Bus</small><strong>{vehicleLabel(bus)}</strong></span><span><small>Route</small><strong>{routeLabel(route)}</strong></span><span><small>Status</small><strong>{trip.status}</strong></span><span><small>Tickets</small><strong>{ticketPage.total}</strong></span></div>}
     </section>
     {trip && <><section className="report-card-grid">{cards.map((card) => <article className="surface report-card" key={card.kind}><div><b>{card.format}</b><h2>{card.title}</h2><p>{card.text}</p></div><button className="primary-button" type="button" disabled={dataDate!==reportDate} onClick={() => onReport(card.kind,trip.id,trip.runNumber,reportDate)}><Printer size={16}/> Preview & print</button></article>)}</section>
