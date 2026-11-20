@@ -1,3 +1,5 @@
+import BoardingDesignEditor from './boarding-design-editor';
+import {BoardingPass} from './boarding-pass';
 import VoucherDesignEditor from './voucher-design-editor';
 import {VoucherDocument} from './voucher-document';
 import AdminRecovery,{AdminActivity,CounterReconciliation} from './admin-control';
@@ -11,7 +13,7 @@ import {sameBookingCustomer,departureSeatCounts,fareQuantities,allocateFareTotal
 import {ReportPrintPage} from './report-print-page';
 import {openA4Report,reportBridgeConfigured} from './report-transfer';
 import {mergeLiveRecords} from "../shared/live-records.mjs";
-import { receiptDefaults, receiptFonts, receiptNumberBounds, type ReceiptLayout } from "../shared/receipt-layout.mjs";
+import { receiptDefaults, receiptFonts, receiptNumberBounds, isBoardingField, type ReceiptLayout } from "../shared/receipt-layout.mjs";
 import {publicOrigin} from '../shared/domains.mjs';
 import {onlineCounterPreferences} from '../shared/counter-fallback.mjs';
 import {onlineCounterLink,tryOnlineCounter} from './counter-fallback';
@@ -4922,7 +4924,7 @@ function SettingsView({
             title="Receipt configuration"
             text="Thermal ticket and passenger contact details."
           />
-          <ReceiptEditor editable={Boolean(user.isOwner)}/><VoucherDesignEditor editable={Boolean(user.isOwner)}/>
+          <ReceiptEditor editable={Boolean(user.isOwner)}/><BoardingDesignEditor editable={Boolean(user.isOwner)}/><VoucherDesignEditor editable={Boolean(user.isOwner)}/>
           <label className="auto-print-setting">
             <input
               type="checkbox"
@@ -5034,26 +5036,25 @@ function ReceiptEditor({editable}:{editable:boolean}) {
   const [draft,setDraft]=useState(layout),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
   const previousLayout=useRef(layout);
   useEffect(()=>{if(JSON.stringify(draft)===JSON.stringify(previousLayout.current))setDraft(layout);previousLayout.current=layout;},[layout,draft]);
-  const ticketDesign=(value:ReceiptLayout)=>JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key])=>!key.startsWith('voucher'))));
+  const ticketDesign=(value:ReceiptLayout)=>JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key])=>!key.startsWith('voucher')&&!isBoardingField(key))));
   const dirty=ticketDesign(draft)!==ticketDesign(layout);
   return <details className="receipt-editor"><summary>Edit receipt design</summary><form onSubmit={async event=>{
     event.preventDefault();setBusy(true);setMessage("");
-    try{await save(Object.fromEntries(Object.entries(draft).filter(([key])=>!key.startsWith('voucher'))));setMessage("Receipt design saved for all counters.");}catch(error){setMessage(error instanceof Error?error.message:"Could not save receipt design.");}finally{setBusy(false);}
+    try{await save(Object.fromEntries(Object.entries(draft).filter(([key])=>!key.startsWith('voucher')&&!isBoardingField(key))));setMessage("Receipt design saved for all counters.");}catch(error){setMessage(error instanceof Error?error.message:"Could not save receipt design.");}finally{setBusy(false);}
   }}><fieldset className="counter-fields" disabled={!editable||busy}><div className="settings-fields">
-    {([['businessName','Business name',60],['brandMark','Top logo text',12],['contact','Contact numbers',100],['terminal','Terminal name',160],['website','Booking website',100],['websiteLabel','Booking website caption',60],['tokenTitle','Boarding slip title',40]] as const).map(([key,label])=><label key={key}><span>{label}</span><input required={key==='businessName'||key==='tokenTitle'} value={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.value})}/></label>)}
+    {([['businessName','Business name',60],['brandMark','Top logo text',12],['contact','Contact numbers',100],['terminal','Terminal name',160],['website','Booking website',100],['websiteLabel','Booking website caption',60]] as const).map(([key,label])=><label key={key}><span>{label}</span><input required={key==='businessName'} value={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.value})}/></label>)}
     <label><span>English font</span><select value={draft.font} onChange={event=>setDraft({...draft,font:event.target.value})}>{receiptFonts.map(font=><option key={font}>{font}</option>)}</select></label>
     {(Object.keys(receiptNumberBounds) as (keyof typeof receiptNumberBounds)[]).map(key=><label key={key}><span>{{fontSize:'Body font (px)',headingSize:'Heading font (px)',seatSize:'Seat number (px)',urduSize:'Urdu font (px)',paddingX:'Side padding (mm)',paddingY:'Top / bottom padding (mm)',lineHeight:'Line spacing',qrSize:'QR size (mm)',websiteSize:'Booking website font (px)',websitePadding:'Website box padding (mm)',websiteBorderWidth:'Website box border (px)'}[key]}</span><input type="number" required step="any" value={draft[key]} onChange={event=>setDraft({...draft,[key]:Number(event.target.value)})}/></label>)}
     <label><span>Booking website font</span><select value={draft.websiteFont} onChange={event=>setDraft({...draft,websiteFont:event.target.value})}>{receiptFonts.map(font=><option key={font}>{font}</option>)}</select></label>
     {(['websiteBox','websiteInverted'] as const).map(key=><label key={key}><span><input type="checkbox" checked={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.checked})}/>{key==='websiteBox'?' Website border box':' White website text on black'}</span></label>)}
     <label><span>Booking website alignment</span><select value={draft.websiteAlign} onChange={event=>setDraft({...draft,websiteAlign:event.target.value as ReceiptLayout['websiteAlign']})}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
     <label className="span-2"><span>Urdu passenger instructions</span><textarea lang="ur" dir="rtl" value={draft.urduTerms} onChange={event=>setDraft({...draft,urduTerms:event.target.value})}/></label>
-    <label className="span-2"><span>Urdu boarding slip note</span><textarea lang="ur" dir="rtl" value={draft.tokenNote} onChange={event=>setDraft({...draft,tokenNote:event.target.value})}/></label>
     <label><span><input type="checkbox" checked={draft.showQr} onChange={event=>setDraft({...draft,showQr:event.target.checked})}/> Show ticket QR</span></label>
     <label><span><input type="checkbox" checked={draft.showWebsite} onChange={event=>setDraft({...draft,showWebsite:event.target.checked})}/> Show booking website</span></label>
     <label><span><input type="checkbox" checked={draft.websiteBold} onChange={event=>setDraft({...draft,websiteBold:event.target.checked})}/> Bold booking website</span></label>
   </div><div className="form-actions"><button type="button" className="secondary-button" onClick={()=>setDraft({...receiptDefaults})}>Restore design defaults</button><button className="primary-button" disabled={!dirty||busy}>{busy?'Saving…':'Save receipt design'}</button></div></fieldset></form>
     <p role="status">{message}</p><small>Live preview · 80 mm paper · each slip prints separately</small>
-    <div className="receipt thermal-ticket receipt-design-preview"><TicketSlips booking={initialBookings[0]} printedAt={new Date()} layout={draft}/></div>
+    <div className="receipt thermal-ticket receipt-design-preview"><TicketSlips booking={initialBookings[0]} printedAt={new Date()} layout={draft} receiptOnly/></div>
   </details>;
 }
 
@@ -5710,7 +5711,7 @@ function TicketPrintPairs({ entries, printedAt }: { entries: Booking[]; printedA
   }));
 }
 
-function TicketSlips({booking,printedAt,layout:preview}:{booking:Booking;printedAt:Date;layout?:ReceiptLayout}) {
+function TicketSlips({booking,printedAt,layout:preview,receiptOnly=false}:{booking:Booking;printedAt:Date;layout?:ReceiptLayout;receiptOnly?:boolean}) {
   const settings=useReceiptSettings();
   const layout=preview||settings.layout;
   const style = {"--receipt-font":layout.font,"--receipt-font-size":`${layout.fontSize}px`,"--receipt-heading-size":`${layout.headingSize}px`,"--receipt-seat-size":`${layout.seatSize}px`,"--receipt-urdu-size":`${layout.urduSize}px`,"--receipt-padding-x":`${layout.paddingX}mm`,"--receipt-padding-y":`${layout.paddingY}mm`,"--receipt-line-height":layout.lineHeight,"--receipt-qr-size":`${layout.qrSize}mm`} as React.CSSProperties;
@@ -5732,12 +5733,7 @@ function TicketSlips({booking,printedAt,layout:preview}:{booking:Booking;printed
       <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>{layout.urduTerms}</p></div>
       {layout.showWebsite&&layout.website&&<p className="ticket-booking-promo" style={{fontFamily:layout.websiteFont,fontSize:layout.websiteSize,fontWeight:layout.websiteBold?700:400,textAlign:layout.websiteAlign,padding:`${layout.websitePadding}mm`,border:layout.websiteBox?`${layout.websiteBorderWidth}px solid currentColor`:undefined,background:layout.websiteInverted?"#000":undefined,color:layout.websiteInverted?"#fff":undefined,printColorAdjust:"exact"}}>{layout.websiteLabel} <strong>{layout.website}</strong></p>}
     </article>
-    {ticket.canBoard && <article style={style} className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
-      <header><strong>{layout.businessName}</strong><span>{layout.tokenTitle}</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
-      <table className="token-table"><tbody><tr><th>Bus No.</th><th>Destination</th></tr><tr><td>{booking.bus}</td><td>{booking.destination}</td></tr><tr><th>Travel date</th><th>Departure</th></tr><tr><td>{ticketDate(booking.date)}</td><td className="token-time">{booking.time}</td></tr><tr><th>Ticket No.</th><th>Paid</th></tr><tr><td>{booking.ticketNo}</td><td>{money(netCollected(booking))}</td></tr>{wasSold(booking)&&<tr className="token-seller"><td colSpan={2}>Sold by <strong>{sellerName(booking)}</strong></td></tr>}</tbody></table>
-
-      <p className="ticket-urdu" lang="ur" dir="rtl">{layout.tokenNote}</p>
-    </article>}
+    {!receiptOnly&&ticket.canBoard&&<BoardingPass layout={layout} data={{seats,bus:booking.bus,destination:booking.destination,date:ticketDate(booking.date),time:booking.time,ticket:booking.ticketNo,paid:money(netCollected(booking)),seller:wasSold(booking)?sellerName(booking):undefined}}/>}
   </>;
 }
 

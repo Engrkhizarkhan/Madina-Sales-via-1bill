@@ -1,17 +1,196 @@
 export const receiptDefaults = Object.freeze({
-  businessName: "MADINA EXPRESS", brandMark: "SDK", contact: "0311-777-2299 / 0315-777-2299",
-  terminal: "Madina Terminal, Peshawar", website: "MadinaExpress.pk", tokenTitle: "BOARDING TOKEN",
-  urduTerms: "روانگی سے دس منٹ پہلے پہنچیں۔ ٹکٹ کی تاریخ، وقت اور سیٹ نمبر چیک کریں۔ اصل شناختی کارڈ ہمراہ رکھیں۔",
-  tokenNote: "یہ ٹوکن کنڈکٹر کے حوالے کریں۔", font: "Arial", fontSize: 11, headingSize: 23,
-  seatSize: 23, urduSize: 11, paddingX: 3, paddingY: 3, lineHeight: 1.3, qrSize: 26,
-  showQr: true, showWebsite: true, websiteLabel: "Book online:", websiteSize: 12, websiteBold: true, websiteAlign: "center",
-  websiteFont: "Arial", websiteBox: false, websiteInverted: false, websitePadding: 1, websiteBorderWidth: 1,
-  voucherFont: "Arial", voucherFontSize: 9.5, voucherHeadingSize: 16, voucherPaddingX: 2, voucherPaddingY: 1,
-  voucherLineHeight: 1.1, voucherRowPadding: 0.5, voucherShowNetCollected: true, voucherShowContact: false, voucherShowCrew: false,
+  businessName: "MADINA EXPRESS",
+  brandMark: "SDK",
+  contact: "0311-777-2299 / 0315-777-2299",
+  terminal: "Madina Terminal, Peshawar",
+  website: "MadinaExpress.pk",
+  tokenTitle: "BOARDING TOKEN",
+  urduTerms:
+    "روانگی سے دس منٹ پہلے پہنچیں۔ ٹکٹ کی تاریخ، وقت اور سیٹ نمبر چیک کریں۔ اصل شناختی کارڈ ہمراہ رکھیں۔",
+  tokenNote: "یہ ٹوکن کنڈکٹر کے حوالے کریں۔",
+  font: "Arial",
+  fontSize: 11,
+  headingSize: 23,
+  seatSize: 23,
+  urduSize: 11,
+  paddingX: 3,
+  paddingY: 3,
+  lineHeight: 1.3,
+  qrSize: 26,
+  showQr: true,
+  showWebsite: true,
+  websiteLabel: "Book online:",
+  websiteSize: 12,
+  websiteBold: true,
+  websiteAlign: "center",
+  websiteFont: "Arial",
+  websiteBox: false,
+  websiteInverted: false,
+  websitePadding: 1,
+  websiteBorderWidth: 1,
+  voucherFont: "Arial",
+  voucherFontSize: 9.5,
+  voucherHeadingSize: 16,
+  voucherPaddingX: 2,
+  voucherPaddingY: 1,
+  voucherLineHeight: 1.1,
+  voucherRowPadding: 0.5,
+  voucherShowNetCollected: true,
+  voucherShowContact: false,
+  voucherShowCrew: false,
+  boardingBusinessName: "MADINA EXPRESS",
+  boardingFont: "Arial",
+  boardingFontSize: 11,
+  boardingHeadingSize: 14,
+  boardingTitleSize: 10,
+  boardingSeatSize: 23,
+  boardingLabelSize: 9.35,
+  boardingUrduSize: 11,
+  boardingPaddingX: 3,
+  boardingPaddingY: 3,
+  boardingLineHeight: 1.3,
+  boardingUrduLineHeight: 2,
+  boardingRowPadding: 3,
+  boardingBorderWidth: 1,
+  boardingHeadingBold: true,
+  boardingTitleBold: false,
+  boardingNoteBold: false,
+  boardingLabelBold: false,
+  boardingValueBold: true,
+  boardingShowPaid: true,
+  boardingShowSeller: true,
+  boardingShowNote: true,
+  boardingNoteAlign: "center",
+  boardingHeaderLayout: "row",
+  boardingHeaderAlign: "left",
+  boardingValueAlign: "left",
+  boardingSeatLabel: "SEAT NO #",
+  boardingBusLabel: "Bus No.",
+  boardingDestinationLabel: "Destination",
+  boardingDateLabel: "Travel date",
+  boardingDepartureLabel: "Departure",
+  boardingTicketLabel: "Ticket No.",
+  boardingPaidLabel: "Paid",
+  boardingSellerLabel: "Sold by",
 });
 export const receiptFonts = ["Arial", "Tahoma", "Georgia", "Times New Roman"];
-export const receiptNumberBounds = {fontSize:0,headingSize:0,seatSize:0,urduSize:0,paddingX:0,paddingY:0,lineHeight:0,qrSize:0,websiteSize:0,websitePadding:0,websiteBorderWidth:0};
-export const voucherNumberFields = {voucherFontSize:'Body font (px)',voucherHeadingSize:'Heading font (px)',voucherPaddingX:'Side padding (mm)',voucherPaddingY:'Top / bottom padding (mm)',voucherLineHeight:'Line spacing',voucherRowPadding:'Row padding (px)'};
-export function voucherStyle(layout){
- return {'--voucher-font':layout.voucherFont,'--voucher-font-size':layout.voucherFontSize+'px','--voucher-heading-size':layout.voucherHeadingSize+'px','--voucher-padding-x':layout.voucherPaddingX+'mm','--voucher-padding-y':layout.voucherPaddingY+'mm','--voucher-line-height':String(layout.voucherLineHeight),'--voucher-row-padding':layout.voucherRowPadding+'px'};
+export const receiptNumberBounds = {
+  fontSize: 0,
+  headingSize: 0,
+  seatSize: 0,
+  urduSize: 0,
+  paddingX: 0,
+  paddingY: 0,
+  lineHeight: 0,
+  qrSize: 0,
+  websiteSize: 0,
+  websitePadding: 0,
+  websiteBorderWidth: 0,
+};
+export const voucherNumberFields = {
+  voucherFontSize: "Body font (px)",
+  voucherHeadingSize: "Heading font (px)",
+  voucherPaddingX: "Side padding (mm)",
+  voucherPaddingY: "Top / bottom padding (mm)",
+  voucherLineHeight: "Line spacing",
+  voucherRowPadding: "Row padding (px)",
+};
+export const boardingNumberFields = {
+  boardingFontSize: "Body font (px)",
+  boardingHeadingSize: "Business name size (px)",
+  boardingTitleSize: "Pass title size (px)",
+  boardingSeatSize: "Seat number size (px)",
+  boardingLabelSize: "Field label size (px)",
+  boardingUrduSize: "Urdu note size (px)",
+  boardingLineHeight: "Line spacing",
+  boardingUrduLineHeight: "Urdu line spacing",
+  boardingPaddingX: "Side padding (mm)",
+  boardingPaddingY: "Top / bottom padding (mm)",
+  boardingRowPadding: "Row padding (px)",
+  boardingBorderWidth: "Border width (px)",
+};
+export const boardingTextFields = {
+  boardingBusinessName: "Boarding pass business name",
+  tokenTitle: "Boarding pass title",
+  tokenNote: "Urdu boarding note",
+  boardingSeatLabel: "Seat label",
+  boardingBusLabel: "Vehicle label",
+  boardingDestinationLabel: "Destination label",
+  boardingDateLabel: "Travel date label",
+  boardingDepartureLabel: "Departure label",
+  boardingTicketLabel: "Ticket number label",
+  boardingPaidLabel: "Paid amount label",
+  boardingSellerLabel: "Seller label",
+};
+export const boardingFlags = {
+  boardingHeadingBold: "Bold business name",
+  boardingTitleBold: "Bold pass title",
+  boardingNoteBold: "Bold Urdu note",
+  boardingLabelBold: "Bold field labels",
+  boardingValueBold: "Bold field values",
+  boardingShowPaid: "Show paid amount",
+  boardingShowSeller: "Show selling account",
+  boardingShowNote: "Show Urdu note",
+};
+export const isBoardingField = (key) =>
+  key.startsWith("boarding") || key === "tokenTitle" || key === "tokenNote";
+// Capture the existing shared design when first saving any of the independent
+// designs. Previously printed tokens retain their original appearance.
+export function receiptLayoutWithDefaults(input = {}) {
+  const result = { ...receiptDefaults, ...input };
+  const legacy = {
+    boardingBusinessName: "businessName",
+    boardingFont: "font",
+    boardingFontSize: "fontSize",
+    boardingSeatSize: "seatSize",
+    boardingUrduSize: "urduSize",
+    boardingPaddingX: "paddingX",
+    boardingPaddingY: "paddingY",
+    boardingLineHeight: "lineHeight",
+  };
+  for (const [key, source] of Object.entries(legacy))
+    if (!Object.hasOwn(input, key)) result[key] = result[source];
+  if (!Object.hasOwn(input, "boardingLabelSize"))
+    result.boardingLabelSize = Math.round(result.fontSize * 0.85 * 1000) / 1000;
+  return result;
+}
+export function boardingStyle(layout) {
+  const l = receiptLayoutWithDefaults(layout);
+  return {
+    "--receipt-font": l.boardingFont,
+    "--receipt-font-size": l.boardingFontSize + "px",
+    "--receipt-seat-size": l.boardingSeatSize + "px",
+    "--receipt-urdu-size": l.boardingUrduSize + "px",
+    "--receipt-padding-x": l.boardingPaddingX + "mm",
+    "--receipt-padding-y": l.boardingPaddingY + "mm",
+    "--receipt-line-height": String(l.boardingLineHeight),
+    "--boarding-heading-size": l.boardingHeadingSize + "px",
+    "--boarding-title-size": l.boardingTitleSize + "px",
+    "--boarding-label-size": l.boardingLabelSize + "px",
+    "--boarding-value-size": l.boardingFontSize + "px",
+    "--boarding-row-padding": l.boardingRowPadding + "px",
+    "--boarding-border-width": l.boardingBorderWidth + "px",
+    "--boarding-urdu-line-height": String(l.boardingUrduLineHeight),
+    "--boarding-heading-weight": l.boardingHeadingBold ? "700" : "400",
+    "--boarding-label-weight": l.boardingLabelBold ? "700" : "400",
+    "--boarding-value-weight": l.boardingValueBold ? "700" : "400",
+    "--boarding-title-weight": l.boardingTitleBold ? "700" : "400",
+    "--boarding-note-weight": l.boardingNoteBold ? "700" : "400",
+    "--boarding-note-align": l.boardingNoteAlign,
+    "--boarding-header-layout":
+      l.boardingHeaderLayout === "row" ? "flex" : "block",
+    "--boarding-header-align": l.boardingHeaderAlign,
+    "--boarding-value-align": l.boardingValueAlign,
+  };
+}
+export function voucherStyle(layout) {
+  return {
+    "--voucher-font": layout.voucherFont,
+    "--voucher-font-size": layout.voucherFontSize + "px",
+    "--voucher-heading-size": layout.voucherHeadingSize + "px",
+    "--voucher-padding-x": layout.voucherPaddingX + "mm",
+    "--voucher-padding-y": layout.voucherPaddingY + "mm",
+    "--voucher-line-height": String(layout.voucherLineHeight),
+    "--voucher-row-padding": layout.voucherRowPadding + "px",
+  };
 }
