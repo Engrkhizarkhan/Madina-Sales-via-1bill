@@ -45,7 +45,7 @@ install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-terminal.co
 install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-production.conf.template" "$STATE_DIR/nginx-production.conf.template"
 # Apply an accepted release's proxy fixes to an already paired installation too.
 python3 - <<'NGINX'
-import json,os,pathlib,subprocess
+import json,os,pathlib,re,subprocess
 root=pathlib.Path('/var/lib/madina-express/terminal')
 state=json.loads((root/'state.json').read_text()) if (root/'state.json').exists() else {}
 if state.get('phase')=='active':
@@ -55,13 +55,24 @@ else:
     template=(root/'nginx-production.conf.template').read_text().replace('__PUBLIC_HOST__','madinaexpress.pk').replace('__STAFF_HOST__','staff.madinaexpress.pk')
 target=pathlib.Path('/etc/nginx/sites-available/madina-express')
 old=target.read_bytes()
+common=pathlib.Path('/etc/nginx/snippets/madina-common.conf')
+old_common=common.read_bytes()
+certificate=pathlib.Path('/etc/letsencrypt/live/madinaexpress.pk')
+if not all((certificate/name).is_file() for name in ['fullchain.pem','privkey.pem']):
+    raise RuntimeError('Provision the canonical production HTTPS certificate before switching proxy hosts.')
+for hostname in ['madinaexpress.pk','www.madinaexpress.pk','staff.madinaexpress.pk','terminal.madinaexpress.pk']:
+    subprocess.run(['openssl','x509','-in',str(certificate/'fullchain.pem'),'-noout','-checkhost',hostname],check=True,stdout=subprocess.DEVNULL)
 try:
+    updated=re.sub(r'(?m)^ssl_certificate\s+[^;]+;', 'ssl_certificate '+str(certificate/'fullchain.pem')+';',old_common.decode())
+    updated=re.sub(r'(?m)^ssl_certificate_key\s+[^;]+;', 'ssl_certificate_key '+str(certificate/'privkey.pem')+';',updated)
+    common.write_text(updated)
     target.write_text(template)
     os.chmod(target,0o600)
     subprocess.run(['nginx','-t'],check=True)
     subprocess.run(['systemctl','reload','nginx'],check=True)
 except Exception:
     target.write_bytes(old)
+    common.write_bytes(old_common)
     subprocess.run(['nginx','-t'],check=True)
     raise
 NGINX
