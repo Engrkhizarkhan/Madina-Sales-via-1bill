@@ -1,3 +1,4 @@
+import {packageNodeRuntime} from '../deploy/updater/node-runtime.mjs';
 import { zipEntries } from '../deploy/updater/release.mjs';
 import { cp,mkdir,mkdtemp,readFile,writeFile,readdir,rm } from 'node:fs/promises';
 import { createPrivateKey,sign,createHash } from 'node:crypto';
@@ -22,6 +23,7 @@ try{
  for(const directory of ['backend/node','backend/terminal','backend/update','backend/database','shared','dist','deploy'])await cp(directory,join(stage,directory),{recursive:true,filter:source=>!/(?:^|[\\/])(?:\.env[^\\/]*|\.terminal|\.cloud-sessions|\.updates|__pycache__)(?:[\\/]|$)/.test(source)});
  execFileSync(process.platform==='win32'?'npm.cmd':'npm',['ci','--omit=dev','--ignore-scripts'],{cwd:stage,env:childEnvironment,stdio:'inherit'});
  execFileSync(process.execPath,['--input-type=module','-e','await import("./backend/node/app.js"); const {pool}=await import("./backend/node/db.js"); await pool.end();'],{cwd:stage,env:{...childEnvironment,MADINA_ENV_FILE:join(stage,'absent.env'),DB_NAME:'package_import_qa',DB_USER:'qa',DB_PASSWORD:'unused',TERMINAL_ROLE:'standalone',ADMIN_TOTP_HEX:'',RESTRICT_STAFF_DEVICES:'false',ADMIN_TOTP_PAUSED:'false'},stdio:'inherit'});
+ await packageNodeRuntime(stage);
  const file=build.releaseId+'.zip' ,destination=join(out,file);
  execFileSync('zip',['-q','-r',destination,'.'],{cwd:stage});
  const bytes=await readFile(destination),now=Date.now();zipEntries(bytes);

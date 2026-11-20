@@ -1,3 +1,4 @@
+import {selectedNodeRuntime} from './node-runtime.mjs';
 import { execFile,spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile,writeFile,mkdir,rm,readdir,stat,cp } from 'node:fs/promises';
@@ -21,7 +22,7 @@ export async function run(base){
  if(!settings||settings.project!=='madina-express'||new URL(settings.cloudOrigin).protocol!=='https:')throw new Error('Invalid protected updater configuration');
  const publicKey=await readFile(join(host,'release-public-key.pem'),'utf8');
  const env=Object.fromEntries((await readFile(join(base,'config/backend.env'),'utf8')).split(/\r?\n/).map(line=>line.match(/^([A-Z_]+)=(.*)$/)).filter(Boolean).map(([,key,value])=>[key,value]));
- const origin=settings.cloudOrigin.replace(/\/$/,''),data=join(base,'data'),node=join(base,'runtime/node.exe');
+ const origin=settings.cloudOrigin.replace(/\/$/,''),data=join(base,'data'),node=selectedNodeRuntime(base);
  const cloudBytes=async(path,limit)=> (await withCloudOrigin(origin,candidate=>fetchBounded(candidate+path,limit,{signal:AbortSignal.timeout(limit<=65536?15000:180000)}))).value;
  // Expired update backups are separate from the daily app backup rotation.
  try{for(const name of await readdir(join(base,'backups'))){

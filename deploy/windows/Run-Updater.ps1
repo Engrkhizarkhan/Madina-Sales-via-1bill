@@ -8,5 +8,7 @@ foreach ($name in @('updater-out.log','updater-error.log')) {
     $file = Join-Path $hostDirectory $name
     if ((Test-Path $file) -and (Get-Item $file).Length -gt 5242880) { Move-Item $file ($file + '.previous') -Force }
 }
-$process = Start-Process -FilePath (Join-Path $base 'runtime\node.exe') -ArgumentList ('"' + $agent + '"') -WorkingDirectory $hostDirectory -RedirectStandardOutput (Join-Path $hostDirectory 'updater-out.log') -RedirectStandardError (Join-Path $hostDirectory 'updater-error.log') -NoNewWindow -Wait -PassThru
+$node = Join-Path $base 'runtime\node-v22.23.5.exe'
+if (-not (Test-Path -LiteralPath $node)) { $node = Join-Path $base 'runtime\node.exe' }
+$process = Start-Process -FilePath $node -ArgumentList ('"' + $agent + '"') -WorkingDirectory $hostDirectory -RedirectStandardOutput (Join-Path $hostDirectory 'updater-out.log') -RedirectStandardError (Join-Path $hostDirectory 'updater-error.log') -NoNewWindow -Wait -PassThru
 exit $process.ExitCode

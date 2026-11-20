@@ -27,14 +27,11 @@ terminalPresenceRouter.post('/heartbeat',route(async(req,res)=>{
   const metrics=[metric(body.rttMs,3600000),metric(body.downloadMbps,1000000),metric(body.lossPct,100),body.probeOk==null?null:Number(body.probeOk)];
   // A bounded set of tabs per enrolled PC. Browser contacts never count as
   // business writes and therefore cannot prevent a quiet application update.
-  await pool.execute('DELETE FROM terminal_presence WHERE slot=? AND last_seen<DATE_SUB(NOW(3),INTERVAL 1 DAY)',[device.slot]);
-  const [[count]]=await pool.execute('SELECT COUNT(*) n FROM terminal_presence WHERE slot=? AND instance_id<>?',[device.slot,body.instance]);
-  if(Number(count.n)>=16){
-    await pool.execute('DELETE FROM terminal_presence WHERE slot=? ORDER BY last_seen LIMIT 1',[device.slot]);
-  }
   await pool.execute(`INSERT INTO terminal_presence(slot,fingerprint,instance_id,last_seen,phase,transport,rtt_ms,download_mbps,loss_pct,probe_ok,version)
     VALUES(?,?,?,NOW(3),?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE fingerprint=VALUES(fingerprint),last_seen=NOW(3),phase=VALUES(phase),transport=VALUES(transport),rtt_ms=VALUES(rtt_ms),download_mbps=VALUES(download_mbps),loss_pct=VALUES(loss_pct),probe_ok=VALUES(probe_ok),version=VALUES(version)`,
     [device.slot,device.fingerprint,body.instance,body.phase,transport,...metrics,body.version]);
+  await pool.execute(`DELETE FROM terminal_presence WHERE slot=? AND instance_id NOT IN
+    (SELECT instance_id FROM (SELECT instance_id FROM terminal_presence WHERE slot=? ORDER BY last_seen DESC,instance_id LIMIT 16) retained)`,[device.slot,device.slot]);
   if(Date.now()-lastCleanup>3600000){lastCleanup=Date.now();await pool.execute('DELETE p FROM terminal_presence p JOIN terminal_presence newer ON newer.slot=p.slot AND newer.last_seen>p.last_seen WHERE p.last_seen<DATE_SUB(NOW(3),INTERVAL 1 DAY)');}
   res.json({ok:true});
 }));

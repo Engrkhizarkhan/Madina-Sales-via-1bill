@@ -119,6 +119,9 @@ try {
   check((await request('/terminal/presence/heartbeat',{method:'POST',device,body:{...heartbeat,rttMs:-1}})).status===422,'invalid measurements cannot be stored');
   check((await request('/terminal/presence/heartbeat',{method:'POST',device,viaProxy:true,body:{...heartbeat,phase:'ready',probeOk:true,downloadMbps:8}})).status===200,'private online relay preserves the enrolled identity for connection reporting');
   check((await request('/terminal/presence',admin)).payload.terminals.find(pc=>pc.slot===2)?.transport==='online','admin can distinguish online fallback from the local network path');
+  await Promise.all(Array.from({length:20},(_,index)=>request('/terminal/presence/heartbeat',{method:'POST',device,body:{...heartbeat,instance:index.toString(16).padStart(32,'0')}})));
+  const [[bounded]]=await pool.execute('SELECT COUNT(*) n FROM terminal_presence WHERE slot=2');
+  check(Number(bounded.n)<=16,'simultaneous browser tabs cannot grow connection storage beyond the per-PC bound');
   const onlineLogin=await request('/auth/login',{method:'POST',body:credentials,device,viaProxy:true});
   check(onlineLogin.status===200,'online fallback authenticates enrolled staff through actual client TLS and the private relay');
   check((await request('/auth/me',{cookie:onlineLogin.cookie,device,viaProxy:true})).status===200,'online fallback retains the same terminal-bound staff session');

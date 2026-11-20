@@ -6,7 +6,8 @@ if (Test-Path $pointer) { $application = (Get-Content $pointer -Raw | ConvertFro
 if (-not $application.StartsWith($base + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid installed application path.' }
 $configuration = Join-Path $base 'config\backend.env'
 if (Test-Path $configuration) { $env:MADINA_ENV_FILE = $configuration }
-$node = Join-Path $base 'runtime\node.exe'
+$node = Join-Path $base 'runtime\node-v22.23.5.exe'
+if (-not (Test-Path -LiteralPath $node)) { $node = Join-Path $base 'runtime\node.exe' }
 $logs = Join-Path $base 'logs'
 New-Item -ItemType Directory -Force $logs | Out-Null
 Set-Location $application

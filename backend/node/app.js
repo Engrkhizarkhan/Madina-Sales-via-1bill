@@ -173,7 +173,7 @@ async function createSession(connection, req, user) {
 
 app.get("/health", asyncRoute(async (_req, res) => {
   await pool.query("SELECT 1");
-  res.json({ status: "ok", database: "connected", runtime: "node", time: new Date().toISOString(), release:releaseInfo, paymentMode: config.paymentMode,
+  res.json({ status: "ok", database: "connected", runtime: "node", nodeVersion:process.versions.node, time: new Date().toISOString(), release:releaseInfo, paymentMode: config.paymentMode,
     ...(config.terminal.local ? { installationId: process.env.TERMINAL_INSTALLATION_ID, cloudOrigin:config.terminal.cloudOrigin, handover:await terminalHandover() } : {}) });
 }));
 

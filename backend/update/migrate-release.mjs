@@ -15,5 +15,10 @@ const db=await mysql.createConnection({...(config.socket?{socketPath:config.sock
 try{
  const [[locked]]=await db.query("SELECT GET_LOCK('madina_schema_update',30) acquired");if(!locked.acquired)throw new Error('Another migration is in progress');
  await applyMigrations(db);
-  if(process.platform==='win32')await migrateCloudDomain(join(process.env.ProgramData||'C:\\ProgramData','MadinaExpress'));
+  if(process.platform==='win32'){
+    const base=join(process.env.ProgramData||'C:\\ProgramData','MadinaExpress');
+    const {installNodeRuntime}=await import('../../deploy/updater/node-runtime.mjs');
+    await installNodeRuntime(base,resolve('.'));
+    await migrateCloudDomain(base);
+  }
 }finally{await db.end();}
