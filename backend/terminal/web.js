@@ -19,6 +19,10 @@ export function createTerminalWeb(app, { directory = resolve("dist"), assets = r
   });
   web.use(transferMonitor.observe);
   web.use("/api", app);
+  web.get('/browser-recovery',(req,res)=>{
+    if(req.get('X-Madina-Recovery')!=='startup')return res.sendStatus(404);
+    res.set('Clear-Site-Data','"cache"').sendStatus(204);
+  });
   web.get("/", (_req, res) => res.redirect("/manage"));
   web.get("/Madina-Express-Counter.cmd", async (_req, res, next) => {
     try {

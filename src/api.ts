@@ -5,6 +5,17 @@ const API_BASE = (
   import.meta.env.VITE_API_BASE ?? "http://localhost:3101"
 ).replace(/\/$/, "");
 const csrfKey = "madina-express-csrf";
+let memoryCsrf = "";
+function storedCsrf(){try{return sessionStorage.getItem(csrfKey)||memoryCsrf;}catch{return memoryCsrf;}}
+function storeCsrf(value:string){memoryCsrf=value;try{if(value)sessionStorage.setItem(csrfKey,value);else sessionStorage.removeItem(csrfKey);}catch{/* Keep this tab usable when browser storage is unavailable. */}}
+let refreshingCsrf:Promise<void>|null=null;
+function refreshCsrfToken(){
+  if(!refreshingCsrf)refreshingCsrf=sendRequest<{csrfToken:string}>("/auth/me").then(value=>{
+    if(typeof value.csrfToken!=="string"||!value.csrfToken)throw new ApiError("Sign in again to refresh this session.",401,"unauthenticated");
+    storeCsrf(value.csrfToken);
+  }).finally(()=>{refreshingCsrf=null;});
+  return refreshingCsrf;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -21,13 +32,27 @@ export class ApiError extends Error {
 async function request<T>(
   path: string,
   options: RequestInit = {},
+):Promise<T>{
+  try{return await sendRequest<T>(path,options);}
+  catch(error){
+    // The server rejects CSRF before executing the action. Refresh only this
+    // token, then retry once. Network failures are never replayed.
+    if(!(error instanceof ApiError)||error.status!==403||error.code!=="csrf_failed"||options.signal?.aborted)throw error;
+    await refreshCsrfToken();
+    return sendRequest<T>(path,options);
+  }
+}
+
+async function sendRequest<T>(
+  path: string,
+  options: RequestInit = {},
 ): Promise<T> {
   const method = (options.method ?? "GET").toUpperCase();
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/json");
   if (options.body) headers.set("Content-Type", "application/json");
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-    const csrf = sessionStorage.getItem(csrfKey);
+    const csrf = storedCsrf();
     if (csrf) headers.set("X-CSRF-Token", csrf);
   }
   const controller = new AbortController();
@@ -42,12 +67,14 @@ async function request<T>(
     method,
     headers,
     credentials: options.credentials ?? "include",
+    cache:"no-store",
     signal: controller.signal,
   });
-  const payload = await response.json().catch(() => ({}));
+  const payload = await response.json().catch(() => {throw new ApiError("The server returned an incomplete page response. Refresh the application and try again.",response.status||502,"invalid_response");});
   if (controller.signal.aborted) throw new DOMException("Request aborted", "AbortError");
   if (!response.ok) {
     const error = payload?.error;
+    if(response.status===401&&error?.code==="unauthenticated")storeCsrf("");
     throw new ApiError(
       error?.message ?? "The server could not complete the request.",
       response.status,
@@ -70,11 +97,17 @@ async function downloadSetup(path: string, currentPassword: string, filename: st
     const controller=new AbortController();let timedOut=false;
     const timer=window.setTimeout(()=>{timedOut=true;controller.abort();},180000);
     try{
-      const response=await fetch(`${API_BASE}${path}`,{
+      const send=()=>fetch(`${API_BASE}${path}`,{
         method:"POST",credentials:"include",signal:controller.signal,
-        headers:{"Content-Type":"application/json","X-CSRF-Token":sessionStorage.getItem(csrfKey)||""},
+        cache:"no-store",
+        headers:{"Content-Type":"application/json","X-CSRF-Token":storedCsrf()},
         body:JSON.stringify({currentPassword,...options,...(main?{delivery:"browser"}:{})}),
       });
+      let response=await send();
+      if(response.status===403){
+        const denied=await response.clone().json().catch(()=>null);
+        if(denied?.error?.code==="csrf_failed"){await refreshCsrfToken();response=await send();}
+      }
       if(!response.ok){
         const payload=await response.json().catch(()=>({}));
         throw new ApiError(response.status===401?"Your session expired. Sign in again, then download the installer.":payload?.error?.message||"The setup file could not be created.",response.status);
@@ -108,7 +141,7 @@ export type TerminalStatus = {
 };
 
 function rememberCsrf<T extends { csrfToken?: string }>(payload: T): T {
-  if (payload.csrfToken) sessionStorage.setItem(csrfKey, payload.csrfToken);
+  if (payload.csrfToken) storeCsrf(payload.csrfToken);
   return payload;
 }
 
@@ -136,7 +169,7 @@ export const api = {
   updateStatus: () => request<{current:ReleaseInfo;available:{version:string;releaseId:string;createdAt:string}|null;paused:boolean;cloudAvailable:boolean;terminal:{stage:string;checkedAt?:string;message?:string;current?:{releaseId:string;version:string}}|null}>("/updates/status"),
   pauseUpdates: (paused:boolean) => request("/updates/control",{method:"POST",body:JSON.stringify({paused})}),
   receiptLayout: () => request<{layout:ReceiptLayout}>("/settings/receipt"),
-  saveReceiptLayout: (layout:ReceiptLayout) => request<{layout:ReceiptLayout}>("/settings/receipt",{method:"PUT",body:JSON.stringify(layout)}),
+  saveReceiptLayout: (layout:Partial<ReceiptLayout>) => request<{layout:ReceiptLayout}>("/settings/receipt",{method:"PUT",body:JSON.stringify(layout)}),
   policies: <T>() => request<{policies:T}>("/settings/policies"),
   savePolicies: <T>(policies:T) => request<{policies:T}>("/settings/policies",{method:"PUT",body:JSON.stringify(policies)}),
   accountAuthenticator: <T>(id:number,enabled:boolean) => request<{user:T;setup:{secret:string;uri:string}|null}>(`/users/${id}/authenticator`,{method:"POST",body:JSON.stringify({enabled})}),
@@ -156,7 +189,7 @@ export const api = {
     }).then(rememberCsrf),
   logout: () =>
     request<{ ok: boolean }>("/auth/logout", { method: "POST" }).finally(() =>
-      sessionStorage.removeItem(csrfKey),
+      storeCsrf(""),
     ),
   changePassword: (currentPassword: string, newPassword: string) =>
     request<{ ok: boolean; csrfToken: string }>("/auth/change-password", {

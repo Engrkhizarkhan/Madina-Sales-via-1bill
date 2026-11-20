@@ -47,6 +47,10 @@ try {
   assert.deepEqual((await request('/settings/receipt',{method:'PUT',body:oldReceiptClient})).body.layout,layout);passed++;
   for(const invalid of [{fontSize:-1},{font:"url(evil)"},{paddingX:-1},{showQr:"true"},{businessName:""},{qrSize:0}])assert.throws(()=>validateReceiptLayout({...layout,...invalid}));
   check((await request("/settings/receipt",{method:"PUT",body:{...layout,fontSize:100}})).status===200,"custom positive receipt sizes have no preset upper limit");
+  const separate=await Promise.all([request('/settings/receipt',{method:'PUT',body:{voucherFontSize:13.75,voucherShowContact:true}}),request('/settings/receipt',{method:'PUT',body:{fontSize:11.5}})]);
+  check(separate.every(result=>result.status===200),'ticket and voucher design patches can be saved concurrently');
+  const merged=(await request('/settings/receipt')).body.layout;
+  check(merged.fontSize===11.5&&merged.voucherFontSize===13.75&&merged.voucherShowContact===true&&merged.businessName===layout.businessName,'each design preserves independently saved fields from the other editor');
   const staffName="reset-qa-"+randomBytes(4).toString("hex");
   const staff=await request("/users",{method:"POST",body:{name:"QA staff",username:staffName,password:"1234",role:"counter",remoteAllowed:false,terminals:[1]}});
   check(staff.status===201||staff.status===200,"owner creates terminal-only staff with PIN");

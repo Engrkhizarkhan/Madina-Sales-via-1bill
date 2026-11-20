@@ -1,7 +1,8 @@
 import { fail } from "./helpers.js";
 import { accountVersion, canRemote } from "./account-access.js";
-import { createHash, randomBytes } from "node:crypto";
-import { mkdir, readFile, writeFile, rename, readdir, unlink } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
+import {atomicJson} from '../../deploy/updater/engine.mjs';
 import { join } from "node:path";
 const pending = new Map();
 
@@ -17,14 +18,24 @@ export class CloudSessions {
     return join(this.directory, hash + ".json");
   }
   async read(hash) {
-    try { return JSON.parse(await readFile(this.file(hash), "utf8")); }
-    catch (error) { if (error.code === "ENOENT") return null; throw error; }
+    try {
+      const value=JSON.parse(await readFile(this.file(hash), "utf8"));
+      if(!value||typeof value!=='object'||Array.isArray(value)||!Number.isFinite(value.expires))throw new SyntaxError('Invalid cloud session state');
+      return value;
+    }
+    catch (error) {
+      if (error.code === "ENOENT") return null;
+      if (!(error instanceof SyntaxError)) throw error;
+      // A power interruption must not break all logins, or fall back to a
+      // replicated SQL session that this file may already have revoked.
+      const invalid={revoked:true,step:Math.floor(Date.now()/30000),expires:Date.now()+24*3600000};
+      await this.save(hash,invalid);
+      return invalid;
+    }
   }
   async save(hash, value) {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    const temporary = this.file(hash) + "." + randomBytes(8).toString("hex");
-    await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
-    await rename(temporary, this.file(hash));
+    await atomicJson(this.file(hash),value,0o600);
   }
   async prune() {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });

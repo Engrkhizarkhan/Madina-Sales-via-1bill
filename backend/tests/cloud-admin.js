@@ -12,7 +12,7 @@ assert.match(schema || '', /^[a-zA-Z0-9_]+$/, 'Set TEST_SCHEMA_DATABASE to a sch
 const dbName = 'madina_cloud_qa_' + randomBytes(5).toString('hex');
 const dbUser = 'cloud_qa_' + randomBytes(5).toString('hex');
 const password = randomBytes(24).toString('hex');
-const admin = await mysql.createConnection({ socketPath: process.env.TEST_ADMIN_SOCKET || '/var/run/mysqld/mysqld.sock', user: 'root', multipleStatements: true });
+const admin = await mysql.createConnection({ socketPath: process.env.TEST_ADMIN_SOCKET || '/var/run/mysqld/mysqld.sock', user: 'root', password:process.env.MYSQL_ADMIN_PASSWORD||'', multipleStatements: true });
 const directory = await mkdtemp(join(tmpdir(), 'madina-cloud-auth-'));
 const otpKey = randomBytes(20), adminPassword = 'Qa!StrongPassword2026', pin = '983741';
 let server, output = '', cookie = '', csrf;
@@ -36,6 +36,7 @@ try {
     await admin.query(definition['Create Table']);
   }
   await admin.query('SET FOREIGN_KEY_CHECKS=1');
+  await admin.query('INSERT INTO live_state SELECT * FROM `' + schema + '`.live_state');
   await admin.query(await readFile('backend/database/migrations/012_account_access.sql','utf8'));
   await admin.query('INSERT INTO users (name, username, role, password_hash, force_password_change,is_owner,remote_allowed) VALUES (?,?,?,?,0,1,1)', ['QA admin', 'admin', 'admin', await bcrypt.hash(adminPassword, 4)]);
   await admin.query("INSERT INTO settings (setting_key, setting_value) VALUES ('finance_pin_hash',?)", [JSON.stringify(await bcrypt.hash(pin, 4))]);
@@ -49,7 +50,7 @@ try {
   if (output) throw new Error(output);
   await mkdir(join(directory, 'state'));
   await writeFile(join(directory, 'state/state.json'), JSON.stringify({ phase: 'standalone' }));
-  server = spawn(process.execPath, ['backend/node/server.js'], { env: { ...process.env, DB_NAME: dbName, DB_USER: dbUser, DB_PASSWORD: password, DB_HOST: '127.0.0.1', DB_PORT: '3306', TERMINAL_ROLE: 'cloud', TERMINAL_DIRECTORY: join(directory, 'state'), CLOUD_SESSION_DIRECTORY: join(directory, 'sessions'), ADMIN_TOTP_HEX: otpKey.toString('hex'), ADMIN_TOTP_PAUSED: 'false', RESTRICT_STAFF_DEVICES: 'true', NODE_API_HOST: '127.0.0.1', NODE_API_PORT: '43191', SESSION_SECURE: 'true', PUBLIC_SITE_ENABLED:'true', ALLOWED_ORIGINS: 'https://qa.invalid,https://public.example.invalid,http://127.0.0.1:43191' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  server = spawn(process.execPath, ['backend/node/server.js'], { env: { ...process.env, DB_NAME: dbName, DB_USER: dbUser, DB_PASSWORD: password, DB_HOST: '127.0.0.1', DB_PORT: process.env.TEST_DB_PORT||'3306', TERMINAL_ROLE: 'cloud', TERMINAL_DIRECTORY: join(directory, 'state'), CLOUD_SESSION_DIRECTORY: join(directory, 'sessions'), ADMIN_TOTP_HEX: otpKey.toString('hex'), ADMIN_TOTP_PAUSED: 'false', RESTRICT_STAFF_DEVICES: 'true', NODE_API_HOST: '127.0.0.1', NODE_API_PORT: '43191', SESSION_SECURE: 'true', PUBLIC_SITE_ENABLED:'true', ALLOWED_ORIGINS: 'https://qa.invalid,https://public.example.invalid,http://127.0.0.1:43191' }, stdio: ['ignore', 'pipe', 'pipe'] });
   server.stdout.on('data', data => { output += data; }); server.stderr.on('data', data => { output += data; });
   let ready = false;
   for (let i = 0; i < 60; i++) { try { ready = (await request('GET', '/health')).status === 200; if (ready) break; } catch { /* startup */ } await new Promise(resolve => setTimeout(resolve, 100)); }

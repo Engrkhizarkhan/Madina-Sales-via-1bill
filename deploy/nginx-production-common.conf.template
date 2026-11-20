@@ -15,9 +15,19 @@ gzip_types application/json application/javascript text/css;
 
 location /assets/ {
     try_files $uri =404;
-    expires 365d;
+}
+location ~ (^|/)\.(?!well-known(/|$)) { return 404; }
+location = /browser-recovery {
+    if ($http_x_madina_recovery != "startup") { return 404; }
+    if ($request_method !~ ^(GET|HEAD)$) { return 405; }
+    add_header Clear-Site-Data '"cache"';
+    add_header Cache-Control "no-store, max-age=0" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Content-Security-Policy "default-src 'none'; frame-ancestors 'none'" always;
+    return 204;
 }
 
+add_header Cache-Control $madina_cache_control always;
 add_header Strict-Transport-Security "max-age=31536000" always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header X-Frame-Options "DENY" always;

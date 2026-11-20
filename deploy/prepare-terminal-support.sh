@@ -44,7 +44,7 @@ install -m 0755 -o root -g root "$PROJECT_DIR/deploy/terminal-control.py" /usr/l
 install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-terminal.conf.template" "$STATE_DIR/nginx-terminal.conf.template"
 install -m 0640 -o root -g madina-express "$PROJECT_DIR/deploy/nginx-production.conf.template" "$STATE_DIR/nginx-production.conf.template"
 # Apply an accepted release's proxy fixes to an already paired installation too.
-python3 - <<'NGINX'
+PROJECT_DIR="$PROJECT_DIR" python3 - <<'NGINX'
 import json,os,pathlib,re,subprocess
 root=pathlib.Path('/var/lib/madina-express/terminal')
 state=json.loads((root/'state.json').read_text()) if (root/'state.json').exists() else {}
@@ -63,7 +63,20 @@ if not all((certificate/name).is_file() for name in ['fullchain.pem','privkey.pe
 for hostname in ['madinaexpress.pk','www.madinaexpress.pk','staff.madinaexpress.pk','terminal.madinaexpress.pk']:
     subprocess.run(['openssl','verify','-verify_hostname',hostname,'-untrusted',str(certificate/'fullchain.pem'),str(certificate/'fullchain.pem')],check=True,stdout=subprocess.DEVNULL)
 try:
-    updated=re.sub(r'(?m)^ssl_certificate\s+[^;]+;', 'ssl_certificate '+str(certificate/'fullchain.pem')+';',old_common.decode())
+    updated=old_common.decode()
+    # Preserve signed packages, runtime downloads and operator-specific locations.
+    updated=re.sub(r'(location /assets/\s*\{[^}]*?)\s*expires\s+[^;]+;',r'\1',updated)
+    cache_header='add_header Cache-Control $madina_cache_control always;'
+    if cache_header not in updated:
+        updated+='\n'+cache_header+'\n'
+    private_paths=r'location ~ (^|/)\.(?!well-known(/|$)) { return 404; }'
+    if private_paths not in updated:
+        updated+='\n'+private_paths+'\n'
+    if 'location = /browser-recovery' not in updated:
+        shared=(pathlib.Path(os.environ['PROJECT_DIR'])/'deploy/nginx-production-common.conf.template').read_text()
+        recovery=shared.split('location = /browser-recovery {',1)[1].split('\n}',1)[0]
+        updated+='\nlocation = /browser-recovery {'+recovery+'\n}\n'
+    updated=re.sub(r'(?m)^ssl_certificate\s+[^;]+;', 'ssl_certificate '+str(certificate/'fullchain.pem')+';',updated)
     updated=re.sub(r'(?m)^ssl_certificate_key\s+[^;]+;', 'ssl_certificate_key '+str(certificate/'privkey.pem')+';',updated)
     common.write_text(updated)
     target.write_text(template)

@@ -2,8 +2,8 @@ import {api} from './api';
 import {staffOrigin,terminalOrigin} from '../shared/domains.mjs';
 import {validateReportTree,reportProtocol,type ReportNode} from '../shared/report-print.mjs';
 export function reportBridgeConfigured(){
- if(new URLSearchParams(window.location.search).get('a4Bridge')==='1')sessionStorage.setItem('madina-a4-bridge','true');
- return sessionStorage.getItem('madina-a4-bridge')==='true';
+ const configured=new URLSearchParams(window.location.search).get('a4Bridge')==='1';
+ try{if(configured)sessionStorage.setItem('madina-a4-bridge','true');return configured||sessionStorage.getItem('madina-a4-bridge')==='true';}catch{return configured;}
 }
 function reportNode(node:Node):ReportNode{
  if(node.nodeType===Node.TEXT_NODE)return node.textContent||'';

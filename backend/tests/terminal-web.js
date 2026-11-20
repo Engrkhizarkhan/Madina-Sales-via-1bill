@@ -44,6 +44,8 @@ test('local counters reuse only fingerprinted files while HTML and customer data
     const missing=await fetch(origin+'/assets/index-MISSING1.js');
     assert.equal(missing.status,404);assert.doesNotMatch(await missing.text(),/fresh release/);
     assert.match(missing.headers.get('cache-control'),/no-store/);
+    const embedded=await fetch(origin+'/browser-recovery');assert.equal(embedded.status,404);assert.equal(embedded.headers.get('clear-site-data'),null);
+    const repair=await fetch(origin+'/browser-recovery',{headers:{'X-Madina-Recovery':'startup'}});assert.equal(repair.status,204);assert.equal(repair.headers.get('clear-site-data'),'"cache"');assert.match(repair.headers.get('cache-control'),/no-store/);assert.equal(repair.headers.get('set-cookie'),null);
     const concurrent=await Promise.all(Array.from({length:12},async()=>{
       const response=await fetch(origin+'/assets/index-ABCD1234.js');
       assert.equal(response.status,200);assert.equal(await response.text(),bytes);

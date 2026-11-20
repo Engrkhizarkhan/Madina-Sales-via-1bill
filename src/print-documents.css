@@ -136,7 +136,6 @@
 .operations-document.document-terminal-thermal { padding:3mm; }
 .operations-document.document-terminal-thermal .document-header { padding-bottom:3px; }
 .operations-document.document-terminal-thermal .document-header h1 { font-size:19px; }
-.operations-document.document-terminal-thermal .document-header>div>p:not(.document-brand-urdu) { display:none; }
 .operations-document.document-terminal-thermal .document-header .document-brand-urdu { font-size:10px;margin:0;line-height:1.8; }
 .operations-document.document-terminal-thermal .document-title-block { margin-top:3px; }
 .operations-document.document-terminal-thermal .document-title-block h2 { font-size:11px; }

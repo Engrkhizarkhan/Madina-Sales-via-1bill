@@ -9,6 +9,10 @@ import {onlineCounterUrl} from './shared/counter-fallback.mjs'
 const startupBundle=()=>readFileSync(resolve('public/startup.js'),'utf8').replace('/*__COUNTER_FALLBACK_HELPER__*/',`var onlineCounterUrlForStartup = ${onlineCounterUrl.toString()};`).replace('/*__COUNTER_PRESENCE__*/',`(${startCounterPresence.toString()})(${JSON.stringify(JSON.parse(readFileSync('build-info.json','utf8')).version)});`)
 const workerEntry = ():Plugin => ({
   name: 'madina-express-worker-entry',
+  transformIndexHtml: {order:'pre',handler(html){
+    const build=JSON.parse(readFileSync('build-info.json','utf8'));
+    return html.replace('startup.js"',`startup.js?v=${encodeURIComponent(build.releaseId)}"`);
+  }},
   configureServer(server) {
     server.middlewares.use('/startup.js',(_req,res)=>{res.setHeader('Content-Type','application/javascript');res.setHeader('Cache-Control','no-store');res.end(startupBundle())})
   },

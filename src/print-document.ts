@@ -5,9 +5,10 @@ export type TicketPaper = "thermal" | "a4" | "tm-t88iv";
 let ticketPrintQueue = Promise.resolve();
 
 export function silentCounterPrinting() {
+  const mode=new URLSearchParams(window.location.search).get("counterPrint");
+  if(mode==="dialog"){try{sessionStorage.removeItem("madina-counter-silent");}catch{/* The explicit profile still takes priority. */}return false;}
+  if(mode==="silent"){try{sessionStorage.setItem("madina-counter-silent","true");}catch{/* The explicit profile still takes priority. */}return true;}
   try {
-    if (new URLSearchParams(window.location.search).get("counterPrint") === "dialog") sessionStorage.removeItem("madina-counter-silent");
-    if (new URLSearchParams(window.location.search).get("counterPrint") === "silent") sessionStorage.setItem("madina-counter-silent", "true");
     return sessionStorage.getItem("madina-counter-silent") === "true";
   } catch { return false; }
 }

@@ -15,9 +15,14 @@ const expireReservations = async () => {
   if (maintenance.draining() || !(await terminalReady()) || cloudNeedsMain(await terminalState())) return;
   await releaseExpiredReservations();
 };
-const releaseHolds = () => expireReservations().catch(error => {
+let releasingHolds=false;
+const releaseHolds = async () => {
+  if(releasingHolds)return;
+  releasingHolds=true;
+  try{await expireReservations();}catch(error){
   console.error("Could not release expired web reservations:", error.code || error.message);
-});
+  }finally{releasingHolds=false;}
+};
 void releaseHolds();
 const expiryTimer = setInterval(releaseHolds, 60_000).unref();
 const terminalWeb = config.terminal.local ? await startTerminalWeb(app) : null;

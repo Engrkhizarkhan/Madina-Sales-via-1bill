@@ -568,6 +568,7 @@ app.put("/settings/receipt", asyncRoute(async (req,res) => {
   requireOwner(req.user);
   let layout;
   await transaction(async connection => {
+    await connection.execute("SELECT setting_key FROM settings WHERE setting_key='receipt_layout' FOR UPDATE");
     const before = await getReceiptLayout(connection);
     layout=validateReceiptLayout(req.body,before);
     await connection.execute("INSERT INTO settings(setting_key,setting_value,updated_by) VALUES ('receipt_layout',?,?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value),updated_by=VALUES(updated_by)",[JSON.stringify(layout),req.user.id]);
@@ -637,11 +638,13 @@ app.get("/users/terminal-access", asyncRoute(async (req, res) => {
 
 app.use((_req, _res, next) => next(new ApiError("API route not found.", 404, "not_found")));
 app.use((error, _req, res, _next) => {
+  if(error instanceof ApiError&&error.code==='unauthenticated')res.clearCookie(sessionCookie,cookieOptions);
   if (error?.type === "entity.parse.failed") return res.status(400).json({ error: { code: "invalid_json", message: "Request body must be valid JSON." } });
   if (error?.type === "encoding.unsupported") return res.status(415).json({ error: { code: "unsupported_encoding", message: "Use an uncompressed JSON request." } });
   if (error?.type === "entity.too.large") return res.status(413).json({ error: { code: "request_too_large", message: "Request body is too large." } });
   if (error instanceof ApiError) return res.status(error.status).json({ error: { code: error.code, message: error.message } });
   if (error?.code === "ER_DUP_ENTRY") return res.status(409).json({ error: { code: "duplicate_record", message: "That record conflicts with an existing record." } });
+  if(error?.message==='Queue limit reached.')return res.status(503).set('Retry-After','2').json({error:{code:'server_busy',message:'The server is busy. Wait a moment, then check the latest records before repeating an action.'}});
   console.error(error);
   const message = config.env === "production" ? "The server could not complete the request." : error.message;
   return res.status(500).json({ error: { code: "server_error", message } });

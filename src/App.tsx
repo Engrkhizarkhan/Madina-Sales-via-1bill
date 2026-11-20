@@ -1,3 +1,5 @@
+import VoucherDesignEditor from './voucher-design-editor';
+import {VoucherDocument} from './voucher-document';
 import AdminRecovery,{AdminActivity,CounterReconciliation} from './admin-control';
 import {collectionPrintAction} from '../shared/collection-print.mjs';
 import {PrintPreferencesContext,useManagedPrinting,usePrintPreferences,type TerminalPrintPolicy} from './print-preferences';
@@ -9,7 +11,7 @@ import {sameBookingCustomer,departureSeatCounts,fareQuantities,allocateFareTotal
 import {ReportPrintPage} from './report-print-page';
 import {openA4Report,reportBridgeConfigured} from './report-transfer';
 import {mergeLiveRecords} from "../shared/live-records.mjs";
-import { receiptDefaults, receiptFonts, receiptNumberBounds, voucherNumberFields, voucherStyle, type ReceiptLayout } from "../shared/receipt-layout.mjs";
+import { receiptDefaults, receiptFonts, receiptNumberBounds, type ReceiptLayout } from "../shared/receipt-layout.mjs";
 import {publicOrigin} from '../shared/domains.mjs';
 import {onlineCounterPreferences} from '../shared/counter-fallback.mjs';
 import {onlineCounterLink,tryOnlineCounter} from './counter-fallback';
@@ -680,7 +682,7 @@ function App() {
     void refresh(); const timer=window.setInterval(refresh,30000);
     return ()=>{active=false;window.clearInterval(timer);};
   },[path]);
-  const receiptSettings = {layout:receiptLayout,save:async(layout:ReceiptLayout)=>{const result=await api.saveReceiptLayout(layout);setReceiptLayout(result.layout);}};
+  const receiptSettings = {layout:receiptLayout,save:async(layout:Partial<ReceiptLayout>)=>{const result=await api.saveReceiptLayout(layout);setReceiptLayout(result.layout);}};
 
   useEffect(() => {
     const onPopState = () => setPath(localPath());
@@ -689,8 +691,10 @@ function App() {
   }, []);
   const navigate = useCallback((nextPath: string) => {
     const params=new URLSearchParams(window.location.search);
-    if (nextPath==='/login'&&params.get('view')==='reports') sessionStorage.setItem('madina-open-reports','true');
-    if (nextPath==='/manage'&&sessionStorage.getItem('madina-open-reports')==='true') { nextPath='/manage?view=reports&counterPrint=dialog';sessionStorage.removeItem('madina-open-reports'); }
+    try{
+      if (nextPath==='/login'&&params.get('view')==='reports') sessionStorage.setItem('madina-open-reports','true');
+      if (nextPath==='/manage'&&sessionStorage.getItem('madina-open-reports')==='true') { nextPath='/manage?view=reports&counterPrint=dialog';sessionStorage.removeItem('madina-open-reports'); }
+    }catch{/* Optional report preferences must not stop sign-in when storage is blocked. */}
     window.history.pushState({}, "", `${appBase}${nextPath}` || "/");
     setPath(nextPath);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -4012,8 +4016,10 @@ function ReportModal({
         </div>
         {voucherStale && <p className="form-error">Save the current voucher summary on the ticketing page before printing. Collections may have changed.</p>}
         {printError && <p className="form-error" role="alert">{printError} <a href="/api/terminal/counter-launcher">Download printing setup</a></p>}
-        <article ref={documentRef} style={voucher?voucherStyle(layout):undefined}
-          className={`print-document operations-document document-${report.kind} ${rows.length>50||(report.kind==="cnic"&&rows.length>35)?"document-dense":""} ${thermal ? "report-thermal" : voucher ? "report-a4" : "report-a4 report-landscape"}`}
+        {voucher?<VoucherDocument ref={documentRef} layout={layout} thermal={thermal} data={{date:ticketDate(report.date),run:report.runNumber,vehicle:vehicleLabel(bus),route:routeLabel(route),departure:trip.departure,service:bus.service,driver:trip.driver,attendant:trip.attendant,destinations:routeDestinations(route).length>1,
+          rows:ledgerRecords.map(booking=>({id:booking.id,ticket:booking.ticketNo,time:ticketTime(new Date(booking.seatPrintedAt??booking.createdAt)),passenger:booking.passenger,destination:booking.destination,seats:seatList(booking.seats,booking.service),channel:booking.paymentMethod,amount:money(netCollected(booking)),seatRows:booking.seats.map(seat=>({number:seat,label:seatLabel(seat,booking.service),amount:Math.round(netCollected(booking)/booking.seats.length).toLocaleString('en-PK')}))})),totals,printed:`${ticketDate(dateInPakistan(printedAt))} · ${ticketTime(printedAt)}`,preparedBy}}/>:(
+        <article ref={documentRef}
+          className={`print-document operations-document document-${report.kind} ${rows.length>50||(report.kind==="cnic"&&rows.length>35)?"document-dense":""} report-a4 report-landscape`}
         >
           <header className="document-header">
             <div>
@@ -4059,53 +4065,6 @@ function ReportModal({
               <strong>{trip.attendant}</strong>
             </span></>}
           </div>
-          {thermal ? (
-            <>
-              <h3 className="document-section-title">Seat · Passenger{layout.voucherShowNetCollected?" · Net PKR":""}</h3>
-              {rows.map(({booking,seat})=><div className="thermal-passenger" key={`${booking.id}-${seat}`}><span><b>{seatLabel(seat,booking.service)}</b><strong>{booking.passenger}{routeDestinations(route).length>1&&<small> · {booking.destination}</small>}</strong>{layout.voucherShowNetCollected&&<b>{Math.round(netCollected(booking)/booking.seats.length).toLocaleString('en-PK')}</b>}</span></div>)}
-              {!rows.length && (
-                <p className="document-empty">No passengers in this run.</p>
-              )}
-              <h3 className="document-section-title">Collection summary</h3>
-              <div className="thermal-total">{totals.map(([label, value]) => <span className={label === "Total remaining" ? "document-grand-total" : undefined} key={label}>{label}<b>{value}</b></span>)}</div>
-            </>
-          ) : report.kind === "terminal-a4" ? (
-            <>
-              <h3 className="document-section-title">Ticket &amp; payment register</h3>
-              <table className="document-table">
-                <colgroup>{(layout.voucherShowNetCollected?[17, 8, 25, 14, 6, 10, 20]:[18,9,32,22,8,11]).map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
-                <thead>
-                  <tr>
-                    <th>Ticket</th>
-                    <th>Time</th>
-                    <th>Passenger</th>
-                    <th>Destination</th>
-                    <th>Seats</th>
-                    <th>Channel</th>
-                    {layout.voucherShowNetCollected&&<th>Net collected</th>}
-                  </tr>
-                </thead>
-                <tbody>
-                  {ledgerRecords.map((booking) => (
-                    <tr key={booking.id}>
-                      <td>{booking.ticketNo}</td>
-                      <td>
-                        {ticketTime(new Date(booking.seatPrintedAt ?? booking.createdAt))}
-                      </td>
-                      <td>{booking.passenger}</td>
-                      <td>{booking.destination}</td>
-                      <td>{seatList(booking.seats, booking.service)}</td>
-                      <td>{booking.paymentMethod}</td>
-                      {layout.voucherShowNetCollected&&<td>{money(netCollected(booking))}</td>}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {!ledgerRecords.length && <p className="document-empty">No tickets recorded for this departure.</p>}
-              <h3 className="document-section-title">Collection summary</h3>
-              <div className="voucher-summary-grid">{totals.map(([label,value]) => <span className={label === "Total remaining" ? "document-grand-total" : undefined} key={label}><small>{label}</small><strong>{value}</strong></span>)}</div>
-            </>
-          ) : (
             <table className="document-table">
               <colgroup>{(report.kind === "cnic" ? [4, 15, 8, 10, 8, 6, 12, 21, 16] : [12, 19, 6, 11, 15, 8, 19, 10]).map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
               <thead>
@@ -4169,7 +4128,7 @@ function ReportModal({
                 )}
               </tbody>
             </table>
-          )}
+
           {!voucher && <p className="document-empty">Passengers: {rows.length} · {trip.departedAt ? `Departed ${formatPrintTime(trip.departedAt)}` : "Before departure"}</p>}
           {voucher && <div className="document-signatures"><span>Prepared by</span><span>Checked by</span></div>}
           <footer className="document-footer">
@@ -4177,6 +4136,7 @@ function ReportModal({
             <span>Prepared by {preparedBy}</span>
           </footer>
         </article>
+        )}
       </div>
     </div>
   );
@@ -4956,7 +4916,7 @@ function SettingsView({
             </button>
           </form>
         </section>
-        <section className="surface settings-card">
+        <section className="surface settings-card receipt-configuration">
           <SettingsTitle
             icon={<ReceiptText size={19} />}
             title="Receipt configuration"
@@ -5078,7 +5038,7 @@ function ReceiptEditor({editable}:{editable:boolean}) {
   const dirty=ticketDesign(draft)!==ticketDesign(layout);
   return <details className="receipt-editor"><summary>Edit receipt design</summary><form onSubmit={async event=>{
     event.preventDefault();setBusy(true);setMessage("");
-    try{await save({...layout,...Object.fromEntries(Object.entries(draft).filter(([key])=>!key.startsWith('voucher')))});setMessage("Receipt design saved for all counters.");}catch(error){setMessage(error instanceof Error?error.message:"Could not save receipt design.");}finally{setBusy(false);}
+    try{await save(Object.fromEntries(Object.entries(draft).filter(([key])=>!key.startsWith('voucher'))));setMessage("Receipt design saved for all counters.");}catch(error){setMessage(error instanceof Error?error.message:"Could not save receipt design.");}finally{setBusy(false);}
   }}><fieldset className="counter-fields" disabled={!editable||busy}><div className="settings-fields">
     {([['businessName','Business name',60],['brandMark','Top logo text',12],['contact','Contact numbers',100],['terminal','Terminal name',160],['website','Booking website',100],['websiteLabel','Booking website caption',60],['tokenTitle','Boarding slip title',40]] as const).map(([key,label])=><label key={key}><span>{label}</span><input required={key==='businessName'||key==='tokenTitle'} value={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.value})}/></label>)}
     <label><span>English font</span><select value={draft.font} onChange={event=>setDraft({...draft,font:event.target.value})}>{receiptFonts.map(font=><option key={font}>{font}</option>)}</select></label>
@@ -5097,21 +5057,6 @@ function ReceiptEditor({editable}:{editable:boolean}) {
   </details>;
 }
 
-function VoucherDesignEditor({editable}:{editable:boolean}) {
- const {layout,save}=useReceiptSettings();
- const [draft,setDraft]=useState(layout),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
- const previousLayout=useRef(layout);
- useEffect(()=>{if(JSON.stringify(draft)===JSON.stringify(previousLayout.current))setDraft(layout);previousLayout.current=layout;},[layout,draft]);
- const own=(value:ReceiptLayout)=>Object.fromEntries(Object.entries(value).filter(([key])=>key.startsWith('voucher')));
- return <details className="receipt-editor"><summary>Edit voucher design</summary><form onSubmit={async event=>{
-  event.preventDefault();setBusy(true);setMessage('');
-  try{await save({...layout,...own(draft)});setMessage('Voucher design saved for all counters.');}catch(error){setMessage(error instanceof Error?error.message:'Could not save voucher design.');}finally{setBusy(false);}
- }}><fieldset className="counter-fields" disabled={!editable||busy}><div className="settings-fields">
- <label><span>Voucher font</span><select value={draft.voucherFont} onChange={event=>setDraft({...draft,voucherFont:event.target.value})}>{receiptFonts.map(font=><option key={font}>{font}</option>)}</select></label>
- {(Object.entries(voucherNumberFields) as [keyof typeof voucherNumberFields,string][]).map(([key,label])=><label key={key}><span>{label}</span><input type="number" step="any" required value={draft[key]} onChange={event=>setDraft({...draft,[key]:Number(event.target.value)})}/></label>)}
- {([['voucherShowNetCollected','Show Net collected for each passenger'],['voucherShowContact','Show contact details'],['voucherShowCrew','Show driver and attendant']] as const).map(([key,label])=><label key={key}><span><input type="checkbox" checked={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.checked})}/> {label}</span></label>)}
- </div><p>Applies to A4 and 80 mm vouchers. Collection totals always remain visible.</p><div className="form-actions"><button type="button" className="secondary-button" onClick={()=>setDraft({...draft,...own(receiptDefaults)})}>Compact defaults</button><button className="primary-button" disabled={busy||JSON.stringify(own(draft))===JSON.stringify(own(layout))}>{busy?'Saving…':'Save voucher design'}</button></div></fieldset></form><p role="status">{message}</p></details>;
-}
 
 function TerminalConnectionSignal() {
   const [connection, setConnection] = useState<Awaited<ReturnType<typeof api.terminalConnection>>>();

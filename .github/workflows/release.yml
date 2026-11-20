@@ -47,6 +47,7 @@ jobs:
           npm run test:terminal
           npm run test:layout
           node --test backend/tests/collection-print.js
+          node --test backend/tests/browser-session-recovery.js backend/tests/cloud-session-recovery.js backend/tests/security-boundaries.js
           node --test backend/tests/terminal-web.js backend/tests/startup-recovery.js backend/tests/counter-fallback.js backend/tests/web-diagnostics.js backend/tests/transfer-observation.js backend/tests/terminal-presence.js backend/tests/node-runtime.js
           node --test backend/tests/current-route-pricing.js
           node --test backend/tests/domain-migration.js backend/tests/domain-bridge.js backend/tests/receipt-layout.js backend/tests/booking-workspace.js
@@ -74,9 +75,15 @@ jobs:
           npm run test:services
           npm run test:enrollment
           node backend/tests/staff-accounts.js
+          TEST_SCHEMA_DATABASE="$DB_NAME" node backend/tests/cloud-admin.js
           node backend/tests/counter-settings.js
           node backend/tests/live-data.js
           node --experimental-test-module-mocks backend/tests/installer-api.js
+      - name: Check real proxy caching and security headers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y nginx >/dev/null
+          python3 backend/tests/proxy-cache.py
       - name: Check installer-generated credentials and database replication
         run: sudo python3 backend/tests/terminal-replication.py
       - name: Check dependency advisories

@@ -7,6 +7,20 @@
   var retrying = false;
   var timer;
   var observer;
+  function freshPage() {
+    var url = new URL(location.href);
+    url.searchParams.set('_madina_reload', String(Date.now()));
+    location.replace(url.href);
+  }
+  function repairThenRetry() {
+    if (typeof fetch !== 'function') { freshPage(); return; }
+    var done = false;
+    var next = function () { if (done) return; done = true; clearTimeout(deadline); if (!finished && !complete()) freshPage(); };
+    var deadline = setTimeout(next, 2000);
+    // Clear only this site's cached files, never cookies, printer preferences
+    // or other storage. A custom header prevents an embedded image triggering it.
+    fetch('/browser-recovery', {cache:'no-store', credentials:'same-origin', headers:{'X-Madina-Recovery':'startup'}}).then(next,next);
+  }
   function onlineUrl() {
     try {
       var preferences = {};
@@ -55,7 +69,7 @@
       retry = sessionStorage.getItem(key) !== '1';
       if (retry) sessionStorage.setItem(key, '1');
     } catch (_) { retry = false; /* Without storage, offer manual retry rather than loop. */ }
-    if (retry) { location.reload(); return; }
+    if (retry) { repairThenRetry(); return; }
     clearTimeout(timer);
     observer.disconnect();
     window.removeEventListener('error', resourceError, true);
@@ -74,7 +88,7 @@
     button.style.cssText = 'padding:10px 16px;background:#175b47;color:white;border:0;border-radius:6px;font:inherit;cursor:pointer';
     button.onclick = function () {
       try { sessionStorage.removeItem(key); } catch (_) { /* Optional storage. */ }
-      location.reload();
+      repairThenRetry();
     };
     panel.append(heading, message, button);
     var online = onlineUrl();

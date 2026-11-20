@@ -6,7 +6,8 @@ export const pool = mysql.createPool({
   ...config.db,
   connectionLimit: 10,
   waitForConnections: true,
-  queueLimit: 0,
+  // Bound pending work during a database outage without throttling normal PCs.
+  queueLimit: 100,
   charset: "utf8mb4",
   timezone: "+05:00",
   dateStrings: true,

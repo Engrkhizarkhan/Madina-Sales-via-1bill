@@ -5,20 +5,21 @@ import {readFile} from 'node:fs/promises';
 import {onlineCounterUrl} from '../../shared/counter-fallback.mjs';
 const template=await readFile(new URL('../../public/startup.js',import.meta.url),'utf8');
 const source=template.replace('/*__COUNTER_FALLBACK_HELPER__*/',`var onlineCounterUrlForStartup = ${onlineCounterUrl.toString()};`);
-function counter({active=false,retried=false,storageBlocked=false,href="https://staff.madinaexpress.pk/manage",online=true,preferences={}}={}){
+function counter({active=false,retried=false,storageBlocked=false,href="https://staff.madinaexpress.pk/manage",online=true,preferences={},fetcher}={}){
   const timers=new Map(),listeners=new Map(),saved=new Map();
   if(retried)saved.set('madina-startup-retry:/manage','1');
   const node=()=>({children:[],attrs:{},style:{},setAttribute(name,value){this.attrs[name]=value;},hasAttribute(name){return Object.hasOwn(this.attrs,name);},append(...nodes){this.children.push(...nodes);},replaceChildren(...nodes){this.children=nodes;}});
   const root=node();const initial=node();if(!active)initial.setAttribute('data-madina-startup','');root.append(initial);
-  let reloads=0,stops=0,mutate;const navigations=[],images=[];
-  const context={URL,navigator:{onLine:online},Image:class{constructor(){images.push(this);}},localStorage:{getItem:key=>preferences[key]??null},location:{href,pathname:'/manage',reload(){reloads++;},assign(url){navigations.push(url);}},document:{documentElement:node(),getElementById:()=>root,createElement:node},Array,
+  let reloads=0,stops=0,mutate;const navigations=[],images=[],retries=[];
+  const context={URL,navigator:{onLine:online},Image:class{constructor(){images.push(this);}},localStorage:{getItem:key=>preferences[key]??null},location:{href,pathname:'/manage',replace(url){reloads++;retries.push(url);},assign(url){navigations.push(url);}},document:{documentElement:node(),getElementById:()=>root,createElement:node},Array,
     sessionStorage:{getItem:key=>saved.get(key)||null,setItem(key,value){if(storageBlocked)throw Error('blocked');saved.set(key,value);},removeItem:key=>saved.delete(key)},
     window:{stop(){stops++;},addEventListener(name,fn){listeners.set(name,fn);},removeEventListener(name){listeners.delete(name);}},
     MutationObserver:class{constructor(fn){mutate=fn;}observe(){}disconnect(){mutate=()=>{};}},
     setTimeout(fn,delay){timers.set(fn,delay);return fn;},clearTimeout(id){timers.delete(id);},
   };
+  if(fetcher)context.fetch=fetcher;
   vm.runInNewContext(source,context);
-  return {root,saved,listeners,timers,images,navigations,get reloads(){return reloads;},get stops(){return stops;},
+  return {root,saved,listeners,timers,images,navigations,retries,get reloads(){return reloads;},get stops(){return stops;},
     timeout(){const fn=[...timers.keys()][0];assert.ok(fn);timers.delete(fn);fn();},
     render(){root.replaceChildren(node());mutate();},
     error(target){listeners.get('error')?.({target});},
@@ -28,6 +29,18 @@ test('a stalled startup retries once and preserves the current address',()=>{
   const page=counter();page.timeout();assert.equal(page.reloads,1);assert.equal(page.stops,1);
   assert.equal(page.saved.get('madina-startup-retry:/manage'),'1');
   assert.doesNotMatch(source,/location\.(?:href|search)\s*=/);
+  const url=new URL(page.retries[0]);assert.equal(url.origin,'https://staff.madinaexpress.pk');assert.equal(url.pathname,'/manage');assert.match(url.searchParams.get('_madina_reload'),/^\d+$/);
+});
+test('cache recovery retains the departure, service date and silent-print choices',()=>{
+ const page=counter({href:'https://192.168.7.243:8443/manage?trip=my-trip&date=2026-11-20&counterPrint=silent&a4Bridge=1'});page.timeout();
+ const url=new URL(page.retries[0]);assert.equal(url.searchParams.get('trip'),'my-trip');assert.equal(url.searchParams.get('date'),'2026-11-20');assert.equal(url.searchParams.get('counterPrint'),'silent');assert.equal(url.searchParams.get('a4Bridge'),'1');
+});
+test('startup clears cached files only, once, and a late render cancels the retry',async()=>{
+ const calls=[];let finish;
+ const page=counter({fetcher:(...args)=>{calls.push(args);return new Promise(resolve=>{finish=resolve;});}});page.timeout();
+ assert.equal(calls.length,1);assert.equal(calls[0][0],'/browser-recovery');assert.equal(calls[0][1].headers['X-Madina-Recovery'],'startup');assert.equal(calls[0][1].cache,'no-store');assert.equal(page.reloads,0);
+ page.render();finish();await Promise.resolve();assert.equal(page.reloads,0);
+ const slow=counter({fetcher:()=>new Promise(()=>{})});slow.timeout();slow.timeout();assert.equal(slow.reloads,1);
 });
 test('a second failed startup offers an explicit retry without a reload loop',()=>{
   const page=counter({retried:true});page.timeout();assert.equal(page.reloads,0);
