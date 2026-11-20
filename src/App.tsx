@@ -1891,6 +1891,14 @@ function ManagementApp({
       throw error;
     }
   };
+  const restoreTrip = async (id:string) => {
+    try{
+      const result=await api.restoreTrip<TripRecord>(id);
+      dataVersion.current++;window.dispatchEvent(new Event('madina-records-changed'));
+      setTrips(current=>current.map(trip=>trip.id===id?result.trip:trip));
+      showToast('Schedule restored. Existing tickets and reservations retained.');
+    }catch(error){failure(error);throw error;}
+  };
   const deleteTrip = async (id: string) => {
     try {
       await api.deleteTrip(id);
@@ -2191,7 +2199,7 @@ function ManagementApp({
               fleet={fleet}
               routes={routes}
               onSave={async trip => { await saveTrip(trip); }}
-              onDelete={deleteTrip}
+              onDelete={deleteTrip} onRestore={restoreTrip}
               onReport={openReport}
             />
           )}
@@ -3345,25 +3353,26 @@ function CollectPaymentModal({
 }
 
 function TripsView({dataDate,onServiceDate,
-  bookings, trips, fleet, routes, runs, onSell, onSave, onDelete, onReport,
+  bookings, trips, fleet, routes, runs, onSell, onSave, onDelete, onRestore, onReport,
 }: {
   dataDate:string;onServiceDate:(date:string)=>void;
   bookings: Booking[]; trips: TripRecord[]; fleet: BusRecord[]; routes: RouteRecord[];
   runs: TripRun[]; onSell: (id: string, date: string) => void;
-  onSave: (trip: TripRecord) => Promise<void>; onDelete: (id: string) => Promise<void>;
+  onSave: (trip: TripRecord) => Promise<void>; onDelete: (id: string) => Promise<void>; onRestore:(id:string)=>Promise<void>;
   onReport: (kind: ReportKind, tripId: string, run: number, date?: string) => void;
 }) {
   const [editing, setEditing] = useState<TripRecord | "new" | null>(null);
   const [deleting, setDeleting] = useState<TripRecord | null>(null);
+  const [restoring,setRestoring]=useState<string|null>(null),[restoreError,setRestoreError]=useState("");
   const [openTrip, setOpenTrip] = useState<{ id: string; date: string } | null>(null);
   const [serviceDate, setServiceDate] = useState(today);
   const [range,setRange]=useState<DateRange>({from:"",to:""});
   const [filter, setFilter] = useState("This date");
   useEffect(()=>{if(filter==='This date')onServiceDate(serviceDate);},[serviceDate,onServiceDate,filter]);
-  const historyPage=useRecordPage<TripRun>('/admin/run-page',{from:range.from,to:range.to,status:filter==='This date'?'History':filter});
+  const historyPage=useRecordPage<TripRun>('/admin/run-page',{from:range.from,to:range.to,status:['This date','Deleted'].includes(filter)?'History':filter});
   const visible = filter === "This date"
     ? tripsOnDate(trips, serviceDate, runs).map((trip) => ({ trip, date: serviceDate }))
-    : historyPage.rows
+    : filter==="Deleted"?trips.filter(trip=>trip.deleted).map(trip=>({trip,date:serviceDate})):historyPage.rows
       .flatMap((run) => { const trip = trips.find((item) => item.id === run.tripId); return trip ? [{ trip: tripOnDate(trip, run.date, [run]), date: run.date }] : []; });
   const modalTrip = openTrip && trips.find((trip) => trip.id === openTrip.id);
   return (
@@ -3373,9 +3382,10 @@ function TripsView({dataDate,onServiceDate,
       <section className="surface data-surface">
         <div className="data-toolbar">
           {filter==="This date"&&<div className="date-switcher"><label><CalendarDays size={17}/><span>Service date</span><input type="date" value={serviceDate} onChange={(event) => setServiceDate(event.target.value)}/></label></div>}
-          <div className="filter-tabs">{["This date", "Departed", "History"].map((label) => <button type="button" key={label} className={filter === label ? "active" : ""} onClick={() => setFilter(label)}>{label}</button>)}</div>
+          <div className="filter-tabs">{["This date", "Departed", "History", "Deleted"].map((label) => <button type="button" key={label} className={filter === label ? "active" : ""} onClick={() => setFilter(label)}>{label}</button>)}</div>
         </div>
-        {filter!=="This date"&&<><DateRangeFilter value={range} onChange={setRange}/><RecordPager {...historyPage}/></>}
+        {!["This date","Deleted"].includes(filter)&&<><DateRangeFilter value={range} onChange={setRange}/><RecordPager {...historyPage}/></>}
+        {restoreError&&<p role="alert" className="form-error">{restoreError}</p>}
         <div className="trip-cards" role="table" aria-label="Departures">
           <div className="trip-table-head" role="row"><span>Time</span><span>Route</span><span>Bus</span><span>Crew</span><span>Seats</span><span>Status</span><span>Actions</span></div>
           {visible.map(({trip, date}) => {
@@ -3390,12 +3400,13 @@ function TripsView({dataDate,onServiceDate,
               <div><strong>{bus.isTemplate?bus.model:bus.registration}</strong><small>{bus.service} · {bus.seats} seats</small></div>
               <div><strong>{trip.driver}</strong><small>{trip.attendant}</small></div>
               <div><strong>{dataDate===date?`${paid} paid · ${held} held`:'Open passengers for seat totals'}</strong><small>{dataDate===date?`${bus.seats-paid-held} available`:''}</small></div>
-              <div><b className={`plain-status ${trip.status.toLowerCase()}`}>{trip.status}</b>{trip.departedAt && <small>Left {formatPrintTime(trip.departedAt)}</small>}</div>
+              <div><b className={`plain-status ${trip.status.toLowerCase()}`}>{trip.deleted?"Deleted":trip.status}</b>{trip.departedAt && <small>Left {formatPrintTime(trip.departedAt)}</small>}</div>
               <div className="trip-actions">
-                <button className="text-action" type="button" onClick={() => {onServiceDate(date);setOpenTrip({id: trip.id, date});}}>Passengers</button>
+                {trip.deleted&&<button className="text-action" type="button" disabled={Boolean(restoring)} onClick={async()=>{if(!window.confirm(`Restore ${routeLabel(route)} · ${trip.departure}? Existing tickets and reservations will be retained.`))return;setRestoreError('');setRestoring(trip.id);try{await onRestore(trip.id);}catch(error){setRestoreError(error instanceof Error?error.message:'Schedule could not be restored.');}finally{setRestoring(null);}}}>{restoring===trip.id?'Restoring…':'Restore schedule'}</button>}
+                {!trip.deleted&&<><button className="text-action" type="button" onClick={() => {onServiceDate(date);setOpenTrip({id: trip.id, date});}}>Passengers</button>
                 <button className="text-action" type="button" onClick={() => onSell(trip.id, date)}>Ticket page</button>
                 <button className="text-action" type="button" disabled={trip.deleted} onClick={() => setEditing(trips.find((item) => item.id === trip.id) ?? trip)}>Edit</button>
-                <button className="icon-action danger" type="button" disabled={trip.deleted} aria-label={`Delete ${routeLabel(route)} trip`} onClick={() => setDeleting(trip)}><Trash2 size={15}/></button>
+                <button className="icon-action danger" type="button" disabled={trip.deleted} aria-label={`Delete ${routeLabel(route)} trip`} onClick={() => setDeleting(trip)}><Trash2 size={15}/></button></>}
               </div>
             </article>;
           })}

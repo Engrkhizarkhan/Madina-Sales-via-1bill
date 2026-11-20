@@ -291,8 +291,17 @@ try {
   check(afterDelete.trips.find(t=>t.id===createdTripId).deleted&&afterDelete.bookings.some(b=>b.id===booking.id),'deleted schedule is hidden but ticket history is retained');
   check(!(await request('GET','/public/bootstrap')).body.trips.some(t=>t.id===createdTripId),'deleted schedule is removed from public availability');
   check((await request('POST','/bookings',{...bookingRequest,seats:[4]},csrf)).status===409,'deleted schedule rejects new sales');
+  check((await request('POST',`/trips/${createdTripId}/restore`,{},csrf)).status===422,'restoring requires explicit confirmation');
+  const priorRuns=(await request('GET',`/trip-runs?date=${runDate}`)).body.runs;
+  const restored=await request('POST',`/trips/${createdTripId}/restore`,{confirm:true},csrf);
+  check(restored.status===200&&restored.body.trip.active&&!restored.body.trip.deleted&&restored.body.trip.id===createdTripId,'restoring reactivates the original schedule identity');
+  check((await request('GET','/public/bootstrap')).body.trips.some(t=>t.id===createdTripId),'restored schedule returns to public availability');
+  check(JSON.stringify((await request('GET',`/trip-runs?date=${runDate}`)).body.runs)===JSON.stringify(priorRuns),'restoration preserves dated departures, passenger history and closed states');
+  check((await request('POST',`/trips/${createdTripId}/restore`,{confirm:true},csrf)).status===200,'repeated restore does not create a second schedule');
+  check((await request('DELETE',`/trips/${createdTripId}`,undefined,csrf)).status===200,'restored schedules retain normal deletion controls');
   check((await request('DELETE',`/buses/${createdBusId}`,undefined,csrf)).status===200,'bus deletion archives referenced setup without destroying history');
   check((await request('DELETE',`/routes/${createdRouteId}`,undefined,csrf)).status===200,'route deletion archives referenced schedules and retains tickets');
+  check((await request('POST',`/trips/${createdTripId}/restore`,{confirm:true},csrf)).status===409,'restoration cannot reactivate a deleted route or bus');
   const qaUsername = `node-counter-${Date.now()}`;
   const qaPassword = "NodeCounter!2026";
   const staff = await request("POST", "/users", { name: "Automated Node Counter", username: qaUsername, role: "counter", password: qaPassword }, csrf);
@@ -308,6 +317,7 @@ try {
   const counterLogin = await request("POST", "/auth/login", { identity: qaUsername, password: qaPassword });
   check(counterLogin.status === 200, "new staff account authenticates through Node.js");
   const counterCsrf = counterLogin.body.csrfToken;
+  check((await request('POST',`/trips/${createdTripId}/restore`,{confirm:true},counterCsrf)).status===403,'counter staff cannot restore deleted schedules');
   check((await request('PUT',`/trips/${createdTripId}/assignment`,{date,...changedAssignment,expected:originalAssignment},counterCsrf)).status === 409,'counter cannot reassign a deleted schedule');
   const counterBootstrap = await request("GET", "/admin/bootstrap");
   check(counterBootstrap.status === 200 && counterBootstrap.body.users.length === 0, "staff cannot retrieve user administration records");

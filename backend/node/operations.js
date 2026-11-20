@@ -477,6 +477,25 @@ export async function deleteBus(id, user, req) {
   });
 }
 
+export async function restoreTrip(id, user, req) {
+  if(req.body?.confirm!==true)fail('Confirm that this deleted schedule should be restored.',422,'confirmation_required');
+  return transaction(async connection=>{
+    const [before]=await query(connection,'SELECT * FROM trips WHERE id=? FOR UPDATE',[id]);
+    if(!before)fail('Schedule not found.',404,'not_found');
+    if(!before.deleted_at)return (await fetchTrips(false,connection)).find(trip=>trip.id===id);
+    const [route]=await query(connection,'SELECT status,deleted_at FROM routes WHERE id=? FOR SHARE',[before.route_id]);
+    const [bus]=await query(connection,'SELECT is_template,deleted_at,status FROM buses WHERE id=? FOR SHARE',[before.bus_id]);
+    if(!route||route.deleted_at||route.status!=='Active'||!bus||bus.deleted_at||bus.status==='Retired')fail('Activate the route and bus before restoring this schedule.',409,'setup_unavailable');
+    const days=parseJson(before.service_days,[]);
+    const conflict=(await fetchTrips(false,connection)).some(trip=>trip.id!==id&&!trip.deleted&&trip.active&&trip.departure===trimTime(before.departure)&&trip.days.some(day=>days.includes(day))&&((!bus.is_template&&trip.busId===before.bus_id)||(before.driver&&trip.driver===before.driver)||(before.attendant&&trip.attendant===before.attendant)));
+    if(conflict)fail('This bus or crew already has a schedule at the same time. Resolve the conflict before restoring.',409,'roster_conflict');
+    await query(connection,'UPDATE trips SET active=1,deleted_at=NULL WHERE id=?',[id]);
+    const after=(await fetchTrips(false,connection)).find(trip=>trip.id===id);
+    await audit('trip.restored','trip',id,before,after,user.id,req,connection);
+    return after;
+  });
+}
+
 export async function deleteTrip(id, user, req) {
   return transaction(async connection=>{
     const [before]=await query(connection,'SELECT * FROM trips WHERE id=? AND deleted_at IS NULL FOR UPDATE',[id]);

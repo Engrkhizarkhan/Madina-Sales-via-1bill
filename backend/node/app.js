@@ -32,7 +32,7 @@ import {
 } from "./repository.js";
 import {
   audit, cancelBooking, confirmReservation, confirmReservations, cancelReservations, createBooking, createExpense,
-  createStaffUser, deleteBus, deleteCrew, deleteRoute, deleteTrip, refundBooking, saveBus, saveCrew, saveRoute, saveTrip,
+  createStaffUser, deleteBus, deleteCrew, deleteRoute, deleteTrip, restoreTrip, refundBooking, saveBus, saveCrew, saveRoute, saveTrip,
   transitionTrip, updateBooking, assignDeparture, saveCounterDeparture, updateStaffUser, removeStaffUser,
 } from "./operations.js";
 
@@ -476,6 +476,7 @@ app.delete("/buses/:id", asyncRoute(async (req, res) => { requireRole(req.user, 
 app.post("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await saveTrip(req.params.id, req.body, req.user, req) }); }));
 app.put("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); res.json({ trip: await saveTrip(req.params.id, req.body, req.user, req) }); }));
 app.delete("/trips/:id", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "dispatcher"]); await deleteTrip(req.params.id, req.user, req); res.json({ ok: true }); }));
+app.post('/trips/:id/restore',asyncRoute(async(req,res)=>{requireRole(req.user,['admin','manager','dispatcher']);res.json({trip:await restoreTrip(req.params.id,req.user,req)});}));
 app.post("/trips/:id/transition", asyncRoute(async (req, res) => { requireRole(req.user, ["admin", "manager", "counter", "dispatcher"]); res.json({ trip: await transitionTrip(req.params.id, req.body, req.user, req) }); }));
 app.put('/trips/:id/assignment', asyncRoute(async (req,res) => {
   requireRole(req.user,['admin','manager','counter','dispatcher']);

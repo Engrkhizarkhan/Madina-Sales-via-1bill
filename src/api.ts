@@ -233,6 +233,7 @@ export const api = {
       method: isNew ? "POST" : "PUT",
       body: JSON.stringify(trip),
     }),
+  restoreTrip:<T>(id:string)=>request<{trip:T}>(`/trips/${encodeURIComponent(id)}/restore`,{method:'POST',body:JSON.stringify({confirm:true})}),
   deleteTrip: (id: string) =>
     request<{ ok: boolean }>(`/trips/${encodeURIComponent(id)}`, {
       method: "DELETE",
