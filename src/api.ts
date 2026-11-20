@@ -1,3 +1,4 @@
+import type {PrintSettingsPayload,TerminalPrintPolicy} from './print-preferences';
 import type { ReceiptLayout } from "../shared/receipt-layout.mjs";
 import type { ReleaseInfo } from "./release";
 const API_BASE = (
@@ -112,6 +113,10 @@ function rememberCsrf<T extends { csrfToken?: string }>(payload: T): T {
 }
 
 export const api = {
+  printingSettings:()=>request<PrintSettingsPayload>("/settings/printing"),
+  savePrintingSettings:(terminals:NonNullable<PrintSettingsPayload["terminals"]>)=>request<PrintSettingsPayload>("/settings/printing",{method:"PUT",body:JSON.stringify({terminals})}),
+  recordPage: <T>(path:string,filters:Record<string,string|number|undefined>,signal?:AbortSignal) => request<import("./record-pages").PageResult<T>>(path+"?"+new URLSearchParams(Object.entries(filters).filter(([,value])=>value!==undefined).map(([key,value])=>[key,String(value)])),{signal}),
+  dashboardSummary: (filters:{from:string;to:string})=>request<{groups:{status:string;source:string;tickets:number;seats:number}[]}>("/admin/dashboard-summary?"+new URLSearchParams(filters)),
   createPrintJob: <T>(body:unknown,signal:AbortSignal)=>request<T>('/printing/jobs',{method:'POST',body:JSON.stringify(body),signal}),
   claimPrintJob: <T>(id:string,key:string)=>request<T>('/printing/jobs/'+id,{headers:{'X-Print-Token':key},credentials:'omit'}),
   counterLauncherUrl: `${API_BASE}/terminal/counter-launcher`,
@@ -135,8 +140,8 @@ export const api = {
   publicBootstrap: <T>() => request<T>("/public/bootstrap"),
   publicTripRuns: <T>(date: string) =>
     request<{ terminalAvailable?: boolean; runs: T[]; occupancy: unknown[]; fleet: unknown[]; trips: unknown[]; routes: unknown[] }>(`/public/trip-runs?date=${encodeURIComponent(date)}`),
-  adminBootstrap: <T>() => request<T>("/admin/bootstrap"),
-  adminChanges: <T>(cursor:string) => request<T>(`/admin/changes?cursor=${encodeURIComponent(cursor)}`),
+  adminBootstrap: <T>(date?:string) => request<T>("/admin/bootstrap"+(date?"?date="+encodeURIComponent(date):"")),
+  adminChanges: <T>(cursor:string,date?:string) => request<T>(`/admin/changes?cursor=${encodeURIComponent(cursor)}${date?"&date="+encodeURIComponent(date):""}`),
   me: <T>() =>
     request<T & { csrfToken?: string }>("/auth/me").then(rememberCsrf),
   login: <T>(identity: string, password: string, otp = "") =>
@@ -173,35 +178,35 @@ export const api = {
       body: JSON.stringify(booking),
     }),
   createBooking: <T>(booking: unknown) =>
-    request<{ booking: T; bookings: T[] }>("/bookings", {
+    request<{ booking: T; bookings: T[]; printing?:TerminalPrintPolicy }>("/bookings", {
       method: "POST",
       body: JSON.stringify(booking),
     }),
   confirmReservations: <T>(anchor: string, ids: string[], paymentMethod: string, paymentReference: string, details?: unknown) =>
-    request<{bookings:T[]}>(`/bookings/${encodeURIComponent(anchor)}/reservations/confirm`, {
+    request<{bookings:T[];printing?:TerminalPrintPolicy}>(`/bookings/${encodeURIComponent(anchor)}/reservations/confirm`, {
       method:'POST',body:JSON.stringify({...details as object,ids,paymentMethod,paymentReference}),
     }),
   cancelReservations: <T>(anchor: string, ids: string[]) =>
-    request<{bookings:T[]}>(`/bookings/${encodeURIComponent(anchor)}/reservations/cancel`, {
+    request<{bookings:T[];printing?:TerminalPrintPolicy}>(`/bookings/${encodeURIComponent(anchor)}/reservations/cancel`, {
       method:'POST',body:JSON.stringify({ids}),
     }),
   updateBooking: <T>(id: string, booking: unknown) =>
-    request<{ booking: T }>(`/bookings/${encodeURIComponent(id)}`, {
+    request<{ booking: T; printing?:TerminalPrintPolicy }>(`/bookings/${encodeURIComponent(id)}`, {
       method: "PUT",
       body: JSON.stringify(booking),
     }),
   cancelBooking: <T>(id: string) =>
-    request<{ booking: T }>(`/bookings/${encodeURIComponent(id)}/cancel`, {
+    request<{ booking: T; printing?:TerminalPrintPolicy }>(`/bookings/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
       body: "{}",
     }),
   confirmReservation: <T>(id: string, paymentMethod: string, paymentReference: string, details: unknown = {}) =>
-    request<{ booking: T }>(`/bookings/${encodeURIComponent(id)}/confirm`, {
+    request<{ booking: T; printing?:TerminalPrintPolicy }>(`/bookings/${encodeURIComponent(id)}/confirm`, {
       method: "POST",
       body: JSON.stringify({ ...details as object, paymentMethod, paymentReference }),
     }),
   refundBooking: <T>(id: string, refund: unknown) =>
-    request<{ booking: T }>(`/bookings/${encodeURIComponent(id)}/refunds`, {
+    request<{ booking: T; printing?:TerminalPrintPolicy }>(`/bookings/${encodeURIComponent(id)}/refunds`, {
       method: "POST",
       body: JSON.stringify(refund),
     }),

@@ -32,14 +32,14 @@ async function catalog(connection,user,runs) {
 }
 
 const cursorFor=state=>`${state.epoch}:${state.revision}`;
-export async function adminSnapshot(user) {
+export async function adminSnapshot(user,serviceDate=null) {
   return snapshot(async(connection,state)=>{
-    const runs=await fetchTripRuns(null,connection);
-    return {liveCursor:cursorFor(state),bookings:await fetchBookings(connection),runs,...await catalog(connection,user,runs)};
+    const runs=await fetchTripRuns(serviceDate,connection);
+    return {liveCursor:cursorFor(state),scopeDate:serviceDate,bookings:await fetchBookings(connection,null,serviceDate),runs,...await catalog(connection,user,runs)};
   });
 }
 
-export async function adminChanges(cursor,user) {
+export async function adminChanges(cursor,user,serviceDate=null) {
   if (typeof cursor!=='string'||!/^([a-f0-9]{32}):([0-9]{1,18})$/.test(cursor)) fail('Reload the page to reconnect live data.',422,'invalid_cursor');
   const [epoch,revision]=cursor.split(':');
   return snapshot(async(connection,state)=>{
@@ -53,7 +53,7 @@ export async function adminChanges(cursor,user) {
     if(changes.length>500||changes.some(change=>change.entity_type==='reset'))return {reset:true,liveCursor};
     const bookingIds=changes.filter(change=>change.entity_type==='booking').map(change=>change.entity_id);
     const runIds=changes.filter(change=>change.entity_type==='run').map(change=>change.entity_id);
-    const bookings=await fetchBookings(connection,bookingIds),runs=await fetchTripRuns(null,connection,runIds);
+    const bookings=(await fetchBookings(connection,bookingIds)).filter(row=>!serviceDate||row.date===serviceDate),runs=(await fetchTripRuns(null,connection,runIds)).filter(row=>!serviceDate||row.date===serviceDate);
     return {changed:true,liveCursor,bookings,runs,
       removedBookingIds:bookingIds.filter(id=>!bookings.some(booking=>booking.id===id)),
       removedRunIds:runIds.filter(id=>!runs.some(run=>run.id===id)),

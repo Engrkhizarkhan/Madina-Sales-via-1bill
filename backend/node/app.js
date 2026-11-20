@@ -1,3 +1,6 @@
+import {salesReport,settlementPage} from './sales-report.js';
+import {printingSettings,savePrintingSettings} from './terminal-printing.js';
+import {scopeDate,bookingPage,runPage,expensePage,dashboardSummary} from './admin-records.js';
 import {terminalPresenceRouter,terminalPresence} from '../terminal/presence.js';
 import {printJobClaimRouter,createPrintJob} from './print-jobs.js';
 import {publicBus,publicRoute,publicTrip} from "./public-data.js";
@@ -334,14 +337,18 @@ app.get("/admin/bootstrap", asyncRoute(async (req, res) => {
       user: publicUser(req.user), paymentMode: config.paymentMode });
   }
   res.json({
-    ...await adminSnapshot(req.user),
+    ...await adminSnapshot(req.user,req.query.date===undefined?null:scopeDate(req.query.date)),
     user: publicUser(req.user), release:releaseInfo, paymentMode: config.paymentMode, readOnly: Boolean(req.cloudReadOnly),
   });
 }));
 
 app.get('/admin/changes',asyncRoute(async(req,res)=>{
-  res.json({...await adminChanges(req.query.cursor,req.user),release:releaseInfo,readOnly:Boolean(req.cloudReadOnly)});
+  res.json({...await adminChanges(req.query.cursor,req.user,req.query.date===undefined?null:scopeDate(req.query.date)),release:releaseInfo,readOnly:Boolean(req.cloudReadOnly)});
 }));
+
+app.get('/admin/booking-page',asyncRoute(async(req,res)=>res.json(await bookingPage(req.query))));
+app.get('/admin/run-page',asyncRoute(async(req,res)=>res.json(await runPage(req.query))));
+app.get('/admin/dashboard-summary',asyncRoute(async(req,res)=>res.json(await dashboardSummary(req.query))));
 
 const financePinKey = "finance_pin_hash";
 async function financePinHash(executor, lock = false) {
@@ -428,8 +435,9 @@ app.put("/finance/pin", asyncRoute(async (req, res) => {
 
 app.post("/bookings", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter"]);
+  const printing=(await printingSettings(req)).own;
   const bookings = await createBooking(req.body, req.user, false, req);
-  res.status(201).json({ booking: bookings[0], bookings });
+  res.status(201).json({ booking: bookings[0], bookings,printing });
 }));
 app.put("/bookings/:id", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter"]);
@@ -441,12 +449,14 @@ app.post("/bookings/:id/cancel", asyncRoute(async (req, res) => {
 }));
 app.post("/bookings/:id/confirm", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter"]);
-  res.json({ booking: await confirmReservation(req.params.id, req.body, req.user, req) });
+  const printing=(await printingSettings(req)).own;
+  res.json({ booking: await confirmReservation(req.params.id, req.body, req.user, req),printing });
 }));
 app.post("/bookings/:id/reservations/confirm", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter"]);
+  const printing=(await printingSettings(req)).own;
   const bookings = await confirmReservations(req.params.id, req.body.ids, req.body, req.user, req);
-  res.json({bookings});
+  res.json({bookings,printing});
 }));
 app.post("/bookings/:id/reservations/cancel", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin", "manager", "counter"]);
@@ -488,7 +498,7 @@ app.delete("/crew/:id", asyncRoute(async (req, res) => { requireRole(req.user, [
 app.get("/expenses", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
   if (!financeUnlocked(req)) fail("Enter the finance PIN to view finance.", 403, "finance_locked");
-  res.json({ expenses: await fetchExpenses() });
+  res.json(req.query.page===undefined&&req.query.size===undefined?{expenses:await fetchExpenses()}:await expensePage(req.query));
 }));
 app.post("/expenses", asyncRoute(async (req, res) => {
   requireRole(req.user, ["admin"]);
@@ -524,6 +534,11 @@ app.post("/settings/clear-operational-data", asyncRoute(async (req,res) => {
   try { res.json(await clearOperationalData(req.user,req)); }
   finally { maintenance.endOwnerMaintenance(); }
 }));
+app.get('/settings/printing',asyncRoute(async(req,res)=>res.json(await printingSettings(req))));
+app.put('/settings/printing',asyncRoute(async(req,res)=>res.json(await savePrintingSettings(req))));
+app.get('/finance/sales-report',asyncRoute(async(req,res)=>{requireRole(req.user,['admin','manager','finance']);if(!financeUnlocked(req))fail('Enter the finance PIN to view finance.',403,'finance_locked');res.json(await salesReport(req.query));}));
+app.get('/finance/settlements',asyncRoute(async(req,res)=>{requireRole(req.user,['admin','manager','finance']);if(!financeUnlocked(req))fail('Enter the finance PIN to view finance.',403,'finance_locked');res.json(await settlementPage(req.query));}));
+
 app.get("/settings/receipt", asyncRoute(async (_req,res) => res.json({layout:await getReceiptLayout()})));
 app.put("/settings/receipt", asyncRoute(async (req,res) => {
   requireOwner(req.user);

@@ -46,6 +46,7 @@ jobs:
           npm run server:check
           npm run test:terminal
           npm run test:layout
+          node --test backend/tests/collection-print.js
           node --test backend/tests/terminal-web.js backend/tests/startup-recovery.js backend/tests/counter-fallback.js backend/tests/web-diagnostics.js backend/tests/transfer-observation.js backend/tests/terminal-presence.js backend/tests/node-runtime.js
           node --test backend/tests/current-route-pricing.js
           node --test backend/tests/domain-migration.js backend/tests/domain-bridge.js backend/tests/receipt-layout.js backend/tests/booking-workspace.js
@@ -67,6 +68,7 @@ jobs:
           done
           npm run test:api
           npm run test:counter
+          node backend/tests/operational-reports.js
           node backend/tests/customer-reservations.js
           npm run test:services
           npm run test:enrollment

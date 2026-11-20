@@ -32,6 +32,7 @@ const password = 'Terminal-QA!-' + suffix;
 let passed = 0;
 const check = (value, label) => { assert.ok(value, label); passed++; console.log('PASS', label); };
 let ca;
+const [[previousPrintSetting]]=await pool.execute("SELECT CAST(setting_value AS CHAR) setting_value FROM settings WHERE setting_key='terminal_print_preferences'");
 const request = (path, { method = 'GET', body, cookie = '', csrf = '', device, extraHeaders = {}, viaProxy=false } = {}) => new Promise((resolve, reject) => {
   const data = body ? JSON.stringify(body) : '';
   const req = https.request({ host: '127.0.0.1', servername: 'localhost', port: (viaProxy?proxy:server).address().port,
@@ -132,8 +133,16 @@ try {
   await pool.execute("INSERT INTO buses(id,registration,service,seats,model,model_year,status,next_service) VALUES (?,?,'Standard Plus',49,'Seller test',2026,'Ready','Not scheduled')",[saleFixture.bus,'SELLER-'+suffix]);
   await pool.execute("INSERT INTO trips(id,route_id,bus_id,departure,arrival,driver,attendant,platform,status,service_days,active) VALUES (?,?,?,'23:00','23:59','','','','Scheduled',?,1)",[saleFixture.trip,saleFixture.route,saleFixture.bus,JSON.stringify(['Mon','Tue','Wed','Thu','Fri','Sat','Sun'])]);
   const staff={cookie:login.cookie,csrf:login.payload.csrfToken,device};
+  check((await request('/settings/printing',staff)).payload.terminals===undefined,'staff cannot view settings for other PCs');
+  check((await request('/settings/printing',{...staff,method:'PUT',body:{terminals:[]}})).status===403,'staff cannot edit centrally managed printing');
+  const printPrefs=[{slot:2,managed:true,autoPrint:true,preview:false}];
+  check((await request('/settings/printing',{...admin,method:'PUT',body:{terminals:printPrefs}})).status===200,'owner saves independent print switches for PC 2');
+  const ownPrinting=(await request('/settings/printing',{...staff,extraHeaders:{'X-Madina-Device':'terminal-99'}})).payload.own;
+  check(ownPrinting.slot===2&&ownPrinting.managed&&ownPrinting.autoPrint&&!ownPrinting.preview,'PC policy follows the real enrolled certificate, ignoring forged headers');
+  check((await request('/settings/printing',{...admin,method:'PUT',body:{terminals:[{...printPrefs[0],slot:99}]}})).status===422,'print settings cannot target a nonexistent PC');
   const draft={tripId:saleFixture.trip,date,passenger:'Seller tracking passenger',phone:'03001234567',cnic:'17301-1234567-1',gender:'Male',paymentMethod:'Cash',seats:[1],issuedBy:'Forged name',soldByUserId:userIds[0],soldTerminalSlot:99,soldFrom:'Terminal 99'};
   const sold=await request('/bookings',{...staff,method:'POST',body:draft,extraHeaders:{'X-Madina-Device':'terminal-99'}});
+  check(sold.payload.printing?.slot===2&&sold.payload.printing.autoPrint&&!sold.payload.printing.preview,'sale returns the current centrally managed print decision');
   check(sold.status===201&&sold.payload.booking.issuedBy==='Counter Agent Full Name'&&sold.payload.booking.soldByUserId===userIds[1]&&sold.payload.booking.soldTerminalSlot===2&&sold.payload.booking.soldFrom==='Terminal 2','sale saves the authenticated full name and real TLS terminal, ignoring forged fields');
   const held=await request('/bookings',{...admin,method:'POST',body:{...draft,seats:[2,3],bookingStatus:'Reserved'}});
   check(held.status===201&&held.payload.bookings.every(b=>b.soldByUserId===null&&b.soldTerminalSlot===null&&b.soldFrom===null),'reservation creator is not recorded as the seller');
@@ -210,6 +219,8 @@ try {
   check((await request('/terminal/devices/99/package',{...admin,method:'POST',body:{currentPassword:password}})).status===404,'PC must be added before setup can be generated');
   console.log(`Passed ${passed} terminal enrollment checks.`);
 } finally {
+  if(previousPrintSetting)await pool.execute("UPDATE settings SET setting_value=? WHERE setting_key='terminal_print_preferences'",[previousPrintSetting.setting_value]);
+  else await pool.execute("DELETE FROM settings WHERE setting_key='terminal_print_preferences'");
   await pool.execute("DELETE FROM terminal_presence WHERE slot=2").catch(()=>{});
   if(proxy)await new Promise(resolve=>proxy.close(resolve));
   if(relay)await new Promise(resolve=>relay.close(resolve));
