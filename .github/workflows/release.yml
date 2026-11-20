@@ -60,7 +60,9 @@ jobs:
           python3 backend/tests/backup-retention.py
       - name: Start isolated MySQL and test booking API
         run: |
-          sudo systemctl start mysql
+          # Match the production database timezone, including Pakistan's midnight boundary.
+          sudo install -m 0644 deploy/mysql.cnf /etc/mysql/mysql.conf.d/madina.cnf
+          sudo systemctl restart mysql
           npm run db:install
           node backend/node/server.js > /tmp/madina-api.log 2>&1 &
           for attempt in $(seq 1 30); do
