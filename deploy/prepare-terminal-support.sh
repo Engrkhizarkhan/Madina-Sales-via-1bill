@@ -61,7 +61,7 @@ certificate=pathlib.Path('/etc/letsencrypt/live/madinaexpress.pk')
 if not all((certificate/name).is_file() for name in ['fullchain.pem','privkey.pem']):
     raise RuntimeError('Provision the canonical production HTTPS certificate before switching proxy hosts.')
 for hostname in ['madinaexpress.pk','www.madinaexpress.pk','staff.madinaexpress.pk','terminal.madinaexpress.pk']:
-    subprocess.run(['openssl','x509','-in',str(certificate/'fullchain.pem'),'-noout','-checkhost',hostname],check=True,stdout=subprocess.DEVNULL)
+    subprocess.run(['openssl','verify','-verify_hostname',hostname,'-untrusted',str(certificate/'fullchain.pem'),str(certificate/'fullchain.pem')],check=True,stdout=subprocess.DEVNULL)
 try:
     updated=re.sub(r'(?m)^ssl_certificate\s+[^;]+;', 'ssl_certificate '+str(certificate/'fullchain.pem')+';',old_common.decode())
     updated=re.sub(r'(?m)^ssl_certificate_key\s+[^;]+;', 'ssl_certificate_key '+str(certificate/'privkey.pem')+';',updated)
