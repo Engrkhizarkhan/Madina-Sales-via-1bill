@@ -5,6 +5,13 @@ export const receiptDefaults = Object.freeze({
   tokenNote: "یہ ٹوکن کنڈکٹر کے حوالے کریں۔", font: "Arial", fontSize: 11, headingSize: 23,
   seatSize: 23, urduSize: 11, paddingX: 3, paddingY: 3, lineHeight: 1.3, qrSize: 26,
   showQr: true, showWebsite: true, websiteLabel: "Book online:", websiteSize: 12, websiteBold: true, websiteAlign: "center",
+  websiteFont: "Arial", websiteBox: false, websiteInverted: false, websitePadding: 1, websiteBorderWidth: 1,
+  voucherFont: "Arial", voucherFontSize: 9.5, voucherHeadingSize: 16, voucherPaddingX: 2, voucherPaddingY: 1,
+  voucherLineHeight: 1.1, voucherRowPadding: 0.5, voucherShowNetCollected: true, voucherShowContact: false, voucherShowCrew: false,
 });
 export const receiptFonts = ["Arial", "Tahoma", "Georgia", "Times New Roman"];
-export const receiptNumberBounds = {fontSize:[9,16],headingSize:[16,30],seatSize:[19,38],urduSize:[9,16],paddingX:[0,6],paddingY:[0,8],lineHeight:[1.1,1.7],qrSize:[18,28],websiteSize:[9,22]};
+export const receiptNumberBounds = {fontSize:0,headingSize:0,seatSize:0,urduSize:0,paddingX:0,paddingY:0,lineHeight:0,qrSize:0,websiteSize:0,websitePadding:0,websiteBorderWidth:0};
+export const voucherNumberFields = {voucherFontSize:'Body font (px)',voucherHeadingSize:'Heading font (px)',voucherPaddingX:'Side padding (mm)',voucherPaddingY:'Top / bottom padding (mm)',voucherLineHeight:'Line spacing',voucherRowPadding:'Row padding (px)'};
+export function voucherStyle(layout){
+ return {'--voucher-font':layout.voucherFont,'--voucher-font-size':layout.voucherFontSize+'px','--voucher-heading-size':layout.voucherHeadingSize+'px','--voucher-padding-x':layout.voucherPaddingX+'mm','--voucher-padding-y':layout.voucherPaddingY+'mm','--voucher-line-height':String(layout.voucherLineHeight),'--voucher-row-padding':layout.voucherRowPadding+'px'};
+}

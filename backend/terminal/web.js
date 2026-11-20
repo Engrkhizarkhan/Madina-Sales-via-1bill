@@ -3,7 +3,7 @@ import https from "node:https";
 import { readFile } from "node:fs/promises";
 import { resolve, join, basename } from "node:path";
 import { config } from "../node/config.js";
-import {staffOrigin,legacyStaffOrigin} from '../../shared/domains.mjs';
+import {staffOrigin,terminalOrigin} from '../../shared/domains.mjs';
 import {transferMonitor} from './web-transfers.js';
 
 export function createTerminalWeb(app, { directory = resolve("dist"), assets = resolve(process.env.TERMINAL_ASSET_DIRECTORY || "dist/assets") } = {}) {
@@ -11,7 +11,7 @@ export function createTerminalWeb(app, { directory = resolve("dist"), assets = r
   web.disable("x-powered-by");
   web.use((_req, res, next) => {
     res.set({
-      "Content-Security-Policy": `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${legacyStaffOrigin}; font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
+      "Content-Security-Policy": `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: ${terminalOrigin}; font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'`,
       "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer",
       "Cache-Control": "no-store",
     });
@@ -24,7 +24,7 @@ export function createTerminalWeb(app, { directory = resolve("dist"), assets = r
     try {
       const template = await readFile(join(directory, "Madina-Express-Counter.cmd"), "utf8");
       res.type("text/plain").attachment("Madina-Express-Counter.cmd")
-        .send(template.replaceAll(staffOrigin,config.terminal.localOrigin).replaceAll(legacyStaffOrigin,config.terminal.localOrigin));
+        .send(template.replaceAll(staffOrigin,config.terminal.localOrigin).replaceAll(terminalOrigin,config.terminal.localOrigin));
     } catch (error) { next(error); }
   });
   const assetOptions = { dotfiles: "deny", index: false, setHeaders(res, file) {

@@ -11,7 +11,7 @@ function Get-MadinaReportLaunch([string]$Value, $Configuration) {
     if ($query.Count -ne 3 -or $query.GetValues('job').Count -ne 1 -or $query.GetValues('key').Count -ne 1 -or $query.GetValues('origin').Count -ne 1) { throw 'Invalid report request.' }
     $id = $query['job']; $key = $query['key']; $origin = $query['origin']
     if ($id -cnotmatch '^[a-f0-9]{64}$' -or $key -cnotmatch '^[a-f0-9]{64}$') { throw 'Invalid report identifier.' }
-    if (@($Configuration.origin,'https://staff.madinaexpress.pk','https://staff.madinaexpress.duckdns.org') -cnotcontains $origin) { throw 'This report server is not approved.' }
+    if (@($Configuration.origin,'https://staff.madinaexpress.pk','https://terminal.madinaexpress.pk') -cnotcontains $origin) { throw 'This report server is not approved.' }
     $browser = [string]$Configuration.browser
     $kind = [IO.Path]::GetFileName($browser).ToLowerInvariant()
     if ($kind -notin @('chrome.exe','msedge.exe','firefox.exe') -or -not (Test-Path -LiteralPath $browser)) { throw 'Configure Counter and Reports shortcuts with your existing browser first.' }

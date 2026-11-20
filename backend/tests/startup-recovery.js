@@ -55,10 +55,10 @@ test('disabled browser storage cannot cause repeated automatic reloads',()=>{
 
 test('a second stalled LAN startup uses only the approved online counter and retains printer preferences',()=>{
   const page=counter({retried:true,href:'https://192.168.7.243:8443/manage?counterPrint=silent&a4Bridge=1&token=secret',preferences:{'madina.autoPrintTickets':'true','madina.ticketPaper':'thermal'}});
-  page.timeout();assert.equal(page.images.length,1);assert.match(page.images[0].src,/^https:\/\/staff\.madinaexpress\.duckdns\.org\/favicon.svg/);
+  page.timeout();assert.equal(page.images.length,1);assert.match(page.images[0].src,/^https:\/\/terminal\.madinaexpress\.pk\/favicon.svg/);
   assert.equal(page.images[0].referrerPolicy,'no-referrer');page.images[0].onload();
   assert.equal(page.navigations.length,1);const target=new URL(page.navigations[0]);
-  assert.equal(target.origin,'https://staff.madinaexpress.duckdns.org');assert.equal(target.pathname,'/login');
+  assert.equal(target.origin,'https://terminal.madinaexpress.pk');assert.equal(target.pathname,'/login');
   assert.equal(target.searchParams.get('counterPrint'),'silent');assert.equal(target.searchParams.get('a4Bridge'),'1');
   assert.equal(target.searchParams.get('fallbackAutoPrint'),'1');assert.equal(target.searchParams.get('fallbackPaper'),'thermal');
   assert.equal(target.searchParams.has('token'),false);assert.equal(page.reloads,0);

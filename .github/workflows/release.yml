@@ -46,7 +46,7 @@ jobs:
           npm run server:check
           npm run test:terminal
           npm run test:layout
-          node --test backend/tests/terminal-web.js backend/tests/startup-recovery.js backend/tests/counter-fallback.js backend/tests/web-diagnostics.js backend/tests/transfer-observation.js
+          node --test backend/tests/terminal-web.js backend/tests/startup-recovery.js backend/tests/counter-fallback.js backend/tests/web-diagnostics.js backend/tests/transfer-observation.js backend/tests/terminal-presence.js
           node --test backend/tests/current-route-pricing.js
           node --test backend/tests/domain-migration.js backend/tests/domain-bridge.js backend/tests/receipt-layout.js backend/tests/booking-workspace.js
           node --test backend/tests/policies-access.js backend/tests/updater.js backend/tests/owner-command.js backend/tests/cloud-authority.js backend/tests/live-records.js backend/tests/installer-downloads.js backend/tests/certificate-clock-repair.js backend/tests/tunnel-recovery.js backend/tests/print-jobs.js
@@ -106,7 +106,7 @@ jobs:
           node --test backend/tests/certificate-clock-repair.js
       - name: Real local HTTPS transfers and protected diagnostics on Windows
         shell: powershell
-        run: node --test backend/tests/terminal-web.js backend/tests/web-diagnostics.js backend/tests/transfer-observation.js
+        run: node --test backend/tests/terminal-web.js backend/tests/web-diagnostics.js backend/tests/transfer-observation.js backend/tests/terminal-presence.js
   publish:
     needs: [application, windows]
     runs-on: ubuntu-24.04

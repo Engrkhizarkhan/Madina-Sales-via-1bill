@@ -3,9 +3,10 @@ import { sites } from '@openai/sites-vite-plugin'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import {startCounterPresence} from './shared/terminal-presence.mjs'
 import {onlineCounterUrl} from './shared/counter-fallback.mjs'
 
-const startupBundle=()=>readFileSync(resolve('public/startup.js'),'utf8').replace('/*__COUNTER_FALLBACK_HELPER__*/',`var onlineCounterUrlForStartup = ${onlineCounterUrl.toString()};`)
+const startupBundle=()=>readFileSync(resolve('public/startup.js'),'utf8').replace('/*__COUNTER_FALLBACK_HELPER__*/',`var onlineCounterUrlForStartup = ${onlineCounterUrl.toString()};`).replace('/*__COUNTER_PRESENCE__*/',`(${startCounterPresence.toString()})(${JSON.stringify(JSON.parse(readFileSync('build-info.json','utf8')).version)});`)
 const workerEntry = ():Plugin => ({
   name: 'madina-express-worker-entry',
   configureServer(server) {

@@ -20,7 +20,7 @@ $origin = [regex]::Match($environment, '(?m)^TERMINAL_LOCAL_ORIGIN=(.+)$').Group
 $ip = ([Uri]$origin).Host
 Write-Host "Installed main server: $origin"
 $cloud = $null
-foreach ($hostOrigin in @('https://madinaexpress.pk','https://madinaexpress.duckdns.org')) {
+foreach ($hostOrigin in @('https://madinaexpress.pk','https://madinaexpress.pk')) {
     try { $cloud = Invoke-RestMethod ($hostOrigin + '/api/health') -TimeoutSec 20; break } catch { }
 }
 if ($null -eq $cloud) { throw 'The cloud clock could not be reached on either approved domain.' }

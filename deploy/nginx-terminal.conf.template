@@ -2,20 +2,19 @@
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
-    server_name madinaexpress.pk www.madinaexpress.pk staff.madinaexpress.pk madinaexpress.duckdns.org staff.madinaexpress.duckdns.org;
+    server_name madinaexpress.pk www.madinaexpress.pk staff.madinaexpress.pk terminal.madinaexpress.pk;
     server_tokens off;
     location ^~ /.well-known/acme-challenge/ { root /var/www/certbot; default_type text/plain; }
     location / {
         if ($host = staff.madinaexpress.pk) { return 301 https://staff.madinaexpress.pk$request_uri; }
-        if ($host = staff.madinaexpress.duckdns.org) { return 301 https://staff.madinaexpress.duckdns.org$request_uri; }
-        if ($host = madinaexpress.duckdns.org) { return 301 https://madinaexpress.duckdns.org$request_uri; }
+        if ($host = terminal.madinaexpress.pk) { return 301 https://terminal.madinaexpress.pk$request_uri; }
         return 301 https://madinaexpress.pk$request_uri;
     }
 }
 server {
     listen 443 ssl http2 default_server;
     listen [::]:443 ssl http2 default_server;
-    server_name madinaexpress.pk www.madinaexpress.pk madinaexpress.duckdns.org;
+    server_name madinaexpress.pk www.madinaexpress.pk;
     include /etc/nginx/snippets/madina-common.conf;
     location ~ ^/api/(health|terminal-sync/(register|bootstrap|activate|status|abort|public-status|update-channel|update-status|update-control))$ {
         include /etc/nginx/snippets/madina-api.conf;
@@ -68,7 +67,7 @@ server {
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
-    server_name staff.madinaexpress.pk staff.madinaexpress.duckdns.org;
+    server_name staff.madinaexpress.pk terminal.madinaexpress.pk;
     include /etc/nginx/snippets/madina-common.conf;
     ssl_verify_client optional_no_ca;
     location = / { return 302 /login; }

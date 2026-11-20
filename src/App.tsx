@@ -2,7 +2,7 @@ import {sameBookingCustomer,departureSeatCounts,fareQuantities,allocateFareTotal
 import {ReportPrintPage} from './report-print-page';
 import {openA4Report,reportBridgeConfigured} from './report-transfer';
 import {mergeLiveRecords} from "../shared/live-records.mjs";
-import { receiptDefaults, receiptFonts, receiptNumberBounds, type ReceiptLayout } from "../shared/receipt-layout.mjs";
+import { receiptDefaults, receiptFonts, receiptNumberBounds, voucherNumberFields, voucherStyle, type ReceiptLayout } from "../shared/receipt-layout.mjs";
 import {publicOrigin} from '../shared/domains.mjs';
 import {onlineCounterPreferences} from '../shared/counter-fallback.mjs';
 import {onlineCounterLink,tryOnlineCounter} from './counter-fallback';
@@ -3862,6 +3862,7 @@ function ReportModal({
   routes: RouteRecord[];
   onClose: () => void;
 }) {
+  const {layout}=useReceiptSettings();
   const documentRef = useRef<HTMLElement>(null);
   const printRun = useRef<AbortController | null>(null);
   useEffect(() => () => printRun.current?.abort(), []);
@@ -3982,15 +3983,14 @@ function ReportModal({
         </div>
         {voucherStale && <p className="form-error">Save the current voucher summary on the ticketing page before printing. Collections may have changed.</p>}
         {printError && <p className="form-error" role="alert">{printError} <a href="/api/terminal/counter-launcher">Download printing setup</a></p>}
-        <article ref={documentRef}
+        <article ref={documentRef} style={voucher?voucherStyle(layout):undefined}
           className={`print-document operations-document document-${report.kind} ${rows.length>50||(report.kind==="cnic"&&rows.length>35)?"document-dense":""} ${thermal ? "report-thermal" : voucher ? "report-a4" : "report-a4 report-landscape"}`}
         >
           <header className="document-header">
             <div>
-              <h1>MADINA EXPRESS</h1>
+              <h1>{layout.businessName}</h1>
               <p className="document-brand-urdu" lang="ur" dir="rtl">مدینہ ایکسپریس</p>
-              <p>Madina Terminal, Peshawar</p>
-              <p>0311-777-2299 / 0315-777-2299</p>
+              {(!voucher||layout.voucherShowContact)&&<><p>{layout.terminal}</p><p>{layout.contact}</p></>}
             </div>
             <div className="document-title-block">
               <h2>{title}</h2>
@@ -4021,19 +4021,19 @@ function ReportModal({
                 {trip.status} · {trip.platform}
               </strong>
             </span>}
-            <span>
+            {(!voucher||layout.voucherShowCrew)&&<><span>
               <small>Driver</small>
               <strong>{trip.driver}</strong>
             </span>
             <span>
               <small>Attendant</small>
               <strong>{trip.attendant}</strong>
-            </span>
+            </span></>}
           </div>
           {thermal ? (
             <>
-              <h3 className="document-section-title">Seat · Passenger · Net PKR</h3>
-              {rows.map(({booking,seat})=><div className="thermal-passenger" key={`${booking.id}-${seat}`}><span><b>{seatLabel(seat,booking.service)}</b><strong>{booking.passenger}{routeDestinations(route).length>1&&<small> · {booking.destination}</small>}</strong><b>{Math.round(netCollected(booking)/booking.seats.length).toLocaleString('en-PK')}</b></span></div>)}
+              <h3 className="document-section-title">Seat · Passenger{layout.voucherShowNetCollected?" · Net PKR":""}</h3>
+              {rows.map(({booking,seat})=><div className="thermal-passenger" key={`${booking.id}-${seat}`}><span><b>{seatLabel(seat,booking.service)}</b><strong>{booking.passenger}{routeDestinations(route).length>1&&<small> · {booking.destination}</small>}</strong>{layout.voucherShowNetCollected&&<b>{Math.round(netCollected(booking)/booking.seats.length).toLocaleString('en-PK')}</b>}</span></div>)}
               {!rows.length && (
                 <p className="document-empty">No passengers in this run.</p>
               )}
@@ -4044,7 +4044,7 @@ function ReportModal({
             <>
               <h3 className="document-section-title">Ticket &amp; payment register</h3>
               <table className="document-table">
-                <colgroup>{[17, 8, 25, 14, 6, 10, 20].map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
+                <colgroup>{(layout.voucherShowNetCollected?[17, 8, 25, 14, 6, 10, 20]:[18,9,32,22,8,11]).map((width, index) => <col key={index} style={{ width: `${width}%` }} />)}</colgroup>
                 <thead>
                   <tr>
                     <th>Ticket</th>
@@ -4053,7 +4053,7 @@ function ReportModal({
                     <th>Destination</th>
                     <th>Seats</th>
                     <th>Channel</th>
-                    <th>Net collected</th>
+                    {layout.voucherShowNetCollected&&<th>Net collected</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -4067,7 +4067,7 @@ function ReportModal({
                       <td>{booking.destination}</td>
                       <td>{seatList(booking.seats, booking.service)}</td>
                       <td>{booking.paymentMethod}</td>
-                      <td>{money(netCollected(booking))}</td>
+                      {layout.voucherShowNetCollected&&<td>{money(netCollected(booking))}</td>}
                     </tr>
                   ))}
                 </tbody>
@@ -5217,7 +5217,7 @@ function SettingsView({
         {user.isOwner && !user.forcePasswordChange && (
           <>
             <AccountAccessSettings staffUsers={staffUsers} onSaved={onStaffSaved} onRemoved={onStaffRemoved} showToast={showToast} />
-            <TerminalServerSettings showToast={showToast} />
+            <TerminalServerSettings showToast={showToast} /><TerminalPresenceSettings />
             <ApplicationUpdateSettings showToast={showToast} />
             <FinancePinSettings showToast={showToast} />
           </>
@@ -5284,7 +5284,7 @@ function SettingsView({
             title="Receipt configuration"
             text="Thermal ticket and passenger contact details."
           />
-          <ReceiptEditor editable={Boolean(user.isOwner)}/>
+          <ReceiptEditor editable={Boolean(user.isOwner)}/><VoucherDesignEditor editable={Boolean(user.isOwner)}/>
           <label className="auto-print-setting">
             <input
               type="checkbox"
@@ -5390,17 +5390,22 @@ function SettingsView({
 function ReceiptEditor({editable}:{editable:boolean}) {
   const {layout,save}=useReceiptSettings();
   const [draft,setDraft]=useState(layout),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
-  const dirty=JSON.stringify(draft)!==JSON.stringify(layout);
+  const previousLayout=useRef(layout);
+  useEffect(()=>{if(JSON.stringify(draft)===JSON.stringify(previousLayout.current))setDraft(layout);previousLayout.current=layout;},[layout,draft]);
+  const ticketDesign=(value:ReceiptLayout)=>JSON.stringify(Object.fromEntries(Object.entries(value).filter(([key])=>!key.startsWith('voucher'))));
+  const dirty=ticketDesign(draft)!==ticketDesign(layout);
   return <details className="receipt-editor"><summary>Edit receipt design</summary><form onSubmit={async event=>{
     event.preventDefault();setBusy(true);setMessage("");
-    try{await save(draft);setMessage("Receipt design saved for all counters.");}catch(error){setMessage(error instanceof Error?error.message:"Could not save receipt design.");}finally{setBusy(false);}
+    try{await save({...layout,...Object.fromEntries(Object.entries(draft).filter(([key])=>!key.startsWith('voucher')))});setMessage("Receipt design saved for all counters.");}catch(error){setMessage(error instanceof Error?error.message:"Could not save receipt design.");}finally{setBusy(false);}
   }}><fieldset className="counter-fields" disabled={!editable||busy}><div className="settings-fields">
-    {([['businessName','Business name',60],['brandMark','Top logo text',12],['contact','Contact numbers',100],['terminal','Terminal name',160],['website','Booking website',100],['websiteLabel','Booking website caption',60],['tokenTitle','Boarding slip title',40]] as const).map(([key,label,max])=><label key={key}><span>{label}</span><input maxLength={max} required={key==='businessName'||key==='tokenTitle'} value={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.value})}/></label>)}
+    {([['businessName','Business name',60],['brandMark','Top logo text',12],['contact','Contact numbers',100],['terminal','Terminal name',160],['website','Booking website',100],['websiteLabel','Booking website caption',60],['tokenTitle','Boarding slip title',40]] as const).map(([key,label])=><label key={key}><span>{label}</span><input required={key==='businessName'||key==='tokenTitle'} value={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.value})}/></label>)}
     <label><span>English font</span><select value={draft.font} onChange={event=>setDraft({...draft,font:event.target.value})}>{receiptFonts.map(font=><option key={font}>{font}</option>)}</select></label>
-    {(Object.entries(receiptNumberBounds) as [keyof typeof receiptNumberBounds,[number,number]][]).map(([key,[min,max]])=><label key={key}><span>{{fontSize:'Body font (px)',headingSize:'Heading font (px)',seatSize:'Seat number (px)',urduSize:'Urdu font (px)',paddingX:'Side padding (mm)',paddingY:'Top / bottom padding (mm)',lineHeight:'Line spacing',qrSize:'QR size (mm)',websiteSize:'Booking website font (px)'}[key]}</span><input type="number" required min={min} max={max} step={key==='lineHeight'?.05:.5} value={draft[key]} onChange={event=>setDraft({...draft,[key]:Number(event.target.value)})}/></label>)}
+    {(Object.keys(receiptNumberBounds) as (keyof typeof receiptNumberBounds)[]).map(key=><label key={key}><span>{{fontSize:'Body font (px)',headingSize:'Heading font (px)',seatSize:'Seat number (px)',urduSize:'Urdu font (px)',paddingX:'Side padding (mm)',paddingY:'Top / bottom padding (mm)',lineHeight:'Line spacing',qrSize:'QR size (mm)',websiteSize:'Booking website font (px)',websitePadding:'Website box padding (mm)',websiteBorderWidth:'Website box border (px)'}[key]}</span><input type="number" required step="any" value={draft[key]} onChange={event=>setDraft({...draft,[key]:Number(event.target.value)})}/></label>)}
+    <label><span>Booking website font</span><select value={draft.websiteFont} onChange={event=>setDraft({...draft,websiteFont:event.target.value})}>{receiptFonts.map(font=><option key={font}>{font}</option>)}</select></label>
+    {(['websiteBox','websiteInverted'] as const).map(key=><label key={key}><span><input type="checkbox" checked={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.checked})}/>{key==='websiteBox'?' Website border box':' White website text on black'}</span></label>)}
     <label><span>Booking website alignment</span><select value={draft.websiteAlign} onChange={event=>setDraft({...draft,websiteAlign:event.target.value as ReceiptLayout['websiteAlign']})}><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label>
-    <label className="span-2"><span>Urdu passenger instructions</span><textarea lang="ur" dir="rtl" maxLength={600} value={draft.urduTerms} onChange={event=>setDraft({...draft,urduTerms:event.target.value})}/></label>
-    <label className="span-2"><span>Urdu boarding slip note</span><textarea lang="ur" dir="rtl" maxLength={200} value={draft.tokenNote} onChange={event=>setDraft({...draft,tokenNote:event.target.value})}/></label>
+    <label className="span-2"><span>Urdu passenger instructions</span><textarea lang="ur" dir="rtl" value={draft.urduTerms} onChange={event=>setDraft({...draft,urduTerms:event.target.value})}/></label>
+    <label className="span-2"><span>Urdu boarding slip note</span><textarea lang="ur" dir="rtl" value={draft.tokenNote} onChange={event=>setDraft({...draft,tokenNote:event.target.value})}/></label>
     <label><span><input type="checkbox" checked={draft.showQr} onChange={event=>setDraft({...draft,showQr:event.target.checked})}/> Show ticket QR</span></label>
     <label><span><input type="checkbox" checked={draft.showWebsite} onChange={event=>setDraft({...draft,showWebsite:event.target.checked})}/> Show booking website</span></label>
     <label><span><input type="checkbox" checked={draft.websiteBold} onChange={event=>setDraft({...draft,websiteBold:event.target.checked})}/> Bold booking website</span></label>
@@ -5408,6 +5413,22 @@ function ReceiptEditor({editable}:{editable:boolean}) {
     <p role="status">{message}</p><small>Live preview · 80 mm paper · each slip prints separately</small>
     <div className="receipt thermal-ticket receipt-design-preview"><TicketSlips booking={initialBookings[0]} printedAt={new Date()} layout={draft}/></div>
   </details>;
+}
+
+function VoucherDesignEditor({editable}:{editable:boolean}) {
+ const {layout,save}=useReceiptSettings();
+ const [draft,setDraft]=useState(layout),[busy,setBusy]=useState(false),[message,setMessage]=useState('');
+ const previousLayout=useRef(layout);
+ useEffect(()=>{if(JSON.stringify(draft)===JSON.stringify(previousLayout.current))setDraft(layout);previousLayout.current=layout;},[layout,draft]);
+ const own=(value:ReceiptLayout)=>Object.fromEntries(Object.entries(value).filter(([key])=>key.startsWith('voucher')));
+ return <details className="receipt-editor"><summary>Edit voucher design</summary><form onSubmit={async event=>{
+  event.preventDefault();setBusy(true);setMessage('');
+  try{await save({...layout,...own(draft)});setMessage('Voucher design saved for all counters.');}catch(error){setMessage(error instanceof Error?error.message:'Could not save voucher design.');}finally{setBusy(false);}
+ }}><fieldset className="counter-fields" disabled={!editable||busy}><div className="settings-fields">
+ <label><span>Voucher font</span><select value={draft.voucherFont} onChange={event=>setDraft({...draft,voucherFont:event.target.value})}>{receiptFonts.map(font=><option key={font}>{font}</option>)}</select></label>
+ {(Object.entries(voucherNumberFields) as [keyof typeof voucherNumberFields,string][]).map(([key,label])=><label key={key}><span>{label}</span><input type="number" step="any" required value={draft[key]} onChange={event=>setDraft({...draft,[key]:Number(event.target.value)})}/></label>)}
+ {([['voucherShowNetCollected','Show Net collected for each passenger'],['voucherShowContact','Show contact details'],['voucherShowCrew','Show driver and attendant']] as const).map(([key,label])=><label key={key}><span><input type="checkbox" checked={draft[key]} onChange={event=>setDraft({...draft,[key]:event.target.checked})}/> {label}</span></label>)}
+ </div><p>Applies to A4 and 80 mm vouchers. Collection totals always remain visible.</p><div className="form-actions"><button type="button" className="secondary-button" onClick={()=>setDraft({...draft,...own(receiptDefaults)})}>Compact defaults</button><button className="primary-button" disabled={busy||JSON.stringify(own(draft))===JSON.stringify(own(layout))}>{busy?'Saving…':'Save voucher design'}</button></div></fieldset></form><p role="status">{message}</p></details>;
 }
 
 function TerminalConnectionSignal() {
@@ -5456,6 +5477,21 @@ function TerminalConnectionSignal() {
     <span className="connection-sync-dot" aria-hidden="true"/>
     {expanded&&<span className="connection-signal-details"><strong>{quality} · {level}/4</strong>{response&&<span>{response}</span>}<span className={`sync-${syncTone}`}>{syncLabel}</span></span>}
   </button>;
+}
+
+function TerminalPresenceSettings() {
+ const [state,setState]=useState<Awaited<ReturnType<typeof api.terminalPresence>>>(),[error,setError]=useState('');
+ useEffect(()=>{
+  let active=true,busy=false;
+  const check=async()=>{if(busy)return;busy=true;try{const value=await api.terminalPresence();if(active){setState(value);setError('');}}catch{if(active)setError('Connection details could not be refreshed.');}finally{busy=false;}};
+  void check();const timer=window.setInterval(()=>void check(),15000);
+  return()=>{active=false;window.clearInterval(timer);};
+ },[]);
+ const statusNames:Record<string,string>={'not-enrolled':'Not enrolled',unknown:'Last known · main PC unreachable','never-seen':'Waiting for Counter to open',offline:'No recent contact',online:'Page open',opening:'Opening page'};
+ return <section className="surface settings-card terminal-presence"><SettingsTitle icon={<ShieldCheck size={19}/>} title="Counter connections" text="Browser contacts from enrolled PCs, synced through the main PC."/>
+ {error&&<p role="status">{error}</p>}{state&&!state.sourceReachable&&<p className="form-error">Main PC is unreachable. These are last synced contacts, not current PC status.</p>}
+ <div className="table-wrap"><table><thead><tr><th>PC</th><th>Connection</th><th>Quality</th><th>Last contact</th></tr></thead><tbody>{state?.terminals.map(pc=><tr key={pc.slot}><td><strong>PC {pc.slot}</strong>{pc.version&&<small>v{pc.version}</small>}</td><td><strong className={`pc-status ${pc.status}`}>{statusNames[pc.status]||pc.status}</strong><small>{pc.transport==='lan'?'Local network':pc.transport==='online'?'Online connection':''}</small>{pc.localOpening&&<small>Another local tab is still opening</small>}{pc.probeOk===false&&<small className="form-error">File transfer did not finish</small>}</td><td><span className={`pc-quality ${pc.status==='online'&&pc.bars>=3?'good':pc.bars?'weak':'none'}`} aria-label={`${pc.bars} of 4 connection bars`}><span className="connection-bars" aria-hidden="true">{[1,2,3,4].map(n=><i key={n} className={n<=pc.bars?'filled':''}/>)}</span> {pc.bars}/4</span><small>{pc.rttMs==null?'':`${Math.round(pc.rttMs)} ms`}{pc.downloadMbps==null?'':` · ${pc.downloadMbps.toFixed(2)} Mbps sample`}</small>{pc.lossPct!==null&&pc.lossPct>0&&<small>{Math.round(pc.lossPct)}% recent contacts missed</small>}</td><td>{pc.lastSeen?new Date(pc.lastSeen).toLocaleString('en-GB',{timeZone:'Asia/Karachi'}):'—'}</td></tr>)}</tbody></table></div>
+ {!state&&!error&&<p>Checking counter connections…</p>}<small>Quality bars measure response and file transfer, not Wi-Fi signal or cable speed. A closed or sleeping browser stops reporting; no recent contact does not prove the PC is powered off.</small></section>;
 }
 
 function TerminalServerSettings({ showToast }: { showToast: (message: string) => void }) {
@@ -6045,16 +6081,16 @@ function TicketSlips({booking,printedAt,layout:preview}:{booking:Booking;printed
         <tr className="ticket-fare"><th>{ticket.canBoard?"Fare paid":"Net paid"}</th><td>{money(netCollected(booking))}</td></tr>
         {refundedTotal(booking)>0&&<tr><th>Refunded</th><td>{money(refundedTotal(booking))}</td></tr>}
         <tr><th>Ticket No.</th><td className="ticket-identifier">{booking.ticketNo}</td></tr><tr><th>Bus No.</th><td>{booking.bus}</td></tr><tr><th>Printed</th><td>{ticketTime(printedAt)} · {ticketDate(dateInPakistan(printedAt))}</td></tr>
+        {wasSold(booking)&&<tr><th>Sold by</th><td>{sellerName(booking)}</td></tr>}
       </tbody></table>
-      {wasSold(booking)&&<p className="ticket-sale-attribution">Sold by <strong>{sellerName(booking)}</strong> · {saleLocation(booking)}</p>}
       {!ticket.canBoard&&<div className="thermal-payment-status"><strong>{ticket.status}</strong></div>}
       <div className="ticket-terms ticket-urdu" lang="ur" dir="rtl"><p>{layout.urduTerms}</p></div>
-      {layout.showWebsite&&layout.website&&<p className="ticket-booking-promo" style={{fontSize:layout.websiteSize,fontWeight:layout.websiteBold?700:400,textAlign:layout.websiteAlign}}>{layout.websiteLabel} <strong>{layout.website}</strong></p>}
+      {layout.showWebsite&&layout.website&&<p className="ticket-booking-promo" style={{fontFamily:layout.websiteFont,fontSize:layout.websiteSize,fontWeight:layout.websiteBold?700:400,textAlign:layout.websiteAlign,padding:`${layout.websitePadding}mm`,border:layout.websiteBox?`${layout.websiteBorderWidth}px solid currentColor`:undefined,background:layout.websiteInverted?"#000":undefined,color:layout.websiteInverted?"#fff":undefined,printColorAdjust:"exact"}}>{layout.websiteLabel} <strong>{layout.website}</strong></p>}
     </article>
     {ticket.canBoard && <article style={style} className="conductor-token" aria-label={`Conductor boarding token seat ${seats}`}>
       <header><strong>{layout.businessName}</strong><span>{layout.tokenTitle}</span></header><div className="token-seats"><span>SEAT NO #</span><strong>{seats}</strong></div>
-      <table className="token-table"><tbody><tr><th>Bus No.</th><th>Destination</th></tr><tr><td>{booking.bus}</td><td>{booking.destination}</td></tr><tr><th>Travel date</th><th>Departure</th></tr><tr><td>{ticketDate(booking.date)}</td><td className="token-time">{booking.time}</td></tr><tr><th>Ticket No.</th><th>Paid</th></tr><tr><td>{booking.ticketNo}</td><td>{money(netCollected(booking))}</td></tr></tbody></table>
-      {wasSold(booking)&&<p className="ticket-sale-attribution">Sold by <strong>{sellerName(booking)}</strong> · {saleLocation(booking)}</p>}
+      <table className="token-table"><tbody><tr><th>Bus No.</th><th>Destination</th></tr><tr><td>{booking.bus}</td><td>{booking.destination}</td></tr><tr><th>Travel date</th><th>Departure</th></tr><tr><td>{ticketDate(booking.date)}</td><td className="token-time">{booking.time}</td></tr><tr><th>Ticket No.</th><th>Paid</th></tr><tr><td>{booking.ticketNo}</td><td>{money(netCollected(booking))}</td></tr>{wasSold(booking)&&<tr className="token-seller"><td colSpan={2}>Sold by <strong>{sellerName(booking)}</strong></td></tr>}</tbody></table>
+
       <p className="ticket-urdu" lang="ur" dir="rtl">{layout.tokenNote}</p>
     </article>}
   </>;

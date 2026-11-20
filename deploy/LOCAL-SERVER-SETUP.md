@@ -2,7 +2,7 @@
 
 ## Main admin
 
-Open https://staff.madinaexpress.duckdns.org/login on a phone or laptop. Use username **admin**, the existing password, and the current authenticator code. Do not enter an email address. The old main-PC pairing has been revoked; download a fresh installer.
+Open https://terminal.madinaexpress.pk/login on a phone or laptop. Use username **admin**, the existing password, and the current authenticator code. Do not enter an email address. The old main-PC pairing has been revoked; download a fresh installer.
 
 The main admin is exempt from counter-PC restrictions. Staff need an account created by the admin and an enrolled Windows profile on one of the three counter PCs. The main PC can also serve as counter PC 1.
 
@@ -132,6 +132,6 @@ The main-PC tunnel uses a five-second SSH connection timeout and two five-second
 
 A successful TCP 8443 check confirms the port is reachable; it does not verify a complete application-file transfer. The startup loader retries once. If that also fails on the private LAN address, it checks the retained HTTPS staff relay and can open its login page. The same enrolled device certificate and assigned terminal permissions are required there. This uses the main PC’s live database through its existing cloud tunnel; it does not create a second writable database.
 
-Keep `staff.madinaexpress.duckdns.org` pointed at the production cloud server. This direct relay is retained for enrolled-device TLS and update continuity. It must continue requesting client certificates and overwriting the client-certificate forwarding header. A4 report handoff already permits this approved origin. Only non-secret paper/automatic-print preferences and the existing Counter/Reports flags carry to the online login; passwords, sessions and passenger references do not.
+Keep `terminal.madinaexpress.pk` pointed at the production cloud server. This direct relay is retained for enrolled-device TLS and update continuity. It must continue requesting client certificates and overwriting the client-certificate forwarding header. A4 report handoff already permits this approved origin. Only non-secret paper/automatic-print preferences and the existing Counter/Reports flags carry to the online login; passwords, sessions and passenger references do not.
 
 Automatic fallback applies only before the Counter opens or its initial read fails. Active ticket/payment workflows never redirect automatically. When internet is unavailable, the loader offers a manual retry and online-counter link. Working LAN counters still operate offline. If the main PC stops or its tunnel is unavailable, existing cloud read-only/booking fences remain in force. This fallback does not repair a faulty cable, switch or network adapter; those still need checking if LAN transfers remain intermittent.

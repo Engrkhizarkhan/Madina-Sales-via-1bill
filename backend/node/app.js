@@ -1,3 +1,4 @@
+import {terminalPresenceRouter,terminalPresence} from '../terminal/presence.js';
 import {printJobClaimRouter,createPrintJob} from './print-jobs.js';
 import {publicBus,publicRoute,publicTrip} from "./public-data.js";
 import {adminSnapshot,adminChanges} from './admin-data.js';
@@ -73,6 +74,7 @@ app.use((req, _res, next) => {
   next();
 });
 
+app.use("/terminal/presence",terminalPresenceRouter);
 app.use(maintenance.route);
 app.use(maintenance.middleware);
 app.use("/terminal-sync", terminalSyncRouter);
@@ -290,6 +292,7 @@ app.use(asyncRoute(async (req, _res, next) => {
 app.use("/terminal", terminalAdminRouter);
 app.use("/updates",updateAdminRouter);
 
+app.get("/terminal/presence",asyncRoute(terminalPresence));
 app.get("/auth/me", asyncRoute(async (req, res) => res.json({ user: publicUser(req.user), csrfToken: req.session.csrf_token })));
 
 app.post("/auth/logout", asyncRoute(async (req, res) => {

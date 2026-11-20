@@ -28,7 +28,7 @@ Get-CimInstance Win32_Process | Where-Object {
 try {
     $updated = [regex]::Replace($oldEnvironment, '(?m)^APP_URL=.*$', "APP_URL=$origin")
     $updated = [regex]::Replace($updated, '(?m)^TERMINAL_LOCAL_ORIGIN=.*$', "TERMINAL_LOCAL_ORIGIN=$origin")
-    $updated = [regex]::Replace($updated, '(?m)^ALLOWED_ORIGINS=.*$', "ALLOWED_ORIGINS=$origin,https://localhost:8443,https://madinaexpress.pk,https://www.madinaexpress.pk,https://staff.madinaexpress.pk,https://madinaexpress.duckdns.org,https://staff.madinaexpress.duckdns.org")
+    $updated = [regex]::Replace($updated, '(?m)^ALLOWED_ORIGINS=.*$', "ALLOWED_ORIGINS=$origin,https://localhost:8443,https://madinaexpress.pk,https://www.madinaexpress.pk,https://staff.madinaexpress.pk,https://madinaexpress.pk,https://terminal.madinaexpress.pk")
     [IO.File]::WriteAllText($envFile, $updated, [Text.Encoding]::UTF8)
     Push-Location $app
     try { & $node 'backend\terminal\initialize.js' $ip --renew; if ($LASTEXITCODE -ne 0) { throw 'Certificate update failed.' } }

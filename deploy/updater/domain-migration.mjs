@@ -1,7 +1,7 @@
 import {readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {atomicJson,atomicText,jsonFile} from './engine.mjs';
-import {staffOrigin,legacyStaffOrigin,webOrigins} from '../../shared/domains.mjs';
+import {staffOrigin,terminalOrigin,webOrigins} from '../../shared/domains.mjs';
 
 const environmentValues = source => Object.fromEntries(source.replace(/^\uFEFF/,'').split(/\r?\n/)
   .map(line=>line.match(/^([A-Z_]+)=(.*)$/)).filter(Boolean).map(([,key,value])=>[key,value]));
@@ -21,14 +21,14 @@ export async function migrateCloudDomain(base) {
   const source=await readFile(envFile,'utf8'),before=environmentValues(source);
   const updater=await jsonFile(updaterFile);
   if(updater?.project!=='madina-express')throw new Error('A protected Madina Express updater configuration is required.');
-  if(![staffOrigin,legacyStaffOrigin].includes(before.TERMINAL_CLOUD_ORIGIN) || ![staffOrigin,legacyStaffOrigin].includes(updater.cloudOrigin)) {
+  if(![staffOrigin,terminalOrigin].includes(before.TERMINAL_CLOUD_ORIGIN) || ![staffOrigin,terminalOrigin].includes(updater.cloudOrigin)) {
     throw new Error('The configured cloud is not an approved Madina Express domain. No settings were changed.');
   }
-  const origins=[...new Set([...(before.ALLOWED_ORIGINS||'').split(',').filter(Boolean),...webOrigins])];
-  let after=setValue(source,'TERMINAL_CLOUD_ORIGIN',staffOrigin);
+  const origins=[...new Set([...(before.ALLOWED_ORIGINS||'').split(',').filter(value=>value&&(webOrigins.includes(value)||new URL(value).port==='8443')),...webOrigins])];
+  let after=setValue(source,'TERMINAL_CLOUD_ORIGIN',terminalOrigin);
   after=setValue(after,'ALLOWED_ORIGINS',origins.join(','));
-  const settings={...updater,cloudOrigin:staffOrigin};
-  if(after===source&&updater.cloudOrigin===staffOrigin)return {changed:false,cloudOrigin:staffOrigin};
+  const settings={...updater,cloudOrigin:terminalOrigin};
+  if(after===source&&updater.cloudOrigin===terminalOrigin)return {changed:false,cloudOrigin:terminalOrigin};
   await preserve(envFile+'.pre-pk',source);
   await preserve(updaterFile+'.pre-pk',JSON.stringify(updater));
   try {
@@ -40,7 +40,7 @@ export async function migrateCloudDomain(base) {
     throw error;
   }
   await atomicJson(join(base,'host/cloud-domain-migration.json'),{
-    cloudOrigin:staffOrigin,fallbackOrigin:legacyStaffOrigin,completedAt:new Date().toISOString(),
+    cloudOrigin:terminalOrigin,fallbackOrigin:staffOrigin,completedAt:new Date().toISOString(),
   });
-  return {changed:true,cloudOrigin:staffOrigin};
+  return {changed:true,cloudOrigin:terminalOrigin};
 }

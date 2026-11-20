@@ -109,6 +109,16 @@ try {
   const login = await request('/auth/login', { method: 'POST', body: credentials, device });
   check(login.status === 200, 'staff signs in with the enrolled TLS device');
   check((await request('/auth/me', { cookie: login.cookie, device })).status === 200, 'approved staff session stays valid');
+  const heartbeat={instance:'1234567890abcdef1234567890abcdef',phase:'opening',version:'3.5.0',rttMs:16,downloadMbps:null,lossPct:0,probeOk:null,slot:99};
+  check((await request('/terminal/presence/heartbeat',{method:'POST',body:heartbeat})).status===403,'unenrolled browsers cannot spoof PC contacts');
+  check((await request('/terminal/presence/heartbeat',{method:'POST',body:heartbeat,device})).status===200,'an enrolled PC reports startup progress without requiring a staff session');
+  const contacts=await request('/terminal/presence',admin);
+  check(contacts.status===200&&contacts.payload.terminals.find(pc=>pc.slot===2)?.status==='opening'&&!contacts.payload.terminals.some(pc=>pc.slot===99),'admin sees the PC authenticated by its certificate, not a forged body slot');
+  check((await request('/terminal/presence',{cookie:login.cookie,device})).status===403,'counter staff cannot inspect other terminal contacts');
+  check((await request('/terminal/presence/probe',{device})).bytes.length===98304,'the PC probe transfers more than the 64 KB boundary that previously stalled');
+  check((await request('/terminal/presence/heartbeat',{method:'POST',device,body:{...heartbeat,rttMs:-1}})).status===422,'invalid measurements cannot be stored');
+  check((await request('/terminal/presence/heartbeat',{method:'POST',device,viaProxy:true,body:{...heartbeat,phase:'ready',probeOk:true,downloadMbps:8}})).status===200,'private online relay preserves the enrolled identity for connection reporting');
+  check((await request('/terminal/presence',admin)).payload.terminals.find(pc=>pc.slot===2)?.transport==='online','admin can distinguish online fallback from the local network path');
   const onlineLogin=await request('/auth/login',{method:'POST',body:credentials,device,viaProxy:true});
   check(onlineLogin.status===200,'online fallback authenticates enrolled staff through actual client TLS and the private relay');
   check((await request('/auth/me',{cookie:onlineLogin.cookie,device,viaProxy:true})).status===200,'online fallback retains the same terminal-bound staff session');
@@ -156,6 +166,7 @@ try {
     'staff cannot generate device enrollment packages');
   check((await request('/terminal/devices/2', { ...admin, method: 'DELETE', body:{currentPassword:password,confirm:true} })).status === 200, 'admin revokes a terminal PC');
   check((await request('/auth/me', { cookie: login.cookie, device })).status === 401, 'revoked terminal loses its existing session immediately');
+  check((await request('/terminal/presence/heartbeat',{method:'POST',body:heartbeat,device})).status===403,'revoked PC can no longer send connection contacts');
   const compatible = await request('/terminal/devices/2/package', { ...admin, method: 'POST', body: { currentPassword: password, allowSoftwareKey: true } });
   const compatibleFiles = unzipSync(compatible.bytes);
   const compatibleSetup = JSON.parse(strFromU8(compatibleFiles['setup.json']));
@@ -196,6 +207,7 @@ try {
   check((await request('/terminal/devices/99/package',{...admin,method:'POST',body:{currentPassword:password}})).status===404,'PC must be added before setup can be generated');
   console.log(`Passed ${passed} terminal enrollment checks.`);
 } finally {
+  await pool.execute("DELETE FROM terminal_presence WHERE slot=2").catch(()=>{});
   if(proxy)await new Promise(resolve=>proxy.close(resolve));
   if(relay)await new Promise(resolve=>relay.close(resolve));
   if (server) await new Promise(resolve => server.close(resolve));

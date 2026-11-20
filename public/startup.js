@@ -1,6 +1,7 @@
 /* Recovery applies only before React paints. It never reloads an active counter. */
 (function () {
   /*__COUNTER_FALLBACK_HELPER__*/
+  /*__COUNTER_PRESENCE__*/
   var key = 'madina-startup-retry:' + location.pathname;
   var finished = false;
   var retrying = false;
@@ -27,7 +28,7 @@
     image.referrerPolicy = 'no-referrer';
     image.onload = function () { if (!ended && !hasApp()) { stop(); location.assign(href); } else { stop(); } };
     image.onerror = stop;
-    image.src = 'https://staff.madinaexpress.duckdns.org/favicon.svg?counter-check=' + Date.now();
+    image.src = 'https://terminal.madinaexpress.pk/favicon.svg?counter-check=' + Date.now();
   }
   function root() { return document.getElementById('root'); }
   function hasApp() {

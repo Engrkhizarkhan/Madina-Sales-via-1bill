@@ -158,14 +158,14 @@ if ($name -in @('chrome.exe','msedge.exe','firefox.exe')) {
             } elseif ($null -ne $Entry -and $Entry.protocol -ne 'madina-report') { $rules.Add($Entry) }
         }
         if ($saved) { Add-PreservedProtocol (ConvertFrom-Json -InputObject $saved) }
-        $rules.Add(@{protocol='madina-report';allowed_origins=@($Origin,'https://staff.madinaexpress.pk','https://staff.madinaexpress.duckdns.org')})
+        $rules.Add(@{protocol='madina-report';allowed_origins=@($Origin,'https://staff.madinaexpress.pk','https://terminal.madinaexpress.pk')})
         New-ItemProperty -Path $policy -Name AutoLaunchProtocolsFromOrigins -PropertyType String -Value (ConvertTo-Json -InputObject ($rules.ToArray()) -Depth 8 -Compress) -Force | Out-Null
         $identities = @(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.HasPrivateKey -and $_.Subject -match '^CN=Madina Express Terminal [1-9][0-9]?$' -and $_.Issuer -eq 'CN=Madina Express Local Terminal CA' -and $_.NotBefore -le (Get-Date) -and $_.NotAfter -gt (Get-Date) })
         if ($identities.Count -eq 1) {
             $selection = $policy + '\AutoSelectCertificateForUrls'
             if (-not (Test-Path $selection)) { New-Item -Path $selection -Force | Out-Null }
             $number = 9000
-            foreach ($server in @($Origin,'https://staff.madinaexpress.pk','https://staff.madinaexpress.duckdns.org')) {
+            foreach ($server in @($Origin,'https://staff.madinaexpress.pk','https://terminal.madinaexpress.pk')) {
                 $rule = @{pattern=$server;filter=@{ISSUER=@{CN='Madina Express Local Terminal CA'};SUBJECT=@{CN=$identities[0].GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName,$false)}}}
                 while ($true) {
                     $existing = (Get-ItemProperty -Path $selection -Name ([string]$number) -ErrorAction SilentlyContinue).([string]$number)

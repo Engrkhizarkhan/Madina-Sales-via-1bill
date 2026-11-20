@@ -84,7 +84,7 @@ Future `deploy/update.sh` runs use PM2 again. PM2 startup/background: [official 
 
 ## Production access
 
-The public portal is at [Madina Express](https://madinaexpress.duckdns.org). Staff sign in at [Staff sign-in](https://staff.madinaexpress.duckdns.org/login). Production uses the separate HTTPS virtual hosts in `nginx-production.conf.template`. Only the public reservation APIs are exposed on the passenger host.
+The public portal is at [Madina Express](https://madinaexpress.pk). Staff sign in at [Staff sign-in](https://terminal.madinaexpress.pk/login). Production uses the separate HTTPS virtual hosts in `nginx-production.conf.template`. Only the public reservation APIs are exposed on the passenger host.
 
 The main administrator signs in with username `admin`, a password, and a six-digit authenticator code. Initial enrollment details and the temporary password are in root-only files on the VPS. Retrieve them through SSH and change the temporary password after the first sign-in. Store the authenticator recovery key separately.
 

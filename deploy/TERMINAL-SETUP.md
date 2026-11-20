@@ -17,7 +17,7 @@ Windows 11 is preferred for a new setup. Keep Windows 10 covered by applicable o
 
 ## Install the main PC
 
-1. Sign in to [staff Settings](https://staff.madinaexpress.duckdns.org/manage) as admin. The existing authenticator is enabled again; use its current six-digit code.
+1. Sign in to [staff Settings](https://terminal.madinaexpress.pk/manage) as admin. The existing authenticator is enabled again; use its current six-digit code.
 2. Open **Settings → Main PC & offline access**. Enter the current admin password and download the main PC installer ZIP.
 3. Copy it to the main Windows PC and extract it. Run `Install-Main-PC.cmd`, approve Windows elevation, enter the local IPv4 address, and type `YES` to begin.
 4. The installer verifies runtime checksums, creates protected application/data directories, installs a loopback-only MySQL service, imports the current cloud data, creates local HTTPS certificates and starts the server under Windows LocalService at startup. It does not expose MySQL to the LAN.
@@ -76,6 +76,6 @@ Alternate Nginx test instances must set their own PID, proxy/body/cache temporar
 
 ## Repair a completed installation that cannot open the local website
 
-Download [the main PC repair ZIP](https://staff.madinaexpress.duckdns.org/Madina-Express-Main-PC-Repair.zip), extract all three files on the same Windows PC, and run `Repair-Main-PC.cmd`. Approve Windows elevation. It replaces the service launcher, corrects the tunnel key ACL, allows the task to run on battery power and restarts the existing local app. The database and installation credentials remain in place. The repair checks local HTTPS before reporting readiness.
+Download [the main PC repair ZIP](https://terminal.madinaexpress.pk/Madina-Express-Main-PC-Repair.zip), extract all three files on the same Windows PC, and run `Repair-Main-PC.cmd`. Approve Windows elevation. It replaces the service launcher, corrects the tunnel key ACL, allows the task to run on battery power and restarts the existing local app. The database and installation credentials remain in place. The repair checks local HTTPS before reporting readiness.
 
 Windows PowerShell 5.1 can treat a native program's redirected stderr as a terminating PowerShell error. The launcher uses `Start-Process` with separate OS output/error log files so an SSH warning does not terminate Node. The server's SSH key ACL contains only LocalService, SYSTEM and Administrators; prior explicit user entries are removed.

@@ -1,5 +1,5 @@
 import {onlineCounterUrl,onlineCounterPreferences,type CounterPrintPreferences} from '../shared/counter-fallback.mjs';
-import {legacyStaffOrigin} from '../shared/domains.mjs';
+import {terminalOrigin} from '../shared/domains.mjs';
 
 export function onlineCounterLink() {
   const preferences:CounterPrintPreferences={};
@@ -31,7 +31,7 @@ export async function tryOnlineCounter(signal:AbortSignal) {
     const timer=window.setTimeout(()=>done(false),4000);
     image.onload=()=>done(true);image.onerror=()=>done(false);image.referrerPolicy='no-referrer';
     signal.addEventListener('abort',abort,{once:true});
-    image.src=legacyStaffOrigin+'/favicon.svg?counter-check='+Date.now();
+    image.src=terminalOrigin+'/favicon.svg?counter-check='+Date.now();
   });
   if(!reachable||signal.aborted)return false;
   window.location.assign(href);return true;

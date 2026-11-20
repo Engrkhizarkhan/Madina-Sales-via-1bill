@@ -116,6 +116,7 @@ export const api = {
   claimPrintJob: <T>(id:string,key:string)=>request<T>('/printing/jobs/'+id,{headers:{'X-Print-Token':key},credentials:'omit'}),
   counterLauncherUrl: `${API_BASE}/terminal/counter-launcher`,
   terminalConnection: () => request<{ local: boolean; connected: boolean; replicated: boolean; readOnly?: boolean; secondsBehind?:number|null; replicationError?:boolean; cloudLatencyMs?:number|null }>("/terminal/connection"),
+  terminalPresence: () => request<{sourceReachable:boolean;checkedAt:string;terminals:{slot:number;enrolled:boolean;status:string;lastSeen:string|null;ageMs:number|null;transport:string|null;phase:string|null;rttMs:number|null;downloadMbps:number|null;lossPct:number|null;probeOk:boolean|null;version:string|null;localOpening:boolean;bars:number}[]}>("/terminal/presence"),
   terminalStatus: () => request<TerminalStatus>("/terminal/status"),
   cancelTerminalSetup: (currentPassword: string) => request("/terminal/cancel-setup", { method: "POST", body: JSON.stringify({ currentPassword }) }),
   mainPcSetup: (password: string) => downloadSetup("/terminal/package", password, "Madina-Express-Main-PC.zip"),

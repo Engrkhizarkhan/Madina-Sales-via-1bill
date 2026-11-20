@@ -30,13 +30,13 @@ test('actual bridge extracts the complete signed production base on the installe
   await cp(join(target,'dist/assets'),join(root,'static-assets'),{recursive:true});
   const installation=join(root,'MadinaExpress');
   for(const folder of ['host','config','data'])await mkdir(join(installation,folder),{recursive:true});
-  await writeFile(join(installation,'host/updater.json'),JSON.stringify({project:'madina-express',cloudOrigin:'https://staff.madinaexpress.duckdns.org'}));
-  await writeFile(join(installation,'config/backend.env'),'TERMINAL_CLOUD_ORIGIN=https://staff.madinaexpress.duckdns.org\nALLOWED_ORIGINS=https://localhost:8443\nDB_PASSWORD=fixture-retained\n');
+  await writeFile(join(installation,'host/updater.json'),JSON.stringify({project:'madina-express',cloudOrigin:'https://terminal.madinaexpress.pk'}));
+  await writeFile(join(installation,'config/backend.env'),'TERMINAL_CLOUD_ORIGIN=https://terminal.madinaexpress.pk\nALLOWED_ORIGINS=https://localhost:8443\nDB_PASSWORD=fixture-retained\n');
   await writeFile(join(installation,'data/bookings.fixture'),'untouched passenger records');
   result=spawnSync(process.execPath,['backend/update/migrate-release.mjs','not-a-database-config'],{cwd:target,env:{...process.env,ProgramData:root},encoding:'utf8',timeout:180000});
   assert.equal(result.status,0,result.stderr);assert.ok(result.stderr.length<65536,'PowerShell progress must not overflow the migration pipe');
   if(process.platform==='win32'){
-   assert.equal(JSON.parse(await readFile(join(installation,'host/updater.json'),'utf8')).cloudOrigin,'https://staff.madinaexpress.pk');
+   assert.equal(JSON.parse(await readFile(join(installation,'host/updater.json'),'utf8')).cloudOrigin,'https://terminal.madinaexpress.pk');
    assert.match(await readFile(join(installation,'config/backend.env'),'utf8'),/DB_PASSWORD=fixture-retained/);
   }
   assert.equal(await readFile(join(installation,'data/bookings.fixture'),'utf8'),'untouched passenger records');
